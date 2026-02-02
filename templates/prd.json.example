@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 2,
+  "project": "MyProject",
+  "branchName": "ralph/feature-name",
+  "description": "Feature description - what this PRD implements",
+  "run": {
+    "startedAt": null,
+    "currentStoryId": null,
+    "learnings": []
+  },
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "First story - database/schema changes",
+      "description": "As a developer, I need to add the data model so other stories can use it.",
+      "acceptanceCriteria": [
+        "Add required columns/tables to database",
+        "Run migrations successfully",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "retries": 0,
+      "lastResult": null,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Second story - backend logic",
+      "description": "As a user, I want the system to handle [action] so that [benefit].",
+      "acceptanceCriteria": [
+        "Implement service/handler for the action",
+        "Add validation for inputs",
+        "Add unit tests",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "retries": 0,
+      "lastResult": null,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Third story - UI component",
+      "description": "As a user, I want to see [feature] so that I can [benefit].",
+      "acceptanceCriteria": [
+        "Add UI component to the page",
+        "Connect to backend service",
+        "Typecheck passes",
+        "Verify in browser"
+      ],
+      "priority": 3,
+      "passes": false,
+      "retries": 0,
+      "lastResult": null,
+      "notes": ""
+    }
+  ]
+}
