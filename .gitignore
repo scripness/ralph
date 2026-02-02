@@ -1,6 +1,16 @@
-node_modules/
-dist/
-*.log
+# Binary
+ralph
+ralph.exe
+
+# Test artifacts
+scripts/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
-scripts/ralph/prd.json
-scripts/ralph/.gitignore
+Thumbs.db

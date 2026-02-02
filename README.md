@@ -1,18 +1,22 @@
-# @scripness/ralph
+# Ralph
 
 Autonomous AI agent loop for implementing PRD stories with [Amp](https://ampcode.com).
 
 Ralph runs Amp in a loop until all PRD stories are complete. Each iteration runs with fresh context, using git and prd.json as the single source of truth.
 
+## Install
+
+```bash
+# One-line install (Linux/macOS)
+curl -fsSL https://raw.githubusercontent.com/scripness/ralph/main/install.sh | bash
+
+# Or with Go
+go install github.com/scripness/ralph@latest
+```
+
 ## Quick Start
 
 ```bash
-# Install globally
-npm install -g @scripness/ralph
-
-# Or use with bunx/npx
-bunx @scripness/ralph init
-
 # Initialize in your project
 ralph init
 
@@ -24,6 +28,9 @@ ralph convert tasks/prd-feature.md
 
 # Start the agent loop
 ralph run
+
+# Update to latest version
+ralph upgrade
 ```
 
 ## The Flow
@@ -63,6 +70,7 @@ ralph status            # Show PRD story status
 ralph next              # Show next story to work on
 ralph validate          # Validate prd.json schema
 ralph doctor            # Check Ralph environment
+ralph upgrade           # Update to latest version
 ```
 
 ## Project Detection
@@ -124,22 +132,6 @@ Create `ralph.config.json` in your project root to override defaults:
 }
 ```
 
-### Story Fields
-
-| Field | Purpose |
-|-------|---------|
-| `passes` | `true` when story is complete |
-| `retries` | Incremented by verification when resetting |
-| `lastResult` | `{completedAt, thread, commit, summary}` on completion |
-| `notes` | Blocker notes (cleared on success) |
-
-### Run Fields
-
-| Field | Purpose |
-|-------|---------|
-| `currentStoryId` | Story in progress (crash recovery) |
-| `learnings` | Patterns discovered this run |
-
 ## Crash Recovery
 
 If Ralph crashes mid-story:
@@ -147,14 +139,21 @@ If Ralph crashes mid-story:
 2. Next run detects dirty git tree + currentStoryId set
 3. Agent resumes that story, verifying partial work
 
-## Architecture
+## Self-Update
 
-Ralph is fully self-contained. It embeds all agent instructions directly in the prompts sent to Amp - no external skills installation required. This means:
+```bash
+ralph upgrade
+```
 
-- Single install: just `npm install -g @scripness/ralph`
-- No pollution of Amp's skills directory
-- Instructions versioned with the CLI
-- Works immediately after install
+Checks GitHub releases, downloads the latest binary, and replaces itself.
+
+## Build from Source
+
+```bash
+git clone https://github.com/scripness/ralph
+cd ralph
+go build -ldflags="-s -w" -o ralph .
+```
 
 ## License
 
