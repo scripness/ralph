@@ -21,7 +21,6 @@ release:
   github:
     owner: scripness
     name: ralph
-  generate_release_notes: true
 
 changelog:
   use: github-native
