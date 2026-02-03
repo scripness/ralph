@@ -288,6 +288,32 @@ Users are notified of new versions via a background check (24h cache in `~/.conf
 
 Config: `.goreleaser.yaml`. Release workflow: `.github/workflows/release.yml`. CI (push/PR): `.github/workflows/ci.yml`.
 
+## Post-Task Checklist
+
+After completing any task or set of tasks that changes behavior, adds features, or modifies interfaces, you MUST verify that documentation and tests reflect the current state of the codebase. Nothing should be outdated.
+
+### Documentation sync
+
+1. **CLAUDE.md** — Check every section that could be affected by your changes:
+   - Architecture table (file descriptions)
+   - Codebase Patterns (any new or changed patterns)
+   - Prompt Template Variables table (if you added/removed/renamed a `{{var}}`)
+   - Non-obvious Behaviors (if your change introduces subtle behavior)
+   - Testing section (if you added a new `*_test.go` file or significantly expanded an existing one)
+   - Common Development Tasks (if the process for a task type changed)
+2. **README.md** — Check user-facing descriptions: command usage, signal protocol, configuration examples.
+3. **Prompt templates** (`prompts/*.md`) — If you changed how the CLI interacts with the provider (new markers, changed verification flow, new context passed), update the relevant prompt.
+
+### Test sync
+
+1. Every new exported function or method must have at least one test.
+2. Every changed function signature or behavior must have its existing tests updated (not just passing — actually testing the new behavior).
+3. Run `go test ./...` and `go vet ./...` to confirm nothing is broken.
+
+### How to check
+
+After your code changes are done, re-read the sections of CLAUDE.md, README.md, and prompt templates that relate to what you changed. Diff your mental model of what the docs say against what the code now does. Fix any drift before considering the task complete.
+
 ## Common Development Tasks
 
 - **Add a new provider**: Add entry to `knownProviders` map in config.go, no other changes needed
