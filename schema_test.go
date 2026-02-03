@@ -407,6 +407,47 @@ func TestMarkStoryBlocked_NonExistent(t *testing.T) {
 	}
 }
 
+func TestAddLearning_Deduplication(t *testing.T) {
+	prd := &PRD{Run: Run{Learnings: []string{}}}
+
+	prd.AddLearning("first learning")
+	prd.AddLearning("second learning")
+	prd.AddLearning("first learning") // duplicate
+
+	if len(prd.Run.Learnings) != 2 {
+		t.Errorf("expected 2 learnings (deduplicated), got %d: %v", len(prd.Run.Learnings), prd.Run.Learnings)
+	}
+	if prd.Run.Learnings[0] != "first learning" {
+		t.Errorf("expected first='first learning', got '%s'", prd.Run.Learnings[0])
+	}
+	if prd.Run.Learnings[1] != "second learning" {
+		t.Errorf("expected second='second learning', got '%s'", prd.Run.Learnings[1])
+	}
+}
+
+func TestAddLearning_UniqueAdded(t *testing.T) {
+	prd := &PRD{Run: Run{Learnings: []string{}}}
+
+	prd.AddLearning("learning A")
+	prd.AddLearning("learning B")
+	prd.AddLearning("learning C")
+
+	if len(prd.Run.Learnings) != 3 {
+		t.Errorf("expected 3 unique learnings, got %d", len(prd.Run.Learnings))
+	}
+}
+
+func TestAddLearning_NilLearnings(t *testing.T) {
+	prd := &PRD{Run: Run{Learnings: nil}}
+
+	prd.AddLearning("first")
+	prd.AddLearning("first") // duplicate
+
+	if len(prd.Run.Learnings) != 1 {
+		t.Errorf("expected 1 learning, got %d", len(prd.Run.Learnings))
+	}
+}
+
 func TestBrowserSteps_InUserStory(t *testing.T) {
 	prd := &PRD{
 		SchemaVersion: 2,

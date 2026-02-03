@@ -35,12 +35,14 @@ ralph status auth
 ## Key Features
 
 - **Provider-agnostic**: Works with any AI CLI (amp, claude, opencode, aider, etc.)
+- **Readiness enforcement**: Hard-fails before run if QA commands are missing, placeholder, or not in PATH
 - **Idempotent**: Stop anytime, resume exactly where you left off
 - **Multi-feature**: Work on multiple features in parallel with date-prefixed directories
 - **Deterministic verification**: CLI runs all QA gates, not the AI
-- **Service management**: Auto-starts dev servers, waits for ready, restarts for UI tests
-- **Interactive browser verification**: Real user simulation with rod (click, type, assert, auto-downloads Chromium)
+- **Service management**: Auto-starts dev servers, captures output, checks health during verification
+- **Interactive browser verification**: Real user simulation with rod (click, type, assert, auto-downloads Chromium); console errors are hard failures
 - **Crash recovery**: Tracks `currentStoryId` to resume interrupted stories
+- **Learning deduplication**: Cross-iteration memory preserved on all code paths (including timeouts and errors)
 - **Atomic operations**: Lock file prevents concurrent runs, atomic JSON writes
 - **Auto-update notifications**: Checks for new versions in the background, notifies on exit
 
@@ -62,19 +64,20 @@ ralph run auth          Infinite loop: implement → verify → repeat
 ## How It Works
 
 1. Ralph loads `.ralph/*-[feature]/prd.json`
-2. Creates/switches to `ralph/{feature}` branch
-3. Picks next story (highest priority, not passed, not blocked)
-4. Sets `currentStoryId` in prd.json (crash recovery)
-5. Sends prompt to provider subprocess
-6. Provider implements code, writes tests, commits
-7. Provider outputs `<ralph>DONE</ralph>` when finished
-8. Ralph runs `verify.default` commands
-9. If UI story: restarts services, runs `verify.ui` commands
-10. Pass → mark story complete, next story
-11. Fail → increment retries, retry or block
-12. All stories pass → final verification prompt
-13. Provider outputs `<ralph>VERIFIED</ralph>` or `<ralph>RESET:US-001,US-003</ralph>`
-14. Complete → "Ready to merge"
+2. **Readiness check**: refuses to run if verify commands are placeholder or binaries missing from PATH
+3. Creates/switches to `ralph/{feature}` branch
+4. Picks next story (highest priority, not passed, not blocked)
+5. Sets `currentStoryId` in prd.json (crash recovery)
+6. Sends prompt to provider subprocess (includes deduplicated learnings)
+7. Provider implements code, writes tests, commits
+8. Provider outputs `<ralph>DONE</ralph>` when finished (learnings saved even on timeout/error)
+9. Ralph runs `verify.default` commands
+10. If UI story: restarts services, runs browser verification (console errors = hard fail), runs `verify.ui` commands
+11. Service health check: verifies services still respond
+12. Pass → mark story complete, next story
+13. Fail → increment retries, retry or block
+14. All stories pass → final verification (verify commands + browser checks for all UI stories + service health) → provider reviews → `VERIFIED` or `RESET`
+15. Complete → "Ready to merge"
 
 ## Commands
 
@@ -92,7 +95,7 @@ ralph next <feature>       # Show next story to work on
 ralph validate <feature>   # Validate prd.json schema
 
 # Utility
-ralph doctor               # Check environment
+ralph doctor               # Check environment + readiness
 ralph upgrade              # Update to latest version
 ```
 

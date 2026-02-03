@@ -200,8 +200,13 @@ func (prd *PRD) ClearCurrentStory() {
 	prd.Run.CurrentStoryID = nil
 }
 
-// AddLearning adds a learning to the PRD
+// AddLearning adds a learning to the PRD, deduplicating exact matches.
 func (prd *PRD) AddLearning(learning string) {
+	for _, existing := range prd.Run.Learnings {
+		if existing == learning {
+			return
+		}
+	}
 	prd.Run.Learnings = append(prd.Run.Learnings, learning)
 }
 

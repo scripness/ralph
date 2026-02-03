@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -452,7 +453,7 @@ func TestCheckReadiness_PlaceholderCommands(t *testing.T) {
 func TestCheckReadiness_UIStoriesNoVerifyUI(t *testing.T) {
 	cfg := &RalphConfig{
 		Verify: VerifyConfig{
-			Default: []string{"bun run test"},
+			Default: []string{"go version"},
 		},
 	}
 	prd := &PRD{
@@ -473,8 +474,8 @@ func TestCheckReadiness_UIStoriesNoVerifyUI(t *testing.T) {
 func TestCheckReadiness_AllGood(t *testing.T) {
 	cfg := &RalphConfig{
 		Verify: VerifyConfig{
-			Default: []string{"bun run typecheck", "bun run lint"},
-			UI:      []string{"bun run test:e2e"},
+			Default: []string{"go vet ./..."},
+			UI:      []string{"go test ./..."},
 		},
 	}
 	prd := &PRD{
@@ -492,7 +493,7 @@ func TestCheckReadiness_AllGood(t *testing.T) {
 func TestCheckReadiness_NoUIStories(t *testing.T) {
 	cfg := &RalphConfig{
 		Verify: VerifyConfig{
-			Default: []string{"bun run test"},
+			Default: []string{"go version"},
 		},
 	}
 	prd := &PRD{
@@ -504,5 +505,89 @@ func TestCheckReadiness_NoUIStories(t *testing.T) {
 	issues := CheckReadiness(cfg, prd)
 	if len(issues) != 0 {
 		t.Errorf("expected no issues for non-UI stories without verify.ui, got %v", issues)
+	}
+}
+
+func TestCheckReadiness_VerifyCommandNotInPATH(t *testing.T) {
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"nonexistent-tool-xyz123 run test"},
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "nonexistent-tool-xyz123") && strings.Contains(issue, "not found in PATH") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected issue about unavailable command, got %v", issues)
+	}
+}
+
+func TestCheckReadiness_VerifyUICommandNotInPATH(t *testing.T) {
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+			UI:      []string{"nonexistent-e2e-xyz123 run test:e2e"},
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "nonexistent-e2e-xyz123") && strings.Contains(issue, "verify.ui") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected issue about unavailable verify.ui command, got %v", issues)
+	}
+}
+
+func TestCheckReadiness_ServiceCommandNotInPATH(t *testing.T) {
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+		},
+		Services: []ServiceConfig{
+			{Name: "dev", Start: "nonexistent-server-xyz123 run dev", Ready: "http://localhost:3000"},
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "nonexistent-server-xyz123") && strings.Contains(issue, "service 'dev'") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected issue about unavailable service command, got %v", issues)
+	}
+}
+
+func TestExtractBaseCommand(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"bun run test", "bun"},
+		{"go vet ./...", "go"},
+		{"./scripts/test.sh arg1", "./scripts/test.sh"},
+		{"", ""},
+		{"  go  version  ", "go"},
+	}
+
+	for _, tt := range tests {
+		got := extractBaseCommand(tt.input)
+		if got != tt.want {
+			t.Errorf("extractBaseCommand(%q) = %q, want %q", tt.input, got, tt.want)
+		}
 	}
 }

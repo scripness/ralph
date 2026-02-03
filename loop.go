@@ -123,7 +123,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			fmt.Println(strings.Repeat("=", 60))
 
 			// Run final verification
-			verified, err := runFinalVerification(cfg, featureDir, prd)
+			verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr)
 			if err != nil {
 				return err
 			}
@@ -542,9 +542,15 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 							return result, nil
 						}
 
-						// Warn on console errors
+						// Fail on console errors
 						if len(browserResult.ConsoleErrors) > 0 {
-							fmt.Printf("  ⚠ Console errors detected: %d\n", len(browserResult.ConsoleErrors))
+							fmt.Printf("  ✗ Console errors detected: %d\n", len(browserResult.ConsoleErrors))
+							for _, ce := range browserResult.ConsoleErrors {
+								fmt.Printf("    - %s\n", ce)
+							}
+							result.passed = false
+							result.reason = fmt.Sprintf("browser console errors: %d error(s) detected", len(browserResult.ConsoleErrors))
+							return result, nil
 						}
 					}
 				} else {
@@ -557,7 +563,18 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 						fmt.Print(FormatBrowserResults(browserResults))
 						for _, r := range browserResults {
 							if r.Error != nil {
-								fmt.Printf("  ⚠ Page load error: %v\n", r.Error)
+								result.passed = false
+								result.reason = fmt.Sprintf("page load failed: %v", r.Error)
+								return result, nil
+							}
+							if len(r.ConsoleErrors) > 0 {
+								fmt.Printf("  ✗ Console errors detected: %d\n", len(r.ConsoleErrors))
+								for _, ce := range r.ConsoleErrors {
+									fmt.Printf("    - %s\n", ce)
+								}
+								result.passed = false
+								result.reason = fmt.Sprintf("browser console errors: %d error(s) detected", len(r.ConsoleErrors))
+								return result, nil
 							}
 						}
 					}
@@ -576,11 +593,20 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 		}
 	}
 
+	// Check service health after all verification
+	if svcMgr != nil && svcMgr.HasServices() {
+		if healthIssues := svcMgr.CheckServiceHealth(); len(healthIssues) > 0 {
+			result.passed = false
+			result.reason = fmt.Sprintf("service health check failed: %s", strings.Join(healthIssues, "; "))
+			return result, nil
+		}
+	}
+
 	return result, nil
 }
 
 // runFinalVerification runs final verification and handles story resets
-func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD) (bool, error) {
+func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svcMgr *ServiceManager) (bool, error) {
 	prdPath := featureDir.PrdJsonPath()
 
 	// Run all verification commands first
@@ -596,6 +622,54 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 		fmt.Printf("  → %s\n", cmd)
 		if err := runCommand(cfg.ProjectRoot, cmd); err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
+		}
+	}
+
+	// Run browser verification for all UI stories
+	if svcMgr != nil && cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
+		baseURL := GetBaseURL(cfg.Config.Services)
+		if baseURL != "" {
+			for i := range prd.UserStories {
+				story := &prd.UserStories[i]
+				if story.Blocked || !IsUIStory(story) || len(story.BrowserSteps) == 0 {
+					continue
+				}
+
+				fmt.Printf("  → Browser: %s (%s)\n", story.ID, story.Title)
+
+				if svcMgr.HasUIServices() {
+					if err := svcMgr.RestartForVerify(); err != nil {
+						fmt.Printf("    ⚠ Service restart failed: %v\n", err)
+						continue
+					}
+				}
+
+				browser := NewBrowserRunner(cfg.ProjectRoot, cfg.Config.Browser)
+				browserResult, err := browser.RunSteps(story, baseURL)
+				if err != nil {
+					fmt.Printf("    ⚠ Browser error: %v\n", err)
+				} else if browserResult != nil {
+					fmt.Print(FormatStepResult(browserResult))
+					if browserResult.Error != nil {
+						fmt.Printf("    ✗ Failed: %v\n", browserResult.Error)
+					}
+					if len(browserResult.ConsoleErrors) > 0 {
+						fmt.Printf("    ✗ Console errors: %d\n", len(browserResult.ConsoleErrors))
+						for _, ce := range browserResult.ConsoleErrors {
+							fmt.Printf("      - %s\n", ce)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Check service health after verification
+	if svcMgr != nil && svcMgr.HasServices() {
+		if healthIssues := svcMgr.CheckServiceHealth(); len(healthIssues) > 0 {
+			for _, issue := range healthIssues {
+				fmt.Printf("  ✗ %s\n", issue)
+			}
 		}
 	}
 
@@ -656,7 +730,17 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		return err
 	}
 
-	verified, err := runFinalVerification(cfg, featureDir, prd)
+	// Start services for browser verification
+	svcMgr := NewServiceManager(cfg.ProjectRoot, cfg.Config.Services)
+	defer svcMgr.StopAll()
+	if svcMgr.HasServices() {
+		fmt.Println("Starting services...")
+		if err := svcMgr.EnsureRunning(); err != nil {
+			return fmt.Errorf("failed to start services: %w", err)
+		}
+	}
+
+	verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr)
 	if err != nil {
 		return err
 	}

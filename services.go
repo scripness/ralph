@@ -1,20 +1,61 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
+
+// capturedOutput captures writes to a buffer while also forwarding to a target writer.
+type capturedOutput struct {
+	mu       sync.Mutex
+	buf      bytes.Buffer
+	maxBytes int
+}
+
+func (co *capturedOutput) Write(p []byte) (n int, err error) {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	// Trim from front if buffer exceeds max
+	if co.buf.Len()+len(p) > co.maxBytes {
+		data := co.buf.Bytes()
+		keep := co.maxBytes / 2
+		if len(data) > keep {
+			data = data[len(data)-keep:]
+		}
+		co.buf.Reset()
+		co.buf.Write(data)
+	}
+	co.buf.Write(p)
+	return len(p), nil
+}
+
+func (co *capturedOutput) String() string {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	return co.buf.String()
+}
+
+func (co *capturedOutput) Reset() {
+	co.mu.Lock()
+	defer co.mu.Unlock()
+	co.buf.Reset()
+}
 
 // ServiceManager manages services (dev server, etc.)
 type ServiceManager struct {
 	projectRoot string
 	services    []ServiceConfig
 	processes   map[string]*exec.Cmd
+	outputs     map[string]*capturedOutput
 }
 
 // NewServiceManager creates a new service manager
@@ -23,6 +64,7 @@ func NewServiceManager(projectRoot string, services []ServiceConfig) *ServiceMan
 		projectRoot: projectRoot,
 		services:    services,
 		processes:   make(map[string]*exec.Cmd),
+		outputs:     make(map[string]*capturedOutput),
 	}
 }
 
@@ -98,11 +140,13 @@ func (sm *ServiceManager) startService(svc ServiceConfig) error {
 		cmd.Wait()
 	}
 
-	// Start the service
+	// Start the service with output capture
 	cmd := exec.Command("sh", "-c", svc.Start)
 	cmd.Dir = sm.projectRoot
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	co := &capturedOutput{maxBytes: 256 * 1024}
+	sm.outputs[svc.Name] = co
+	cmd.Stdout = io.MultiWriter(os.Stdout, co)
+	cmd.Stderr = io.MultiWriter(os.Stderr, co)
 	
 	// Set process group so we can kill all children
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -193,4 +237,50 @@ func (sm *ServiceManager) HasUIServices() bool {
 		}
 	}
 	return false
+}
+
+// CheckServiceHealth checks if all started services are still responding.
+func (sm *ServiceManager) CheckServiceHealth() []string {
+	var issues []string
+	for _, svc := range sm.services {
+		if _, started := sm.processes[svc.Name]; started {
+			if !sm.isReady(svc.Ready) {
+				issues = append(issues, fmt.Sprintf("service '%s' not responding at %s", svc.Name, svc.Ready))
+			}
+		}
+	}
+	return issues
+}
+
+// GetRecentOutput returns the last maxLines lines of captured output for a service.
+func (sm *ServiceManager) GetRecentOutput(name string, maxLines int) string {
+	co, ok := sm.outputs[name]
+	if !ok {
+		return ""
+	}
+	output := co.String()
+	lines := strings.Split(output, "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// GetAllRecentOutput returns recent output from all services.
+func (sm *ServiceManager) GetAllRecentOutput(maxLines int) string {
+	var parts []string
+	for name := range sm.outputs {
+		output := sm.GetRecentOutput(name, maxLines)
+		if output != "" {
+			parts = append(parts, fmt.Sprintf("=== %s ===\n%s", name, output))
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// ClearCapturedOutput clears all captured service output.
+func (sm *ServiceManager) ClearCapturedOutput() {
+	for _, co := range sm.outputs {
+		co.Reset()
+	}
 }

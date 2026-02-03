@@ -19,6 +19,8 @@ The CLI has run (or will run) these commands:
 
 {{verifyCommands}}
 
+The CLI has also run browser verification for all UI stories (checking for console errors and step failures) and verified that all managed services are still responding. Any issues from these checks are shown in the output above.
+
 {{learnings}}
 
 ## Your Task

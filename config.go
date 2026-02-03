@@ -271,6 +271,21 @@ func HasPlaceholderVerifyCommands(cfg *RalphConfig) bool {
 	return false
 }
 
+// extractBaseCommand returns the first word of a shell command string.
+// e.g. "bun run test" → "bun", "./scripts/test.sh arg" → "./scripts/test.sh"
+func extractBaseCommand(cmdStr string) string {
+	fields := strings.Fields(cmdStr)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+// isPlaceholderCommand returns true if the command is an echo placeholder.
+func isPlaceholderCommand(cmd string) bool {
+	return strings.HasPrefix(cmd, "echo '") || strings.HasPrefix(cmd, "echo \"")
+}
+
 // CheckReadiness validates that the project is ready for Ralph.
 // Returns a list of issues. Empty list means ready.
 func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
@@ -279,6 +294,35 @@ func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
 	// verify.default must have real commands (not placeholders)
 	if HasPlaceholderVerifyCommands(cfg) {
 		issues = append(issues, "verify.default contains placeholder commands (echo '...'). Add real typecheck/lint/test commands.")
+	}
+
+	// Check verify.default command binaries are available (skip placeholders)
+	for _, cmd := range cfg.Verify.Default {
+		if isPlaceholderCommand(cmd) {
+			continue
+		}
+		base := extractBaseCommand(cmd)
+		if base != "" && !isCommandAvailable(base) {
+			issues = append(issues, fmt.Sprintf("verify.default: '%s' not found in PATH (from: %s)", base, cmd))
+		}
+	}
+
+	// Check verify.ui command binaries are available
+	for _, cmd := range cfg.Verify.UI {
+		base := extractBaseCommand(cmd)
+		if base != "" && !isCommandAvailable(base) {
+			issues = append(issues, fmt.Sprintf("verify.ui: '%s' not found in PATH (from: %s)", base, cmd))
+		}
+	}
+
+	// Check service start command binaries are available
+	for _, svc := range cfg.Services {
+		if svc.Start != "" {
+			base := extractBaseCommand(svc.Start)
+			if base != "" && !isCommandAvailable(base) {
+				issues = append(issues, fmt.Sprintf("service '%s': '%s' not found in PATH (from: %s)", svc.Name, base, svc.Start))
+			}
+		}
 	}
 
 	// UI stories require verify.ui commands

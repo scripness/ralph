@@ -11,14 +11,14 @@ The core idea ("the Ralph Pattern"): break work into small user stories, spawn f
 ```
 main.go           CLI entry point, command dispatch
 commands.go       Command handlers (init, run, verify, prd, status, next, validate, doctor)
-config.go         Configuration loading, validation, provider defaults
-schema.go         PRD data structures, story state machine, validation
+config.go         Configuration loading, validation, provider defaults, readiness checks
+schema.go         PRD data structures, story state machine, validation, PRD quality checks
 prompts.go        Prompt template loading + variable substitution (//go:embed prompts/*)
 loop.go           Main agent loop, provider subprocess management, verification orchestration
 browser.go        Browser automation via rod (Chrome DevTools Protocol)
 prd.go            Interactive PRD state machine (create/refine/finalize)
 feature.go        Date-prefixed feature directory management (.ralph/YYYY-MM-DD-feature/)
-services.go       Dev server lifecycle (start, ready check, restart, stop)
+services.go       Dev server lifecycle, output capture, health checks
 git.go            Git operations (branch, commit, status)
 lock.go           Concurrency lock file (.ralph/ralph.lock)
 atomic.go         Atomic file writes (temp + rename)
@@ -48,27 +48,31 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
 1. `ralph init` creates `ralph.config.json` and `.ralph/` directory
 2. `ralph prd <feature>` runs an interactive state machine: create prd.md -> refine -> finalize to prd.json
 3. `ralph run <feature>` enters the main loop:
+   - Readiness gate: refuses to run if QA commands are missing/placeholder or command binaries aren't in PATH
    - Loads config + PRD, acquires lock, ensures git branch, starts services
    - Each iteration: picks next story (highest priority, not passed/blocked), generates prompt, spawns provider subprocess, captures output with marker detection
-   - After provider signals `<ralph>DONE</ralph>`, CLI runs verification commands
+   - After provider signals `<ralph>DONE</ralph>`, CLI runs verification commands + browser checks (console errors are hard failures) + service health checks
    - Pass -> mark story complete; Fail -> retry (up to maxRetries, then block)
-   - When all stories pass -> final verification prompt -> `VERIFIED` or `RESET`
-4. `ralph verify <feature>` runs verification only (no implementation loop)
+   - When all stories pass -> final verification (verify commands + browser verification for all UI stories + service health) -> provider reviews -> `VERIFIED` or `RESET`
+   - Learnings are saved on every path (including timeout/error)
+4. `ralph verify <feature>` runs verification only (same readiness gates, starts services for browser verification)
 
 ## Responsibility Split: CLI vs AI Provider
 
 This is the most important architectural decision. In the original v1, the AI agent did almost everything (picked stories, ran tests, updated prd.json, committed). In v2, the CLI is the orchestrator and the AI is a pure implementer.
 
 ### CLI handles (the provider must NOT do these):
+- **Readiness enforcement**: Hard-fails before run/verify if QA commands are missing, placeholder, or not in PATH
 - **Story selection**: CLI picks the next story by priority, skipping passed/blocked
 - **Branch management**: CLI creates/switches to the `ralph/<feature>` branch
 - **State updates**: CLI marks stories passed/failed/blocked based on verification results
 - **Verification**: CLI runs `verify.default` and `verify.ui` commands, not the provider
-- **Browser testing**: CLI executes browserSteps via rod
-- **Service management**: CLI starts/stops/restarts dev servers
+- **Browser testing**: CLI executes browserSteps via rod; console errors are hard failures
+- **Service management**: CLI starts/stops/restarts dev servers; captures output; checks health during verification
+- **Learning management**: CLI deduplicates learnings and saves them on every code path (including timeout/error)
 - **Crash recovery**: CLI tracks `currentStoryId` in prd.json to resume interrupted work
 - **Concurrency control**: CLI uses lock file to prevent parallel runs
-- **PRD persistence**: CLI commits prd.json changes atomically
+- **PRD persistence**: CLI commits prd.json changes atomically (including STUCK/timeout/no-DONE paths)
 
 ### Provider handles (told via prompts in prompts/run.md):
 - **Code implementation**: Write the code for the assigned story
@@ -215,15 +219,22 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Lock file**: JSON with pid/startedAt/feature/branch. Stale detection via `kill(pid, 0)`. Atomic creation via `O_CREATE|O_EXCL`.
 - **Feature directories**: `.ralph/YYYY-MM-DD-feature/` format. `FindFeatureDir` finds most recent match by suffix.
 - **Browser steps**: Defined in prd.json per story. Executed by rod in headless Chrome. Screenshots saved to `.ralph/screenshots/`.
+- **Console error enforcement**: Browser console errors are hard verification failures (not warnings). Checked in both per-story and final verification.
 - **Service ready checks**: HTTP GET polling every 500ms until status < 500, with configurable timeout.
+- **Service output capture**: `capturedOutput` ring buffer captures service stdout/stderr via `io.MultiWriter`. Available via `GetRecentOutput()` for diagnostics.
+- **Service health checks**: `CheckServiceHealth()` polls service ready URLs during verification to detect crashed/unresponsive services.
+- **Readiness gates**: `CheckReadiness()` in config.go validates QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`) before allowing `ralph run` or `ralph verify`. Covers `verify.default`, `verify.ui`, and service `start` commands. Placeholder echo commands are detected separately.
+- **Learning deduplication**: `AddLearning()` checks for exact-match duplicates before appending. Learnings are saved on all code paths: success, timeout, error, STUCK, and no-DONE.
+- **PRD quality warnings**: `WarnPRDQuality()` checks stories for missing "Typecheck passes" acceptance criteria (soft warning, does not block).
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
 - **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h. Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`.
 
 ## Testing
 
 Tests are in `*_test.go` files alongside source. Key test files:
-- `config_test.go` - config loading, validation, provider defaults auto-detection
-- `schema_test.go` - PRD validation, story state transitions, browser steps
+- `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation
+- `schema_test.go` - PRD validation, story state transitions, browser steps, learning deduplication, PRD quality
+- `services_test.go` - output capture, service manager, health checks
 - `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism
 - `loop_test.go` - marker detection, provider result parsing
 - `feature_test.go` - directory parsing, timestamp formats
