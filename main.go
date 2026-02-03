@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-var Version = "2.0.0"
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -16,11 +16,16 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
+	if cmd != "upgrade" {
+		startUpdateCheck()
+		defer printUpdateNotice()
+	}
+
 	switch cmd {
 	case "-h", "--help", "help":
 		showHelp()
 	case "-v", "--version", "version":
-		fmt.Printf("ralph v%s\n", Version)
+		fmt.Printf("ralph v%s\n", version)
 	case "init":
 		cmdInit(args)
 	case "run":
@@ -81,5 +86,5 @@ File Structure:
       prd.md                    # Human-readable PRD
       prd.json                  # Finalized for execution
     screenshots/                # Browser verification evidence
-`, Version)
+`, version)
 }

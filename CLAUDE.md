@@ -228,6 +228,20 @@ Tests are in `*_test.go` files alongside source. Key test files:
 
 Run with `go test ./...` or `go test -v ./...` for verbose output.
 
+## Releasing
+
+Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Actions.
+
+To release:
+```bash
+git tag v2.1.0
+git push --tags
+```
+
+The workflow runs: test -> GoReleaser builds 4 binaries (linux/darwin x amd64/arm64) -> creates GitHub Release with auto-generated notes. Version is injected at build time via `-ldflags -X main.version`. The `version` variable in `main.go` defaults to `"dev"` for local builds.
+
+Config: `.goreleaser.yaml`. Workflow: `.github/workflows/release.yml`. CI (push/PR): `.github/workflows/ci.yml`.
+
 ## Common Development Tasks
 
 - **Add a new provider**: Add entry to `providerDefaults` map in config.go, no other changes needed

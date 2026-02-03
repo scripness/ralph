@@ -14,7 +14,7 @@ detect_platform() {
 
     case "$ARCH" in
         x86_64|amd64)
-            ARCH="x64"
+            ARCH="amd64"
             ;;
         aarch64|arm64)
             ARCH="arm64"

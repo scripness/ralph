@@ -1,0 +1,27 @@
+version: 2
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    binary: ralph
+
+archives:
+  - format: binary
+    name_template: "ralph-{{ .Os }}-{{ .Arch }}"
+
+release:
+  github:
+    owner: scripness
+    name: ralph
+  generate_release_notes: true
+
+changelog:
+  use: github-native
