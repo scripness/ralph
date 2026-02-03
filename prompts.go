@@ -76,9 +76,6 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		"retryInfo":          retryStr,
 		"verifyCommands":     verifyStr,
 		"learnings":          learningsStr,
-		"doneMarker":         DoneMarker,
-		"prdPath":            featureDir.PrdJsonPath(),
-		"projectRoot":        cfg.ProjectRoot,
 		"knowledgeFile":      cfg.Config.Provider.KnowledgeFile,
 	})
 }
@@ -127,7 +124,6 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 		"storySummaries": summariesStr,
 		"verifyCommands": verifyStr,
 		"learnings":      learningsStr,
-		"projectRoot":    cfg.ProjectRoot,
 		"knowledgeFile":  cfg.Config.Provider.KnowledgeFile,
 	})
 }
@@ -135,28 +131,25 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 // generatePrdCreatePrompt generates the prompt for creating a new PRD
 func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir) string {
 	return getPrompt("prd-create", map[string]string{
-		"feature":     featureDir.Feature,
-		"outputPath":  featureDir.PrdMdPath(),
-		"projectRoot": cfg.ProjectRoot,
+		"feature":    featureDir.Feature,
+		"outputPath": featureDir.PrdMdPath(),
 	})
 }
 
 // generatePrdRefinePrompt generates the prompt for refining a PRD
 func generatePrdRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string) string {
 	return getPrompt("prd-refine", map[string]string{
-		"feature":     featureDir.Feature,
-		"prdContent":  content,
-		"outputPath":  featureDir.PrdMdPath(),
-		"projectRoot": cfg.ProjectRoot,
+		"feature":    featureDir.Feature,
+		"prdContent": content,
+		"outputPath": featureDir.PrdMdPath(),
 	})
 }
 
 // generatePrdFinalizePrompt generates the prompt for finalizing a PRD
 func generatePrdFinalizePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string) string {
 	return getPrompt("prd-finalize", map[string]string{
-		"feature":     featureDir.Feature,
-		"prdContent":  content,
-		"outputPath":  featureDir.PrdJsonPath(),
-		"projectRoot": cfg.ProjectRoot,
+		"feature":    featureDir.Feature,
+		"prdContent": content,
+		"outputPath": featureDir.PrdJsonPath(),
 	})
 }
