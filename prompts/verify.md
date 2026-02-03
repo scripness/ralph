@@ -31,12 +31,15 @@ Review the implementation thoroughly. The CLI has already executed verification 
 
 ### Review Checklist
 
-1. **Test Coverage**: Are all new functions/routes tested?
+Every item below must pass. If ANY item fails, you MUST RESET the affected stories.
+
+1. **Test Coverage**: Does every new function/route/behavior have tests? Untested code is a RESET.
 2. **Acceptance Criteria**: Does each story meet ALL its criteria?
 3. **Code Quality**: Are patterns consistent with the codebase?
 4. **Integration**: Do the stories work together as a complete feature?
 5. **Edge Cases**: Are error conditions handled?
-6. **Missing Pieces**: Is anything incomplete or skipped?
+6. **Documentation**: Has `{{knowledgeFile}}` been updated with patterns discovered during implementation? New conventions or gotchas left undocumented is a RESET.
+7. **Missing Pieces**: Is anything incomplete or skipped?
 
 ### Review Verification Output
 
@@ -51,11 +54,12 @@ Review the output from the verification commands above:
 ```
 <ralph>VERIFIED</ralph>
 ```
-Use this ONLY when:
-- All verification commands pass
-- All acceptance criteria are met
-- The feature works as intended
-- Code quality is acceptable
+Use this ONLY when ALL of the following are true:
+- All verification commands pass (no test failures, no lint errors)
+- All acceptance criteria are met for every story
+- Every new function/route/behavior has test coverage
+- `{{knowledgeFile}}` has been updated with relevant patterns
+- Code quality is consistent with existing codebase patterns
 
 ### If you find issues that need rework
 ```
@@ -75,10 +79,10 @@ Use this when a story cannot be completed due to external factors.
 
 ## Knowledge Preservation
 
-Before completing verification:
+Before completing verification, check documentation completeness:
 
-1. Check that `{{knowledgeFile}}` files in affected directories contain relevant patterns
-2. If important discoveries were made during implementation, ensure they are documented
+1. Verify that `{{knowledgeFile}}` files in affected directories have been updated with relevant patterns. If they haven't, RESET the stories that failed to document.
+2. Verify that new conventions, gotchas, or integration patterns are recorded — not just code, but the knowledge needed to maintain it.
 3. List any patterns that the user should review:
 
 ```

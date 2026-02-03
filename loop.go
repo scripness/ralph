@@ -622,17 +622,19 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 
 	// Run all verification commands first
 	fmt.Println("\nRunning verification commands...")
+	verifyFailed := false
 	for _, cmd := range cfg.Config.Verify.Default {
 		fmt.Printf("  → %s\n", cmd)
 		if _, err := runCommand(cfg.ProjectRoot, cmd); err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
-			// Don't fail yet, let provider review
+			verifyFailed = true
 		}
 	}
 	for _, cmd := range cfg.Config.Verify.UI {
 		fmt.Printf("  → %s\n", cmd)
 		if _, err := runCommand(cfg.ProjectRoot, cmd); err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
+			verifyFailed = true
 		}
 	}
 
@@ -707,6 +709,11 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 
 	// Check for VERIFIED marker
 	if result.Verified {
+		if verifyFailed {
+			fmt.Println("\nProvider signaled VERIFIED but verification commands failed.")
+			fmt.Println("Overriding to not-verified — fix failing commands before verification can pass.")
+			return false, nil
+		}
 		return true, nil
 	}
 

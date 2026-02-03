@@ -252,6 +252,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **Only one REASON marker is kept**: If multiple `<ralph>REASON:...</ralph>` markers are emitted, each overwrites the previous. Only the last one survives.
 - **SUGGEST_NEXT is advisory only**: The marker is captured but `GetNextStory` selects purely by priority. The suggestion is not currently acted upon.
 - **Verification output is captured for retries**: When verification fails, the last 50 lines of command output are stored in `story.Notes` so the retry agent can see what specifically failed.
+- **Final VERIFIED is gated on verify commands**: If any `verify.default` or `verify.ui` command failed during final verification, the CLI overrides a provider's `VERIFIED` marker and returns not-verified. The provider cannot skip past failing tests.
 
 ## Testing
 
