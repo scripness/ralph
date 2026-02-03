@@ -134,7 +134,7 @@ The CLI may honor this suggestion if the story is valid.
 
 If you discover reusable patterns, gotchas, or codebase conventions:
 
-1. Update the nearest `{{knowledgeFile}}` file in the affected directory
+1. Update the nearest `{{knowledgeFile}}` file in the affected directory (create it if it doesn't exist)
 2. Use `<ralph>LEARNING:brief description</ralph>` to record it
 
 **Good additions to {{knowledgeFile}}:**

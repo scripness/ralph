@@ -191,19 +191,27 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		// Generate and send prompt
 		prompt := generateRunPrompt(cfg, featureDir, prd, story)
 		result, err := runProvider(cfg, prompt)
+
+		// Process learnings and blocks even on error (result is non-nil even on timeout)
+		if result != nil {
+			for _, learning := range result.Learnings {
+				prd.AddLearning(learning)
+			}
+			for _, storyID := range result.Blocks {
+				fmt.Printf("\n⚠ Provider blocked story: %s\n", storyID)
+				prd.MarkStoryBlocked(storyID, result.Reason)
+			}
+		}
+
 		if err != nil {
+			prd.ClearCurrentStory()
+			if saveErr := SavePRD(prdPath, prd); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save PRD: %v\n", saveErr)
+			}
+			if cfg.Config.Commits.PrdChanges {
+				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s provider error", story.ID))
+			}
 			return fmt.Errorf("provider error: %w", err)
-		}
-
-		// Process learnings
-		for _, learning := range result.Learnings {
-			prd.AddLearning(learning)
-		}
-
-		// Process BLOCK markers (provider signals stories should be blocked)
-		for _, storyID := range result.Blocks {
-			fmt.Printf("\n⚠ Provider blocked story: %s\n", storyID)
-			prd.MarkStoryBlocked(storyID, result.Reason)
 		}
 
 		// Check for STUCK marker (provider can't complete but doesn't know why)
@@ -218,6 +226,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			if err := SavePRD(prdPath, prd); err != nil {
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
+			if cfg.Config.Commits.PrdChanges {
+				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s stuck", story.ID))
+			}
 			continue
 		}
 
@@ -228,6 +239,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			prd.ClearCurrentStory()
 			if err := SavePRD(prdPath, prd); err != nil {
 				return fmt.Errorf("failed to save PRD: %w", err)
+			}
+			if cfg.Config.Commits.PrdChanges {
+				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no completion signal", story.ID))
 			}
 			continue
 		}
@@ -588,6 +602,20 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 	// Send verification prompt to provider
 	prompt := generateVerifyPrompt(cfg, featureDir, prd)
 	result, err := runProvider(cfg, prompt)
+
+	// Save learnings from verification
+	if result != nil && len(result.Learnings) > 0 {
+		for _, learning := range result.Learnings {
+			prd.AddLearning(learning)
+		}
+		if saveErr := SavePRD(prdPath, prd); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save verification learnings: %v\n", saveErr)
+		}
+		if cfg.Config.Commits.PrdChanges {
+			commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: save verification learnings")
+		}
+	}
+
 	if err != nil {
 		return false, err
 	}

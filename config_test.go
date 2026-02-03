@@ -402,3 +402,107 @@ func TestWriteDefaultConfig_AutoDetection(t *testing.T) {
 		t.Errorf("expected auto-detected args [--dangerously-allow-all], got %v", cfg.Config.Provider.Args)
 	}
 }
+
+func TestHasPlaceholderVerifyCommands(t *testing.T) {
+	tests := []struct {
+		name     string
+		commands []string
+		want     bool
+	}{
+		{"echo single quote", []string{"echo 'Add your test command'"}, true},
+		{"echo double quote", []string{`echo "Add your lint command"`}, true},
+		{"real commands", []string{"bun run typecheck", "bun run lint", "bun run test:unit"}, false},
+		{"mixed real and placeholder", []string{"bun run test", "echo 'Add your lint command'"}, true},
+		{"echo without quote", []string{"echo test"}, false},
+		{"empty", []string{}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &RalphConfig{Verify: VerifyConfig{Default: tt.commands}}
+			got := HasPlaceholderVerifyCommands(cfg)
+			if got != tt.want {
+				t.Errorf("HasPlaceholderVerifyCommands() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckReadiness_PlaceholderCommands(t *testing.T) {
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"echo 'Add your test command'"},
+		},
+	}
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Tags: []string{"backend"}},
+		},
+	}
+
+	issues := CheckReadiness(cfg, prd)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d: %v", len(issues), issues)
+	}
+	if issues[0] != "verify.default contains placeholder commands (echo '...'). Add real typecheck/lint/test commands." {
+		t.Errorf("unexpected issue: %s", issues[0])
+	}
+}
+
+func TestCheckReadiness_UIStoriesNoVerifyUI(t *testing.T) {
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"bun run test"},
+		},
+	}
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Tags: []string{"ui"}},
+		},
+	}
+
+	issues := CheckReadiness(cfg, prd)
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d: %v", len(issues), issues)
+	}
+	if issues[0] != "PRD has UI stories but verify.ui has no commands. Add e2e test commands (e.g., 'bun run test:e2e')." {
+		t.Errorf("unexpected issue: %s", issues[0])
+	}
+}
+
+func TestCheckReadiness_AllGood(t *testing.T) {
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"bun run typecheck", "bun run lint"},
+			UI:      []string{"bun run test:e2e"},
+		},
+	}
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Tags: []string{"ui"}},
+		},
+	}
+
+	issues := CheckReadiness(cfg, prd)
+	if len(issues) != 0 {
+		t.Errorf("expected no issues, got %v", issues)
+	}
+}
+
+func TestCheckReadiness_NoUIStories(t *testing.T) {
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"bun run test"},
+		},
+	}
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Tags: []string{"backend"}},
+		},
+	}
+
+	issues := CheckReadiness(cfg, prd)
+	if len(issues) != 0 {
+		t.Errorf("expected no issues for non-UI stories without verify.ui, got %v", issues)
+	}
+}

@@ -6,6 +6,22 @@ import (
 	"path/filepath"
 )
 
+func checkProviderAvailable(cfg *ResolvedConfig) {
+	if !isCommandAvailable(cfg.Config.Provider.Command) {
+		fmt.Fprintf(os.Stderr, "Error: provider command '%s' not found in PATH\n", cfg.Config.Provider.Command)
+		fmt.Fprintln(os.Stderr, "Install it or update provider.command in ralph.config.json.")
+		os.Exit(1)
+	}
+}
+
+func checkGitAvailable() {
+	if !isCommandAvailable("git") {
+		fmt.Fprintln(os.Stderr, "Error: git not found in PATH")
+		fmt.Fprintln(os.Stderr, "Git is required for branch management and commits.")
+		os.Exit(1)
+	}
+}
+
 func cmdInit(args []string) {
 	force := false
 	for _, arg := range args {
@@ -75,6 +91,9 @@ func cmdRun(args []string) {
 		os.Exit(1)
 	}
 
+	checkProviderAvailable(cfg)
+	checkGitAvailable()
+
 	featureDir, err := FindFeatureDir(projectRoot, feature, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -85,6 +104,33 @@ func cmdRun(args []string) {
 		fmt.Fprintf(os.Stderr, "No prd.json found for feature '%s'\n", feature)
 		fmt.Fprintf(os.Stderr, "Run 'ralph prd %s' to create and finalize a PRD first.\n", feature)
 		os.Exit(1)
+	}
+
+	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Enforce codebase readiness
+	if issues := CheckReadiness(&cfg.Config, prd); len(issues) > 0 {
+		fmt.Fprintln(os.Stderr, "Error: codebase is not ready for Ralph")
+		fmt.Fprintln(os.Stderr, "")
+		for _, issue := range issues {
+			fmt.Fprintf(os.Stderr, "  ✗ %s\n", issue)
+		}
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Prepare your project for agentic work, then try again.")
+		fmt.Fprintln(os.Stderr, "Run 'ralph doctor' for a full environment check.")
+		os.Exit(1)
+	}
+
+	// PRD quality warnings (soft — warn but don't block)
+	if warnings := WarnPRDQuality(prd); len(warnings) > 0 {
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
+		}
+		fmt.Fprintln(os.Stderr, "")
 	}
 
 	if err := runLoop(cfg, featureDir); err != nil {
@@ -110,6 +156,9 @@ func cmdVerify(args []string) {
 		os.Exit(1)
 	}
 
+	checkProviderAvailable(cfg)
+	checkGitAvailable()
+
 	featureDir, err := FindFeatureDir(projectRoot, feature, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -124,6 +173,19 @@ func cmdVerify(args []string) {
 	prd, err := LoadPRD(featureDir.PrdJsonPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Enforce codebase readiness
+	if issues := CheckReadiness(&cfg.Config, prd); len(issues) > 0 {
+		fmt.Fprintln(os.Stderr, "Error: codebase is not ready for Ralph")
+		fmt.Fprintln(os.Stderr, "")
+		for _, issue := range issues {
+			fmt.Fprintf(os.Stderr, "  ✗ %s\n", issue)
+		}
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Prepare your project for agentic work, then try again.")
+		fmt.Fprintln(os.Stderr, "Run 'ralph doctor' for a full environment check.")
 		os.Exit(1)
 	}
 
@@ -162,6 +224,8 @@ func cmdPrd(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	checkProviderAvailable(cfg)
 
 	// Find or create feature directory
 	featureDir, err := FindFeatureDir(projectRoot, feature, true)
@@ -423,6 +487,29 @@ func cmdDoctor(args []string) {
 	} else {
 		fmt.Printf("✗ git not found\n")
 		issues++
+	}
+
+	// Check verify commands
+	if err == nil {
+		if HasPlaceholderVerifyCommands(&cfg.Config) {
+			fmt.Printf("✗ verify.default: placeholder commands (replace with real typecheck/lint/test)\n")
+			issues++
+		} else {
+			fmt.Printf("✓ verify.default: %d commands configured\n", len(cfg.Config.Verify.Default))
+		}
+
+		if len(cfg.Config.Verify.UI) > 0 {
+			fmt.Printf("✓ verify.ui: %d commands configured\n", len(cfg.Config.Verify.UI))
+		} else {
+			fmt.Printf("○ verify.ui: no commands (required for UI stories)\n")
+		}
+
+		// Browser check
+		if cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
+			fmt.Printf("✓ Browser verification: enabled (rod auto-downloads Chrome if needed)\n")
+		} else {
+			fmt.Printf("○ Browser verification: disabled\n")
+		}
 	}
 
 	// List features

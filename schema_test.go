@@ -458,6 +458,51 @@ func TestBrowserStep_Timeout(t *testing.T) {
 	}
 }
 
+func TestWarnPRDQuality_MissingTypecheck(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", AcceptanceCriteria: []string{"Feature works correctly"}},
+			{ID: "US-002", AcceptanceCriteria: []string{"Typecheck passes", "UI renders"}},
+		},
+	}
+
+	warnings := WarnPRDQuality(prd)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if warnings[0] != "US-001: missing 'Typecheck passes' criterion" {
+		t.Errorf("unexpected warning: %s", warnings[0])
+	}
+}
+
+func TestWarnPRDQuality_AllGood(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", AcceptanceCriteria: []string{"Typecheck passes", "Tests pass"}},
+			{ID: "US-002", AcceptanceCriteria: []string{"Typecheck passes", "UI renders"}},
+		},
+	}
+
+	warnings := WarnPRDQuality(prd)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", warnings)
+	}
+}
+
+func TestWarnPRDQuality_CaseInsensitive(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", AcceptanceCriteria: []string{"typecheck passes"}},
+			{ID: "US-002", AcceptanceCriteria: []string{"All TYPECHECK errors resolved"}},
+		},
+	}
+
+	warnings := WarnPRDQuality(prd)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for case-insensitive match, got %v", warnings)
+	}
+}
+
 func TestLoadPRD_WithBrowserSteps(t *testing.T) {
 	dir := t.TempDir()
 	prdPath := filepath.Join(dir, "prd.json")

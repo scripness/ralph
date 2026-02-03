@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // ProviderConfig configures the AI provider CLI
@@ -258,4 +259,41 @@ func WriteDefaultConfig(projectRoot string) error {
 	}
 
 	return AtomicWriteJSON(ConfigPath(projectRoot), cfg)
+}
+
+// HasPlaceholderVerifyCommands returns true if any verify commands are placeholders.
+func HasPlaceholderVerifyCommands(cfg *RalphConfig) bool {
+	for _, cmd := range cfg.Verify.Default {
+		if strings.HasPrefix(cmd, "echo '") || strings.HasPrefix(cmd, "echo \"") {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckReadiness validates that the project is ready for Ralph.
+// Returns a list of issues. Empty list means ready.
+func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
+	var issues []string
+
+	// verify.default must have real commands (not placeholders)
+	if HasPlaceholderVerifyCommands(cfg) {
+		issues = append(issues, "verify.default contains placeholder commands (echo '...'). Add real typecheck/lint/test commands.")
+	}
+
+	// UI stories require verify.ui commands
+	if prd != nil {
+		hasUIStories := false
+		for _, s := range prd.UserStories {
+			if IsUIStory(&s) {
+				hasUIStories = true
+				break
+			}
+		}
+		if hasUIStories && len(cfg.Verify.UI) == 0 {
+			issues = append(issues, "PRD has UI stories but verify.ui has no commands. Add e2e test commands (e.g., 'bun run test:e2e').")
+		}
+	}
+
+	return issues
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -280,4 +281,22 @@ func CountBlocked(prd *PRD) int {
 		}
 	}
 	return count
+}
+
+// WarnPRDQuality returns warnings about PRD quality issues (not errors).
+func WarnPRDQuality(prd *PRD) []string {
+	var warnings []string
+	for _, story := range prd.UserStories {
+		hasTypecheck := false
+		for _, criterion := range story.AcceptanceCriteria {
+			if strings.Contains(strings.ToLower(criterion), "typecheck") {
+				hasTypecheck = true
+				break
+			}
+		}
+		if !hasTypecheck {
+			warnings = append(warnings, fmt.Sprintf("%s: missing 'Typecheck passes' criterion", story.ID))
+		}
+	}
+	return warnings
 }
