@@ -406,3 +406,100 @@ func TestMarkStoryBlocked_NonExistent(t *testing.T) {
 		t.Error("expected US-001 to remain unblocked")
 	}
 }
+
+func TestBrowserSteps_InUserStory(t *testing.T) {
+	prd := &PRD{
+		SchemaVersion: 2,
+		Project:       "Test",
+		BranchName:    "ralph/test",
+		UserStories: []UserStory{
+			{
+				ID:                 "US-001",
+				Title:              "Login form",
+				AcceptanceCriteria: []string{"Login works"},
+				Tags:               []string{"ui"},
+				BrowserSteps: []BrowserStep{
+					{Action: "navigate", URL: "/login"},
+					{Action: "type", Selector: "#email", Value: "test@example.com"},
+					{Action: "click", Selector: "button[type=submit]"},
+					{Action: "waitFor", Selector: ".dashboard"},
+					{Action: "assertText", Selector: "h1", Contains: "Welcome"},
+				},
+			},
+		},
+	}
+
+	err := ValidatePRD(prd)
+	if err != nil {
+		t.Errorf("expected valid PRD with browserSteps, got error: %v", err)
+	}
+
+	story := GetStoryByID(prd, "US-001")
+	if len(story.BrowserSteps) != 5 {
+		t.Errorf("expected 5 browser steps, got %d", len(story.BrowserSteps))
+	}
+	if story.BrowserSteps[0].Action != "navigate" {
+		t.Errorf("expected first step action='navigate', got '%s'", story.BrowserSteps[0].Action)
+	}
+	if story.BrowserSteps[1].Selector != "#email" {
+		t.Errorf("expected second step selector='#email', got '%s'", story.BrowserSteps[1].Selector)
+	}
+}
+
+func TestBrowserStep_Timeout(t *testing.T) {
+	step := BrowserStep{
+		Action:   "waitFor",
+		Selector: ".slow-element",
+		Timeout:  30,
+	}
+
+	if step.Timeout != 30 {
+		t.Errorf("expected timeout=30, got %d", step.Timeout)
+	}
+}
+
+func TestLoadPRD_WithBrowserSteps(t *testing.T) {
+	dir := t.TempDir()
+	prdPath := filepath.Join(dir, "prd.json")
+
+	content := `{
+		"schemaVersion": 2,
+		"project": "Test",
+		"branchName": "ralph/test",
+		"description": "Test",
+		"run": {"startedAt": null, "currentStoryId": null, "learnings": []},
+		"userStories": [
+			{
+				"id": "US-001",
+				"title": "Test",
+				"description": "...",
+				"acceptanceCriteria": ["x"],
+				"tags": ["ui"],
+				"priority": 1,
+				"passes": false,
+				"retries": 0,
+				"blocked": false,
+				"lastResult": null,
+				"notes": "",
+				"browserSteps": [
+					{"action": "navigate", "url": "/test"},
+					{"action": "assertVisible", "selector": ".content"}
+				]
+			}
+		]
+	}`
+	os.WriteFile(prdPath, []byte(content), 0644)
+
+	prd, err := LoadPRD(prdPath)
+	if err != nil {
+		t.Fatalf("failed to load PRD: %v", err)
+	}
+
+	story := GetStoryByID(prd, "US-001")
+	if len(story.BrowserSteps) != 2 {
+		t.Errorf("expected 2 browser steps, got %d", len(story.BrowserSteps))
+	}
+	if story.BrowserSteps[0].URL != "/test" {
+		t.Errorf("expected URL='/test', got '%s'", story.BrowserSteps[0].URL)
+	}
+}

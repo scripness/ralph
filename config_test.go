@@ -181,3 +181,109 @@ func TestWriteDefaultConfig(t *testing.T) {
 		t.Errorf("expected provider.command='amp', got '%s'", cfg.Config.Provider.Command)
 	}
 }
+
+func TestApplyProviderDefaults_Amp(t *testing.T) {
+	p := &ProviderConfig{Command: "amp"}
+	applyProviderDefaults(p)
+
+	if p.PromptMode != "stdin" {
+		t.Errorf("expected promptMode='stdin' for amp, got '%s'", p.PromptMode)
+	}
+	if p.KnowledgeFile != "AGENTS.md" {
+		t.Errorf("expected knowledgeFile='AGENTS.md' for amp, got '%s'", p.KnowledgeFile)
+	}
+}
+
+func TestApplyProviderDefaults_Claude(t *testing.T) {
+	p := &ProviderConfig{Command: "claude"}
+	applyProviderDefaults(p)
+
+	if p.PromptMode != "stdin" {
+		t.Errorf("expected promptMode='stdin' for claude, got '%s'", p.PromptMode)
+	}
+	if p.KnowledgeFile != "CLAUDE.md" {
+		t.Errorf("expected knowledgeFile='CLAUDE.md' for claude, got '%s'", p.KnowledgeFile)
+	}
+}
+
+func TestApplyProviderDefaults_Opencode(t *testing.T) {
+	p := &ProviderConfig{Command: "opencode"}
+	applyProviderDefaults(p)
+
+	if p.PromptMode != "arg" {
+		t.Errorf("expected promptMode='arg' for opencode, got '%s'", p.PromptMode)
+	}
+	if p.KnowledgeFile != "AGENTS.md" {
+		t.Errorf("expected knowledgeFile='AGENTS.md' for opencode, got '%s'", p.KnowledgeFile)
+	}
+}
+
+func TestApplyProviderDefaults_UnknownProvider(t *testing.T) {
+	p := &ProviderConfig{Command: "my-custom-ai"}
+	applyProviderDefaults(p)
+
+	// Should use defaults
+	if p.PromptMode != "stdin" {
+		t.Errorf("expected default promptMode='stdin', got '%s'", p.PromptMode)
+	}
+	if p.KnowledgeFile != "AGENTS.md" {
+		t.Errorf("expected default knowledgeFile='AGENTS.md', got '%s'", p.KnowledgeFile)
+	}
+}
+
+func TestApplyProviderDefaults_UserOverride(t *testing.T) {
+	p := &ProviderConfig{
+		Command:       "amp",
+		PromptMode:    "file",
+		KnowledgeFile: "CUSTOM.md",
+	}
+	applyProviderDefaults(p)
+
+	// User values should not be overwritten
+	if p.PromptMode != "file" {
+		t.Errorf("expected user-set promptMode='file', got '%s'", p.PromptMode)
+	}
+	if p.KnowledgeFile != "CUSTOM.md" {
+		t.Errorf("expected user-set knowledgeFile='CUSTOM.md', got '%s'", p.KnowledgeFile)
+	}
+}
+
+func TestApplyProviderDefaults_InvalidPromptMode(t *testing.T) {
+	p := &ProviderConfig{
+		Command:    "amp",
+		PromptMode: "invalid",
+	}
+	applyProviderDefaults(p)
+
+	// Invalid mode should fallback to stdin
+	if p.PromptMode != "stdin" {
+		t.Errorf("expected fallback promptMode='stdin', got '%s'", p.PromptMode)
+	}
+}
+
+func TestLoadConfig_ProviderDefaults(t *testing.T) {
+	dir := t.TempDir()
+
+	configContent := `{
+		"provider": {
+			"command": "claude"
+		},
+		"verify": {
+			"default": ["bun run test"]
+		}
+	}`
+	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should auto-detect claude defaults
+	if cfg.Config.Provider.PromptMode != "stdin" {
+		t.Errorf("expected promptMode='stdin', got '%s'", cfg.Config.Provider.PromptMode)
+	}
+	if cfg.Config.Provider.KnowledgeFile != "CLAUDE.md" {
+		t.Errorf("expected knowledgeFile='CLAUDE.md', got '%s'", cfg.Config.Provider.KnowledgeFile)
+	}
+}

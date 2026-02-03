@@ -167,6 +167,101 @@ func TestGetBaseURL_NoServices(t *testing.T) {
 	}
 }
 
+func TestTruncateText(t *testing.T) {
+	tests := []struct {
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{"hello", 10, "hello"},
+		{"hello world", 5, "hello..."},
+		{"", 5, ""},
+		{"abc", 3, "abc"},
+		{"abcd", 3, "abc..."},
+	}
+
+	for _, tt := range tests {
+		result := truncateText(tt.input, tt.maxLen)
+		if result != tt.expected {
+			t.Errorf("truncateText(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
+		}
+	}
+}
+
+func TestFormatStepResult(t *testing.T) {
+	result := &BrowserCheckResult{
+		URL: "http://localhost:3000",
+		StepResults: []StepResult{
+			{
+				Step:    BrowserStep{Action: "navigate", URL: "/login"},
+				Passed:  true,
+				Elapsed: 100 * 1000000, // 100ms
+			},
+			{
+				Step:    BrowserStep{Action: "click", Selector: "#submit"},
+				Passed:  false,
+				Error:   "element not found",
+				Elapsed: 50 * 1000000,
+			},
+		},
+	}
+
+	output := FormatStepResult(result)
+
+	if output == "" {
+		t.Error("expected non-empty output")
+	}
+	if !containsString(output, "navigate") {
+		t.Error("output should contain navigate action")
+	}
+	if !containsString(output, "click") {
+		t.Error("output should contain click action")
+	}
+	if !containsString(output, "element not found") {
+		t.Error("output should contain error message")
+	}
+}
+
+func TestFormatStepResult_Nil(t *testing.T) {
+	output := FormatStepResult(nil)
+	if output != "" {
+		t.Errorf("expected empty string for nil, got %q", output)
+	}
+}
+
+func TestFormatStepResult_AllPassed(t *testing.T) {
+	result := &BrowserCheckResult{
+		URL: "http://localhost:3000",
+		StepResults: []StepResult{
+			{Step: BrowserStep{Action: "navigate"}, Passed: true},
+			{Step: BrowserStep{Action: "click"}, Passed: true},
+		},
+	}
+
+	output := FormatStepResult(result)
+
+	if !containsString(output, "All browser steps passed") {
+		t.Error("output should indicate all steps passed")
+	}
+}
+
+func TestBrowserResultsHaveErrors(t *testing.T) {
+	noErrors := []BrowserCheckResult{
+		{URL: "http://localhost", Error: nil, ConsoleErrors: nil},
+	}
+	if BrowserResultsHaveErrors(noErrors) {
+		t.Error("expected no errors")
+	}
+
+	withError := []BrowserCheckResult{
+		{URL: "http://localhost", Error: nil},
+		{URL: "http://localhost", Error: nil, ConsoleErrors: []string{"error"}},
+	}
+	if !BrowserResultsHaveErrors(withError) {
+		t.Error("expected errors due to console errors")
+	}
+}
+
 func TestFormatBrowserResults(t *testing.T) {
 	results := []BrowserCheckResult{
 		{
