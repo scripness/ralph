@@ -127,6 +127,14 @@ func cmdVerify(args []string) {
 		os.Exit(1)
 	}
 
+	// Acquire lock to prevent concurrent run+verify
+	lock := NewLockFile(projectRoot)
+	if err := lock.Acquire(feature, prd.BranchName); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer lock.Release()
+
 	fmt.Printf("Feature: %s\n", feature)
 	fmt.Printf("Project: %s\n", prd.Project)
 	fmt.Printf("Path: %s\n", featureDir.Path)

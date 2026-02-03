@@ -17,7 +17,7 @@ type LastResult struct {
 
 // BrowserStep represents a single browser verification step
 type BrowserStep struct {
-	Action   string `json:"action"`             // navigate, click, type, waitFor, assertText, assertVisible, screenshot
+	Action   string `json:"action"`             // navigate, click, type, waitFor, assertVisible, assertText, assertNotVisible, submit, screenshot, wait
 	URL      string `json:"url,omitempty"`      // for navigate
 	Selector string `json:"selector,omitempty"` // CSS selector for click, type, waitFor, assert*
 	Value    string `json:"value,omitempty"`    // for type action
@@ -112,25 +112,26 @@ func ValidatePRD(prd *PRD) error {
 	return nil
 }
 
-// GetNextStory returns the next story to work on (not passed, not blocked, by priority)
+// GetNextStory returns the next story to work on (not passed, not blocked, by priority).
+// The returned pointer references the original element in prd.UserStories.
 func GetNextStory(prd *PRD) *UserStory {
-	var incomplete []UserStory
-	for _, s := range prd.UserStories {
+	var indices []int
+	for i, s := range prd.UserStories {
 		if !s.Passes && !s.Blocked {
-			incomplete = append(incomplete, s)
+			indices = append(indices, i)
 		}
 	}
 
-	if len(incomplete) == 0 {
+	if len(indices) == 0 {
 		return nil
 	}
 
 	// Sort by priority (lower = higher priority)
-	sort.Slice(incomplete, func(i, j int) bool {
-		return incomplete[i].Priority < incomplete[j].Priority
+	sort.Slice(indices, func(a, b int) bool {
+		return prd.UserStories[indices[a]].Priority < prd.UserStories[indices[b]].Priority
 	})
 
-	return &incomplete[0]
+	return &prd.UserStories[indices[0]]
 }
 
 // GetStoryByID returns a story by its ID

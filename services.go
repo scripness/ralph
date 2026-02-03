@@ -54,19 +54,18 @@ func (sm *ServiceManager) StopAll() {
 	for name, cmd := range sm.processes {
 		if cmd.Process != nil {
 			fmt.Printf("Stopping service: %s\n", name)
-			// Try graceful shutdown first
-			cmd.Process.Signal(syscall.SIGTERM)
-			
-			// Wait briefly, then force kill
+			// Signal the process group so child processes are also terminated
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+
+			// Wait briefly, then force kill the group
 			done := make(chan error, 1)
 			go func() { done <- cmd.Wait() }()
-			
+
 			select {
 			case <-done:
 				// Process exited
 			case <-time.After(5 * time.Second):
-				// Force kill
-				cmd.Process.Kill()
+				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
 		}
 	}
