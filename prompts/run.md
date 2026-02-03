@@ -48,7 +48,7 @@ Implement the following story:
 
 ## Before You Start
 
-1. Review the `{{learnings}}` section below for prior context
+1. Check the Learnings section below (if present) for prior context
 2. Check the nearest `{{knowledgeFile}}` for codebase conventions
 3. Read related code to understand existing patterns
 4. Plan your approach before writing code

@@ -42,7 +42,20 @@ List the concrete requirements:
 
 ### 4. User Stories
 
-**Critical sizing rule**: Each story must be completable in ONE implementation session. If it takes more than 2-3 sentences to describe, split it.
+**Critical sizing rule**: Each story must be completable in ONE implementation session (one AI context window). The implementing agent starts fresh each iteration with no memory of previous work. If a story is too big, the agent runs out of context before finishing and produces broken code.
+
+**Right-sized stories** (one focused change):
+- Add a database column and migration
+- Add a UI component to an existing page
+- Update a server action with new logic
+- Add a filter dropdown to a list
+
+**Too big — split these:**
+- "Build the entire dashboard" → Split into: schema, queries, UI components, filters
+- "Add authentication" → Split into: schema, middleware, login UI, session handling
+- "Refactor the API" → Split into one story per endpoint or pattern
+
+**Rule of thumb:** If you cannot describe the change in 2-3 sentences, it is too big.
 
 **Ordering rule**: Stories must be ordered by dependency — no story may depend on a later story. Typical order: schema → backend → API → UI.
 
@@ -107,6 +120,29 @@ These interactions will become automated browser verification steps (browserStep
 ## Save Location
 
 Save the PRD to: {{outputPath}}
+
+## Splitting Large Features
+
+If a feature is large, split it into focused stories:
+
+**Original:** "Add user notification system"
+
+**Split into:**
+1. US-001: Add notifications table to database
+2. US-002: Create notification service for sending notifications
+3. US-003: Add notification bell icon to header
+4. US-004: Create notification dropdown panel
+5. US-005: Add mark-as-read functionality
+
+Each story is one focused change that can be completed and verified independently.
+
+## Writing Quality
+
+The PRD reader will be an AI agent with a single context window. Therefore:
+- Be explicit and unambiguous
+- Avoid jargon or explain it
+- Provide enough detail to understand purpose and core logic
+- Use concrete examples where helpful
 
 ## Important
 

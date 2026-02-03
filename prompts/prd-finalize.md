@@ -9,9 +9,12 @@ Convert this PRD to prd.json format for execution.
 ## Quality Gates (Check Before Converting)
 
 ### 1. Story Sizing
-Each story must be completable in ONE implementation session.
+Each story must be completable in ONE implementation session (one AI context window). The implementing agent starts fresh each iteration with no memory. If a story is too big, the agent runs out of context and produces broken code.
 - If a story is too large, **do not convert** — ask to split it first.
-- Rule of thumb: if it takes more than 2-3 sentences to describe, it's too big.
+- Rule of thumb: if you cannot describe the change in 2-3 sentences, it is too big.
+
+**Right-sized:** "Add priority column and migration", "Display status badge on task cards"
+**Too big:** "Build the entire dashboard" → split into schema, queries, UI components, filters
 
 ### 2. Acceptance Criteria Verifiability
 Every criterion must be specific and testable.
