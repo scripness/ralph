@@ -237,6 +237,17 @@ func (prd *PRD) ResetStory(storyID, notes string, maxRetries int) {
 	}
 }
 
+// MarkStoryBlocked marks a story as blocked (provider explicitly blocked it)
+func (prd *PRD) MarkStoryBlocked(storyID, notes string) {
+	for i := range prd.UserStories {
+		if prd.UserStories[i].ID == storyID {
+			prd.UserStories[i].Blocked = true
+			prd.UserStories[i].Notes = notes
+			break
+		}
+	}
+}
+
 // CountComplete returns the number of completed stories
 func CountComplete(prd *PRD) int {
 	count := 0

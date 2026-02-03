@@ -19,24 +19,30 @@ import (
 const (
 	DoneMarker     = "<ralph>DONE</ralph>"
 	VerifiedMarker = "<ralph>VERIFIED</ralph>"
+	StuckMarker    = "<ralph>STUCK</ralph>"
 )
 
 var (
-	LearningPattern = regexp.MustCompile(`<ralph>LEARNING:(.+?)</ralph>`)
-	ResetPattern    = regexp.MustCompile(`<ralph>RESET:(.+?)</ralph>`)
-	ReasonPattern   = regexp.MustCompile(`<ralph>REASON:(.+?)</ralph>`)
+	LearningPattern    = regexp.MustCompile(`<ralph>LEARNING:(.+?)</ralph>`)
+	ResetPattern       = regexp.MustCompile(`<ralph>RESET:(.+?)</ralph>`)
+	ReasonPattern      = regexp.MustCompile(`<ralph>REASON:(.+?)</ralph>`)
+	BlockPattern       = regexp.MustCompile(`<ralph>BLOCK:(.+?)</ralph>`)
+	SuggestNextPattern = regexp.MustCompile(`<ralph>SUGGEST_NEXT:(.+?)</ralph>`)
 )
 
 // ProviderResult contains the result of a provider iteration
 type ProviderResult struct {
-	Output    string
-	Done      bool
-	Learnings []string
-	Resets    []string
-	Reason    string
-	Verified  bool
-	ExitCode  int
-	TimedOut  bool
+	Output      string
+	Done        bool
+	Stuck       bool
+	Learnings   []string
+	Resets      []string
+	Blocks      []string
+	SuggestNext string
+	Reason      string
+	Verified    bool
+	ExitCode    int
+	TimedOut    bool
 }
 
 // runLoop runs the main implementation loop for a feature
@@ -194,6 +200,27 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			prd.AddLearning(learning)
 		}
 
+		// Process BLOCK markers (provider signals stories should be blocked)
+		for _, storyID := range result.Blocks {
+			fmt.Printf("\n⚠ Provider blocked story: %s\n", storyID)
+			prd.MarkStoryBlocked(storyID, result.Reason)
+		}
+
+		// Check for STUCK marker (provider can't complete but doesn't know why)
+		if result.Stuck {
+			reason := result.Reason
+			if reason == "" {
+				reason = "Provider signaled STUCK"
+			}
+			fmt.Printf("\n⚠ Provider stuck on %s: %s\n", story.ID, reason)
+			prd.MarkStoryFailed(story.ID, reason, cfg.Config.MaxRetries)
+			prd.ClearCurrentStory()
+			if err := SavePRD(prdPath, prd); err != nil {
+				return fmt.Errorf("failed to save PRD: %w", err)
+			}
+			continue
+		}
+
 		// Check for DONE marker
 		if !result.Done {
 			fmt.Println("\nProvider did not signal completion. Retrying...")
@@ -347,6 +374,9 @@ func processLine(line string, result *ProviderResult) {
 	if strings.Contains(line, VerifiedMarker) {
 		result.Verified = true
 	}
+	if strings.Contains(line, StuckMarker) {
+		result.Stuck = true
+	}
 
 	// Extract learnings
 	if matches := LearningPattern.FindStringSubmatch(line); len(matches) > 1 {
@@ -359,6 +389,19 @@ func processLine(line string, result *ProviderResult) {
 		for _, id := range ids {
 			result.Resets = append(result.Resets, strings.TrimSpace(id))
 		}
+	}
+
+	// Extract blocks
+	if matches := BlockPattern.FindStringSubmatch(line); len(matches) > 1 {
+		ids := strings.Split(matches[1], ",")
+		for _, id := range ids {
+			result.Blocks = append(result.Blocks, strings.TrimSpace(id))
+		}
+	}
+
+	// Extract suggest next
+	if matches := SuggestNextPattern.FindStringSubmatch(line); len(matches) > 1 {
+		result.SuggestNext = strings.TrimSpace(matches[1])
 	}
 
 	// Extract reason

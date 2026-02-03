@@ -372,3 +372,37 @@ func TestResetStory(t *testing.T) {
 		t.Errorf("expected notes='needs rework', got '%s'", story.Notes)
 	}
 }
+
+func TestMarkStoryBlocked(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-007", Blocked: false, Notes: ""},
+		},
+	}
+
+	prd.MarkStoryBlocked("US-007", "Depends on US-003 which isn't complete")
+
+	story := GetStoryByID(prd, "US-007")
+	if !story.Blocked {
+		t.Error("expected blocked=true")
+	}
+	if story.Notes != "Depends on US-003 which isn't complete" {
+		t.Errorf("expected notes set, got '%s'", story.Notes)
+	}
+}
+
+func TestMarkStoryBlocked_NonExistent(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Blocked: false},
+		},
+	}
+
+	// Should not panic when blocking non-existent story
+	prd.MarkStoryBlocked("US-999", "reason")
+
+	story := GetStoryByID(prd, "US-001")
+	if story.Blocked {
+		t.Error("expected US-001 to remain unblocked")
+	}
+}

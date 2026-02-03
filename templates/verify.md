@@ -30,12 +30,20 @@ These commands should pass:
 
 Review the implementation thoroughly. Run the verification commands if needed.
 
-### If you find issues
+### If you find issues that need rework
 
-Output the story IDs that need rework:
+Output the story IDs that need reimplementation:
 ```
 <ralph>RESET:US-001,US-003</ralph>
 <ralph>REASON:US-001 missing test coverage, US-003 form validation incomplete</ralph>
+```
+
+### If a story is fundamentally broken (can't be fixed by retry)
+
+Mark it as blocked:
+```
+<ralph>BLOCK:US-007</ralph>
+<ralph>REASON:Requires API that doesn't exist yet</ralph>
 ```
 
 ### If everything is complete and verified

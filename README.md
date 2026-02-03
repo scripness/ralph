@@ -146,11 +146,14 @@ Provider communicates with Ralph via markers in stdout:
 
 | Signal | Purpose |
 |--------|---------|
-| `<ralph>DONE</ralph>` | Story implementation complete |
+| `<ralph>DONE</ralph>` | Story implementation complete (runs verification) |
+| `<ralph>STUCK</ralph>` | Provider can't proceed (counts as failed attempt) |
+| `<ralph>BLOCK:US-001</ralph>` | Mark story as blocked (skipped, no retry) |
 | `<ralph>LEARNING:text</ralph>` | Add learning for future context |
+| `<ralph>SUGGEST_NEXT:US-003</ralph>` | Advisory: suggest next story (optional) |
 | `<ralph>VERIFIED</ralph>` | Final verification passed |
-| `<ralph>RESET:US-001,US-003</ralph>` | Reset specific stories |
-| `<ralph>REASON:explanation</ralph>` | Reason for reset |
+| `<ralph>RESET:US-001,US-003</ralph>` | Reset stories for reimplementation |
+| `<ralph>REASON:explanation</ralph>` | Explanation for STUCK/BLOCK/RESET |
 
 ## prd.json Schema (v2)
 

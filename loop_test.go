@@ -133,3 +133,58 @@ func TestResetPattern(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessLine_StuckMarker(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("I can't figure this out <ralph>STUCK</ralph>", result)
+
+	if !result.Stuck {
+		t.Error("expected Stuck=true")
+	}
+}
+
+func TestProcessLine_BlockMarker(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("<ralph>BLOCK:US-007</ralph>", result)
+
+	if len(result.Blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(result.Blocks))
+	}
+	if result.Blocks[0] != "US-007" {
+		t.Errorf("expected block='US-007', got '%s'", result.Blocks[0])
+	}
+}
+
+func TestProcessLine_BlockMarkerMultiple(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("<ralph>BLOCK:US-007,US-008</ralph>", result)
+
+	if len(result.Blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(result.Blocks))
+	}
+	if result.Blocks[0] != "US-007" || result.Blocks[1] != "US-008" {
+		t.Errorf("unexpected blocks: %v", result.Blocks)
+	}
+}
+
+func TestProcessLine_SuggestNextMarker(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("<ralph>SUGGEST_NEXT:US-012</ralph>", result)
+
+	if result.SuggestNext != "US-012" {
+		t.Errorf("expected SuggestNext='US-012', got '%s'", result.SuggestNext)
+	}
+}
+
+func TestProcessLine_CombinedMarkers(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("<ralph>BLOCK:US-007</ralph>", result)
+	processLine("<ralph>REASON:Depends on US-003 which isn't complete</ralph>", result)
+
+	if len(result.Blocks) != 1 || result.Blocks[0] != "US-007" {
+		t.Errorf("expected block US-007, got %v", result.Blocks)
+	}
+	if result.Reason != "Depends on US-003 which isn't complete" {
+		t.Errorf("unexpected reason: %s", result.Reason)
+	}
+}
