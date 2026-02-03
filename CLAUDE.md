@@ -22,7 +22,8 @@ services.go       Dev server lifecycle (start, ready check, restart, stop)
 git.go            Git operations (branch, commit, status)
 lock.go           Concurrency lock file (.ralph/ralph.lock)
 atomic.go         Atomic file writes (temp + rename)
-upgrade.go        Self-update from GitHub releases (scripness/ralph)
+upgrade.go        Self-update via go-selfupdate (scripness/ralph)
+update_check.go   Background update check with 24h cache
 utils.go          fileExists helper
 ```
 
@@ -36,11 +37,11 @@ Prompt templates live in `prompts/` and are embedded at compile time:
 ## Build and Test
 
 ```bash
-go build -ldflags="-s -w" -o ralph .
-go test ./...
+make build    # go build -ldflags="-s -w" -o ralph .
+make test     # go test ./...
 ```
 
-Go version: 1.25.6. Key dependency: `github.com/chromedp/chromedp` for browser automation.
+Go version: 1.25.6. Key dependencies: `github.com/chromedp/chromedp` for browser automation, `github.com/creativeprojects/go-selfupdate` for self-update.
 
 ## How the CLI Works (End-to-End)
 
@@ -213,6 +214,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Browser steps**: Defined in prd.json per story. Executed by chromedp in headless Chrome. Screenshots saved to `.ralph/screenshots/`.
 - **Service ready checks**: HTTP GET polling every 500ms until status < 500, with configurable timeout.
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
+- **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h. Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`.
 
 ## Testing
 
@@ -230,17 +232,21 @@ Run with `go test ./...` or `go test -v ./...` for verbose output.
 
 ## Releasing
 
-Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Actions.
+Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Actions (`workflow_dispatch`).
 
-To release:
 ```bash
-git tag v2.1.0
-git push --tags
+make release    # triggers GitHub workflow via gh CLI, auto patch-bumps
 ```
 
-The workflow runs: test -> GoReleaser builds 4 binaries (linux/darwin x amd64/arm64) -> creates GitHub Release with auto-generated notes. Version is injected at build time via `-ldflags -X main.version`. The `version` variable in `main.go` defaults to `"dev"` for local builds.
+Or from GitHub UI: Actions -> Release -> Run workflow -> pick patch/minor/major.
 
-Config: `.goreleaser.yaml`. Workflow: `.github/workflows/release.yml`. CI (push/PR): `.github/workflows/ci.yml`.
+The workflow: reads latest git tag -> bumps version -> creates new tag -> runs tests -> GoReleaser builds 4 binaries (linux/darwin x amd64/arm64) -> creates GitHub Release with auto-generated notes.
+
+Version is injected at build time via `-ldflags -X main.version`. The `version` variable in `main.go` defaults to `"dev"` for local builds. No version is hardcoded in source — the git tag is the source of truth.
+
+Users are notified of new versions via a background check (24h cache in `~/.config/ralph/update-check.json`) that prints a notice on CLI exit. `ralph upgrade` uses `go-selfupdate` for secure binary replacement.
+
+Config: `.goreleaser.yaml`. Release workflow: `.github/workflows/release.yml`. CI (push/PR): `.github/workflows/ci.yml`.
 
 ## Common Development Tasks
 

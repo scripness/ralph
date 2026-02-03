@@ -42,6 +42,7 @@ ralph status auth
 - **Interactive browser verification**: Real user simulation with chromedp (click, type, assert)
 - **Crash recovery**: Tracks `currentStoryId` to resume interrupted stories
 - **Atomic operations**: Lock file prevents concurrent runs, atomic JSON writes
+- **Auto-update notifications**: Checks for new versions in the background, notifies on exit
 
 ## The Flow
 
@@ -301,19 +302,46 @@ State is preserved in prd.json:
 }
 ```
 
+## Updating
+
+Ralph checks for updates in the background and notifies you when a new version is available:
+
+```
+A new version of ralph is available: v2.1.0 (current: v2.0.0)
+Run 'ralph upgrade' to update.
+```
+
+To update:
+```bash
+ralph upgrade
+```
+
 ## Build from Source
 
 ```bash
 git clone https://github.com/scripness/ralph
 cd ralph
-go build -ldflags="-s -w" -o ralph .
+make build
 ```
 
 ## Testing
 
 ```bash
-go test ./...
+make test
 ```
+
+## Releasing
+
+Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Actions.
+
+```bash
+# Patch release from local (requires gh CLI)
+make release
+
+# Or from GitHub UI: Actions → Release → Run workflow → pick bump type
+```
+
+The workflow auto-bumps the version tag, runs tests, builds 4 binaries (linux/darwin x amd64/arm64), and creates a GitHub Release.
 
 ## Background
 
