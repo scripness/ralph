@@ -15,7 +15,7 @@ config.go         Configuration loading, validation, provider defaults
 schema.go         PRD data structures, story state machine, validation
 prompts.go        Prompt template loading + variable substitution (//go:embed prompts/*)
 loop.go           Main agent loop, provider subprocess management, verification orchestration
-browser.go        Browser automation via chromedp (Chrome DevTools Protocol)
+browser.go        Browser automation via rod (Chrome DevTools Protocol)
 prd.go            Interactive PRD state machine (create/refine/finalize)
 feature.go        Date-prefixed feature directory management (.ralph/YYYY-MM-DD-feature/)
 services.go       Dev server lifecycle (start, ready check, restart, stop)
@@ -41,7 +41,7 @@ make build    # go build -ldflags="-s -w" -o ralph .
 make test     # go test ./...
 ```
 
-Go version: 1.25.6. Key dependencies: `github.com/chromedp/chromedp` for browser automation, `github.com/creativeprojects/go-selfupdate` for self-update.
+Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automation, `github.com/creativeprojects/go-selfupdate` for self-update.
 
 ## How the CLI Works (End-to-End)
 
@@ -64,7 +64,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Branch management**: CLI creates/switches to the `ralph/<feature>` branch
 - **State updates**: CLI marks stories passed/failed/blocked based on verification results
 - **Verification**: CLI runs `verify.default` and `verify.ui` commands, not the provider
-- **Browser testing**: CLI executes browserSteps via chromedp
+- **Browser testing**: CLI executes browserSteps via rod
 - **Service management**: CLI starts/stops/restarts dev servers
 - **Crash recovery**: CLI tracks `currentStoryId` in prd.json to resume interrupted work
 - **Concurrency control**: CLI uses lock file to prevent parallel runs
@@ -123,7 +123,7 @@ The original was a ~90-line bash script (`ralph.sh`) with a simple for loop:
 | Completion signal | `<promise>COMPLETE</promise>` | Rich marker protocol (DONE, STUCK, BLOCK, etc.) |
 | Memory | `progress.txt` (append-only file) | `prd.json.run.learnings[]` |
 | Loop limit | Fixed iterations (default 10) | Infinite until verified |
-| Browser testing | Delegated to provider skills (dev-browser) | Built-in chromedp automation |
+| Browser testing | Delegated to provider skills (dev-browser) | Built-in rod automation |
 | Service management | None | Start/ready/restart lifecycle |
 | Crash recovery | None | `currentStoryId` tracking |
 | Concurrency safety | None | Lock file |
@@ -211,7 +211,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Provider subprocess**: Spawned via `os/exec` with context timeout. Three modes for prompt delivery (stdin pipe, arg append, temp file).
 - **Lock file**: JSON with pid/startedAt/feature/branch. Stale detection via `kill(pid, 0)`. Atomic creation via `O_CREATE|O_EXCL`.
 - **Feature directories**: `.ralph/YYYY-MM-DD-feature/` format. `FindFeatureDir` finds most recent match by suffix.
-- **Browser steps**: Defined in prd.json per story. Executed by chromedp in headless Chrome. Screenshots saved to `.ralph/screenshots/`.
+- **Browser steps**: Defined in prd.json per story. Executed by rod in headless Chrome. Screenshots saved to `.ralph/screenshots/`.
 - **Service ready checks**: HTTP GET polling every 500ms until status < 500, with configurable timeout.
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
 - **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h. Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`.

@@ -39,7 +39,7 @@ ralph status auth
 - **Multi-feature**: Work on multiple features in parallel with date-prefixed directories
 - **Deterministic verification**: CLI runs all QA gates, not the AI
 - **Service management**: Auto-starts dev servers, waits for ready, restarts for UI tests
-- **Interactive browser verification**: Real user simulation with chromedp (click, type, assert)
+- **Interactive browser verification**: Real user simulation with rod (click, type, assert, auto-downloads Chromium)
 - **Crash recovery**: Tracks `currentStoryId` to resume interrupted stories
 - **Atomic operations**: Lock file prevents concurrent runs, atomic JSON writes
 - **Auto-update notifications**: Checks for new versions in the background, notifies on exit
@@ -372,7 +372,7 @@ v2 is a Go CLI that improves on v1:
 | **Multi-feature** | Manual archive/switch | Built-in date-prefixed dirs |
 | **Crash recovery** | None | currentStoryId tracking |
 | **Verification** | Agent runs commands | CLI runs commands |
-| **Browser testing** | Provider skill (dev-browser) | Built-in chromedp |
+| **Browser testing** | Provider skill (dev-browser) | Built-in rod (auto-downloads Chromium) |
 | **Service management** | None | Built-in start/ready/restart |
 | **Concurrency** | None | Lock file prevents conflicts |
 

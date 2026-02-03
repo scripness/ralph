@@ -1,24 +1,23 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/chromedp/cdproto/cdp"
-	"github.com/chromedp/cdproto/runtime"
-	"github.com/chromedp/chromedp"
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 )
 
 // BrowserRunner handles browser-based verification
 type BrowserRunner struct {
 	config        *BrowserConfig
 	projectRoot   string
-	ctx           context.Context
-	cancel        context.CancelFunc
+	browser       *rod.Browser
+	page          *rod.Page
 	consoleErrors []string
 }
 
@@ -102,9 +101,7 @@ func (br *BrowserRunner) executeStep(step BrowserStep, baseURL, storyID string) 
 		timeout = 10 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(br.ctx, timeout)
-	defer cancel()
-
+	page := br.page.Timeout(timeout)
 	var err error
 
 	switch step.Action {
@@ -113,69 +110,66 @@ func (br *BrowserRunner) executeStep(step BrowserStep, baseURL, storyID string) 
 		if !strings.HasPrefix(url, "http") {
 			url = baseURL + step.URL
 		}
-		err = chromedp.Run(ctx,
-			chromedp.Navigate(url),
-			chromedp.WaitReady("body", chromedp.ByQuery),
-		)
+		err = page.Navigate(url)
+		if err == nil {
+			err = page.WaitLoad()
+		}
 
 	case "click":
-		err = chromedp.Run(ctx,
-			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
-			chromedp.Click(step.Selector, chromedp.ByQuery),
-		)
+		el, findErr := page.Element(step.Selector)
+		if findErr != nil {
+			err = findErr
+		} else {
+			err = el.Click(proto.InputMouseButtonLeft, 1)
+		}
 
 	case "type":
-		err = chromedp.Run(ctx,
-			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
-			chromedp.Clear(step.Selector, chromedp.ByQuery),
-			chromedp.SendKeys(step.Selector, step.Value, chromedp.ByQuery),
-		)
+		el, findErr := page.Element(step.Selector)
+		if findErr != nil {
+			err = findErr
+		} else {
+			el.SelectAllText()
+			err = el.Input(step.Value)
+		}
 
 	case "waitFor":
-		err = chromedp.Run(ctx,
-			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
-		)
+		_, err = page.Element(step.Selector)
 
 	case "assertVisible":
-		var nodes []*cdp.Node
-		err = chromedp.Run(ctx,
-			chromedp.Nodes(step.Selector, &nodes, chromedp.ByQuery),
-		)
-		if err == nil && len(nodes) == 0 {
+		elements, findErr := page.Elements(step.Selector)
+		if findErr != nil {
+			err = findErr
+		} else if len(elements) == 0 {
 			err = fmt.Errorf("element not found: %s", step.Selector)
 		}
 
 	case "assertText":
-		var text string
-		err = chromedp.Run(ctx,
-			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
-			chromedp.Text(step.Selector, &text, chromedp.ByQuery),
-		)
-		if err == nil && !strings.Contains(text, step.Contains) {
-			err = fmt.Errorf("text '%s' not found in element (got: '%s')", step.Contains, truncateText(text, 100))
+		el, findErr := page.Element(step.Selector)
+		if findErr != nil {
+			err = findErr
+		} else {
+			text, textErr := el.Text()
+			if textErr != nil {
+				err = textErr
+			} else if !strings.Contains(text, step.Contains) {
+				err = fmt.Errorf("text '%s' not found in element (got: '%s')", step.Contains, truncateText(text, 100))
+			}
 		}
 
 	case "assertNotVisible":
-		var nodes []*cdp.Node
-		err = chromedp.Run(ctx,
-			chromedp.Nodes(step.Selector, &nodes, chromedp.ByQuery, chromedp.AtLeast(0)),
-		)
-		if err == nil && len(nodes) > 0 {
-			// Check if actually visible
-			var visible bool
-			chromedp.Run(ctx, chromedp.Evaluate(fmt.Sprintf(
-				`document.querySelector(%q).offsetParent !== null`, step.Selector), &visible))
+		elements, _ := page.Elements(step.Selector)
+		if len(elements) > 0 {
+			visible, _ := elements[0].Visible()
 			if visible {
 				err = fmt.Errorf("element should not be visible: %s", step.Selector)
 			}
 		}
 
 	case "screenshot":
-		var buf []byte
-		err = chromedp.Run(ctx,
-			chromedp.FullScreenshot(&buf, 90),
-		)
-		if err == nil && len(buf) > 0 {
+		buf, screenshotErr := page.Screenshot(true, nil)
+		if screenshotErr != nil {
+			err = screenshotErr
+		} else if len(buf) > 0 {
 			br.saveScreenshot(storyID, step.Selector, buf)
 		}
 
@@ -187,12 +181,15 @@ func (br *BrowserRunner) executeStep(step BrowserStep, baseURL, storyID string) 
 		time.Sleep(waitTime)
 
 	case "submit":
-		// Click submit and wait for navigation
-		err = chromedp.Run(ctx,
-			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
-			chromedp.Click(step.Selector, chromedp.ByQuery),
-			chromedp.WaitReady("body", chromedp.ByQuery),
-		)
+		el, findErr := page.Element(step.Selector)
+		if findErr != nil {
+			err = findErr
+		} else {
+			err = el.Click(proto.InputMouseButtonLeft, 1)
+			if err == nil {
+				err = page.WaitLoad()
+			}
+		}
 
 	default:
 		err = fmt.Errorf("unknown action: %s", step.Action)
@@ -235,50 +232,49 @@ func (br *BrowserRunner) RunChecks(story *UserStory, baseURL string) ([]BrowserC
 	return results, nil
 }
 
-// init initializes the browser context
+// init initializes the browser
 func (br *BrowserRunner) init() error {
-	opts := []chromedp.ExecAllocatorOption{
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.DisableGPU,
-	}
+	l := launcher.New()
 
 	if br.config.Headless {
-		opts = append(opts, chromedp.Headless)
+		l = l.Headless(true)
+	} else {
+		l = l.Headless(false)
 	}
 
 	if br.config.ExecutablePath != "" {
-		opts = append(opts, chromedp.ExecPath(br.config.ExecutablePath))
+		l = l.Bin(br.config.ExecutablePath)
 	}
 
-	// Create allocator context
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
-
-	// Create browser context
-	ctx, cancel := chromedp.NewContext(allocCtx)
-
-	// Store for cleanup
-	br.ctx = ctx
-	br.cancel = func() {
-		cancel()
-		allocCancel()
+	controlURL, err := l.Launch()
+	if err != nil {
+		return fmt.Errorf("failed to launch browser: %w", err)
 	}
+
+	br.browser = rod.New().ControlURL(controlURL)
+	if err := br.browser.Connect(); err != nil {
+		return fmt.Errorf("failed to connect to browser: %w", err)
+	}
+
+	page, err := br.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	if err != nil {
+		return fmt.Errorf("failed to create page: %w", err)
+	}
+	br.page = page
 
 	// Listen for console errors
 	br.consoleErrors = nil
-	chromedp.ListenTarget(br.ctx, func(ev interface{}) {
-		if ev, ok := ev.(*runtime.EventExceptionThrown); ok {
-			br.consoleErrors = append(br.consoleErrors, ev.ExceptionDetails.Text)
-		}
-	})
+	go br.page.EachEvent(func(e *proto.RuntimeExceptionThrown) {
+		br.consoleErrors = append(br.consoleErrors, e.ExceptionDetails.Text)
+	})()
 
 	return nil
 }
 
 // close closes the browser
 func (br *BrowserRunner) close() {
-	if br.cancel != nil {
-		br.cancel()
+	if br.browser != nil {
+		br.browser.Close()
 	}
 }
 
@@ -286,19 +282,22 @@ func (br *BrowserRunner) close() {
 func (br *BrowserRunner) checkURL(url, storyID string) BrowserCheckResult {
 	result := BrowserCheckResult{URL: url}
 
-	// Create timeout context
-	ctx, cancel := context.WithTimeout(br.ctx, 30*time.Second)
-	defer cancel()
+	page := br.page.Timeout(30 * time.Second)
 
-	// Navigate and capture screenshot
-	var buf []byte
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(url),
-		chromedp.WaitReady("body", chromedp.ByQuery),
-		chromedp.Sleep(1*time.Second), // Wait for any async content
-		chromedp.FullScreenshot(&buf, 90),
-	)
+	err := page.Navigate(url)
+	if err != nil {
+		result.Error = err
+		return result
+	}
 
+	if err := page.WaitLoad(); err != nil {
+		result.Error = err
+		return result
+	}
+
+	time.Sleep(1 * time.Second) // Wait for any async content
+
+	buf, err := page.Screenshot(true, nil)
 	if err != nil {
 		result.Error = err
 		return result
@@ -484,7 +483,7 @@ func FormatBrowserResults(results []BrowserCheckResult) string {
 			}
 		}
 		if r.Screenshot != "" {
-			sb.WriteString(fmt.Sprintf("    📸 Screenshot: %s\n", r.Screenshot))
+			sb.WriteString(fmt.Sprintf("    Screenshot: %s\n", r.Screenshot))
 		}
 	}
 	return sb.String()
