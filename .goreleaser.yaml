@@ -14,7 +14,7 @@ builds:
     binary: ralph
 
 archives:
-  - format: binary
+  - formats: [binary]
     name_template: "ralph-{{ .Os }}-{{ .Arch }}"
 
 release:
