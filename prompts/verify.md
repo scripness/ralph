@@ -11,6 +11,8 @@ All stories have been implemented. Perform a comprehensive review to verify the 
 
 {{storySummaries}}
 
+> For complete story details (descriptions, browser steps), see {{prdPath}}.
+
 ## Verification Commands
 
 The CLI has run (or will run) these commands:
@@ -21,7 +23,7 @@ The CLI has run (or will run) these commands:
 
 ## Your Task
 
-Review the implementation thoroughly. This is a **report-only verification phase** — you should NOT modify code during this phase.
+Review the implementation thoroughly. This is a **report-only verification phase** — review code and run verification commands, but do NOT modify any code.
 
 ### Review Checklist
 

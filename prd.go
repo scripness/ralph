@@ -187,13 +187,29 @@ func prdEditManual(path string) error {
 	return cmd.Run()
 }
 
-// runProviderInteractive runs the provider with stdin/stdout connected
+// runProviderInteractive runs the provider with stdin/stdout connected.
+// Interactive mode needs stdin for user input, so stdin promptMode
+// falls back to arg mode. File mode is preserved for providers that
+// need it (e.g., to avoid shell argument length limits).
 func runProviderInteractive(cfg *ResolvedConfig, prompt string) error {
-	args := append([]string{}, cfg.Config.Provider.Args...)
-	if cfg.Config.Provider.PromptFlag != "" {
-		args = append(args, cfg.Config.Provider.PromptFlag)
+	promptMode := cfg.Config.Provider.PromptMode
+	if promptMode == "stdin" || promptMode == "" {
+		promptMode = "arg"
 	}
-	args = append(args, prompt)
+
+	args, promptFile, err := buildProviderArgs(
+		cfg.Config.Provider.Args,
+		promptMode,
+		cfg.Config.Provider.PromptFlag,
+		prompt,
+	)
+	if err != nil {
+		return err
+	}
+	if promptFile != "" {
+		defer os.Remove(promptFile)
+	}
+
 	cmd := runCommandInteractive(cfg.Config.Provider.Command, args...)
 	cmd.dir = cfg.ProjectRoot
 	return cmd.Run()

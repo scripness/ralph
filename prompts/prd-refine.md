@@ -41,6 +41,13 @@ Criteria must be specific and verifiable:
 
 Rewrite any vague criteria.
 
+**Required for every story:**
+- "Typecheck passes" (always)
+- "Tests pass" (when testable logic is added)
+
+**Required for UI stories:**
+- Specific verifiable UI behavior criteria
+
 ### Dependency Order
 Stories must be ordered so no story depends on a later story:
 1. Schema/database changes first

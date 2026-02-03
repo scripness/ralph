@@ -22,6 +22,113 @@ func getPrompt(name string, vars map[string]string) string {
 	return content
 }
 
+// buildProgress returns a one-line progress summary like "3/6 stories complete (1 blocked)"
+func buildProgress(prd *PRD) string {
+	total := len(prd.UserStories)
+	complete := CountComplete(prd)
+	blocked := CountBlocked(prd)
+
+	s := fmt.Sprintf("%d/%d stories complete", complete, total)
+	if blocked > 0 {
+		s += fmt.Sprintf(" (%d blocked)", blocked)
+	}
+	return s
+}
+
+// buildStoryMap builds a formatted story map showing all stories with status icons.
+// The current story is marked with [CURRENT]. Completed stories show their commit summary.
+func buildStoryMap(prd *PRD, current *UserStory) string {
+	var lines []string
+	for _, s := range prd.UserStories {
+		var line string
+		switch {
+		case s.ID == current.ID:
+			line = fmt.Sprintf("→ %s: %s [CURRENT]", s.ID, s.Title)
+		case s.Passes:
+			line = fmt.Sprintf("✓ %s: %s", s.ID, s.Title)
+			if s.LastResult != nil {
+				detail := ""
+				if s.LastResult.Summary != "" {
+					detail = s.LastResult.Summary
+				}
+				if s.LastResult.Commit != "" {
+					commit := s.LastResult.Commit
+					if len(commit) > 7 {
+						commit = commit[:7]
+					}
+					if detail != "" {
+						detail += " (" + commit + ")"
+					} else {
+						detail = commit
+					}
+				}
+				if detail != "" {
+					line += "\n  └─ " + detail
+				}
+			}
+		case s.Blocked:
+			line = fmt.Sprintf("✗ %s: %s", s.ID, s.Title)
+			if s.Notes != "" {
+				line += " (blocked: " + s.Notes + ")"
+			} else {
+				line += " (blocked)"
+			}
+		default:
+			line = fmt.Sprintf("○ %s: %s", s.ID, s.Title)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// buildBrowserSteps formats browser verification steps for the run prompt.
+// Returns an empty string if the story has no browser steps.
+func buildBrowserSteps(story *UserStory) string {
+	if len(story.BrowserSteps) == 0 {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, "## Browser Verification")
+	lines = append(lines, "")
+	lines = append(lines, "After you signal DONE, the CLI will run these browser steps to verify your UI:")
+	lines = append(lines, "")
+
+	for i, step := range story.BrowserSteps {
+		var desc string
+		switch step.Action {
+		case "navigate":
+			desc = fmt.Sprintf("navigate → %s", step.URL)
+		case "click":
+			desc = fmt.Sprintf("click → %s", step.Selector)
+		case "type":
+			desc = fmt.Sprintf("type → %s = %q", step.Selector, step.Value)
+		case "waitFor":
+			desc = fmt.Sprintf("waitFor → %s", step.Selector)
+		case "assertVisible":
+			desc = fmt.Sprintf("assertVisible → %s", step.Selector)
+		case "assertText":
+			desc = fmt.Sprintf("assertText → %s contains %q", step.Selector, step.Contains)
+		case "assertNotVisible":
+			desc = fmt.Sprintf("assertNotVisible → %s", step.Selector)
+		case "submit":
+			desc = fmt.Sprintf("submit → %s", step.Selector)
+		case "screenshot":
+			desc = "screenshot"
+		case "wait":
+			desc = fmt.Sprintf("wait %ds", step.Timeout)
+		default:
+			desc = step.Action
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s", i+1, desc))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, "Design your implementation so these steps will pass.")
+	lines = append(lines, "")
+	return strings.Join(lines, "\n")
+}
+
 // generateRunPrompt generates the prompt for story implementation
 func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, story *UserStory) string {
 	// Build acceptance criteria list
@@ -77,12 +184,18 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		"verifyCommands":     verifyStr,
 		"learnings":          learningsStr,
 		"knowledgeFile":      cfg.Config.Provider.KnowledgeFile,
+		"project":            prd.Project,
+		"description":        prd.Description,
+		"branchName":         prd.BranchName,
+		"progress":           buildProgress(prd),
+		"storyMap":           buildStoryMap(prd, story),
+		"browserSteps":       buildBrowserSteps(story),
 	})
 }
 
 // generateVerifyPrompt generates the prompt for final verification
 func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD) string {
-	// Build story summaries
+	// Build story summaries with acceptance criteria
 	var summaries []string
 	for _, s := range prd.UserStories {
 		status := "✓"
@@ -92,9 +205,33 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 			status = "○"
 		}
 		line := fmt.Sprintf("- %s %s: %s", status, s.ID, s.Title)
-		if s.LastResult != nil && s.LastResult.Summary != "" {
-			line += fmt.Sprintf("\n  └─ %s", s.LastResult.Summary)
+
+		// Add compact acceptance criteria
+		if len(s.AcceptanceCriteria) > 0 {
+			line += "\n  Criteria: " + strings.Join(s.AcceptanceCriteria, " | ")
 		}
+
+		if s.LastResult != nil {
+			detail := ""
+			if s.LastResult.Commit != "" {
+				commit := s.LastResult.Commit
+				if len(commit) > 7 {
+					commit = commit[:7]
+				}
+				detail = commit
+			}
+			if s.LastResult.Summary != "" {
+				if detail != "" {
+					detail += ": " + s.LastResult.Summary
+				} else {
+					detail = s.LastResult.Summary
+				}
+			}
+			if detail != "" {
+				line += "\n  └─ " + detail
+			}
+		}
+
 		summaries = append(summaries, line)
 	}
 	summariesStr := strings.Join(summaries, "\n")
@@ -125,6 +262,7 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 		"verifyCommands": verifyStr,
 		"learnings":      learningsStr,
 		"knowledgeFile":  cfg.Config.Provider.KnowledgeFile,
+		"prdPath":        featureDir.PrdJsonPath(),
 	})
 }
 

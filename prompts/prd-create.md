@@ -71,6 +71,13 @@ Format each story as:
 - "Error handling is good"
 - "UI looks nice"
 
+**Required criteria for EVERY story:**
+- "Typecheck passes" (always)
+- "Tests pass" (when testable logic is added)
+
+**Required for UI stories (tagged [ui]):**
+- Specific verifiable UI behavior criteria
+
 ### 5. Non-Goals
 What this feature explicitly does NOT include. Be specific.
 
@@ -89,6 +96,13 @@ For stories with the `[ui]` tag:
 - Include specific, verifiable UI acceptance criteria
 - Consider what browser verification steps would look like (navigate, click, type, assert)
 - Ensure e2e test coverage expectations are clear
+
+For UI stories, think about concrete user interactions:
+- What page does the user navigate to?
+- What do they click, type, or submit?
+- What should they see as a result?
+
+These interactions will become automated browser verification steps (browserSteps) during finalization.
 
 ## Save Location
 

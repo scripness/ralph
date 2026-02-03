@@ -135,7 +135,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 				fmt.Println(strings.Repeat("=", 60))
 				fmt.Println()
 				fmt.Println("Ready to merge. Review changes with:")
-				fmt.Printf("  git log --oneline %s..HEAD\n", prd.BranchName)
+				fmt.Printf("  git log --oneline %s..HEAD\n", git.DefaultBranch())
 				return nil
 			}
 

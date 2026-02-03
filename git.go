@@ -116,6 +116,27 @@ func (g *GitOps) HasUncommittedChanges() bool {
 	return !g.IsClean()
 }
 
+// DefaultBranch returns the default branch name (main or master).
+func (g *GitOps) DefaultBranch() string {
+	// Try origin/HEAD
+	out, err := g.run("symbolic-ref", "refs/remotes/origin/HEAD")
+	if err == nil {
+		ref := strings.TrimSpace(out)
+		parts := strings.Split(ref, "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+	// Fallback: check which exists
+	if g.BranchExists("main") {
+		return "main"
+	}
+	if g.BranchExists("master") {
+		return "master"
+	}
+	return "main"
+}
+
 // run executes a git command and returns the output
 func (g *GitOps) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)

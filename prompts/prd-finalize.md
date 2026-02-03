@@ -123,5 +123,7 @@ Before saving, verify:
 - [ ] Priorities match dependency order (schema → backend → UI)
 - [ ] UI stories have `["ui"]` tag
 - [ ] All acceptance criteria are specific and testable
+- [ ] Every story has "Typecheck passes" as a criterion
+- [ ] Stories with testable logic have "Tests pass" as a criterion
 - [ ] No story depends on a later story
 - [ ] Stories are small enough for one implementation session
