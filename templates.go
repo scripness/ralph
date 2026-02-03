@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"strings"
 )
 
@@ -21,44 +22,139 @@ func getTemplate(name string, vars map[string]string) string {
 	return content
 }
 
-func getExamplePRD() []byte {
-	data, err := templatesFS.ReadFile("templates/prd.json.example")
-	if err != nil {
-		panic("prd.json.example not found")
+// generateRunPrompt generates the prompt for story implementation
+func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, story *UserStory) string {
+	// Build acceptance criteria list
+	var criteria []string
+	for _, c := range story.AcceptanceCriteria {
+		criteria = append(criteria, "- "+c)
 	}
-	return data
-}
+	criteriaStr := strings.Join(criteria, "\n")
 
-func generateRunPrompt(cfg ResolvedConfig) string {
-	var qualityLines []string
-	for _, q := range cfg.Quality {
-		qualityLines = append(qualityLines, "   "+q.Cmd+"   # "+q.Name)
+	// Build verify commands list
+	var verifyLines []string
+	for _, cmd := range cfg.Config.Verify.Default {
+		verifyLines = append(verifyLines, "- "+cmd)
 	}
-	qualityCommands := strings.Join(qualityLines, "\n")
-	if qualityCommands == "" {
-		qualityCommands = "   # No quality commands configured - check project setup"
+	if IsUIStory(story) {
+		for _, cmd := range cfg.Config.Verify.UI {
+			verifyLines = append(verifyLines, "- "+cmd+" (UI)")
+		}
+	}
+	verifyStr := strings.Join(verifyLines, "\n")
+
+	// Build learnings
+	learningsStr := ""
+	if len(prd.Run.Learnings) > 0 {
+		learningsStr = "## Learnings from Previous Work\n\n"
+		for _, l := range prd.Run.Learnings {
+			learningsStr += "- " + l + "\n"
+		}
+	}
+
+	// Build tags info
+	tagsStr := ""
+	if len(story.Tags) > 0 {
+		tagsStr = fmt.Sprintf("**Tags:** %s\n", strings.Join(story.Tags, ", "))
+	}
+
+	// Build retry info
+	retryStr := ""
+	if story.Retries > 0 {
+		retryStr = fmt.Sprintf("\n**Previous Attempts:** %d\n", story.Retries)
+		if story.Notes != "" {
+			retryStr += fmt.Sprintf("**Previous Issue:** %s\n", story.Notes)
+		}
 	}
 
 	return getTemplate("run", map[string]string{
-		"prdPath":         cfg.PrdPath,
-		"projectRoot":     cfg.ProjectRoot,
-		"qualityCommands": qualityCommands,
+		"storyId":            story.ID,
+		"storyTitle":         story.Title,
+		"storyDescription":   story.Description,
+		"acceptanceCriteria": criteriaStr,
+		"tags":               tagsStr,
+		"retryInfo":          retryStr,
+		"verifyCommands":     verifyStr,
+		"learnings":          learningsStr,
+		"doneMarker":         DoneMarker,
+		"prdPath":            featureDir.PrdJsonPath(),
+		"projectRoot":        cfg.ProjectRoot,
 	})
 }
 
-func generateVerifyPrompt(cfg ResolvedConfig) string {
-	var qualityLines []string
-	for _, q := range cfg.Quality {
-		qualityLines = append(qualityLines, "   "+q.Cmd+"   # "+q.Name)
+// generateVerifyPrompt generates the prompt for final verification
+func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD) string {
+	// Build story summaries
+	var summaries []string
+	for _, s := range prd.UserStories {
+		status := "✓"
+		if s.Blocked {
+			status = "✗ (blocked)"
+		} else if !s.Passes {
+			status = "○"
+		}
+		line := fmt.Sprintf("- %s %s: %s", status, s.ID, s.Title)
+		if s.LastResult != nil && s.LastResult.Summary != "" {
+			line += fmt.Sprintf("\n  └─ %s", s.LastResult.Summary)
+		}
+		summaries = append(summaries, line)
 	}
-	qualityCommands := strings.Join(qualityLines, "\n")
-	if qualityCommands == "" {
-		qualityCommands = "   # No quality commands configured - check project setup"
+	summariesStr := strings.Join(summaries, "\n")
+
+	// Build verify commands
+	var verifyLines []string
+	for _, cmd := range cfg.Config.Verify.Default {
+		verifyLines = append(verifyLines, "- "+cmd)
+	}
+	for _, cmd := range cfg.Config.Verify.UI {
+		verifyLines = append(verifyLines, "- "+cmd+" (UI)")
+	}
+	verifyStr := strings.Join(verifyLines, "\n")
+
+	// Build learnings
+	learningsStr := ""
+	if len(prd.Run.Learnings) > 0 {
+		learningsStr = "## Learnings\n\n"
+		for _, l := range prd.Run.Learnings {
+			learningsStr += "- " + l + "\n"
+		}
 	}
 
 	return getTemplate("verify", map[string]string{
-		"prdPath":         cfg.PrdPath,
-		"projectRoot":     cfg.ProjectRoot,
-		"qualityCommands": qualityCommands,
+		"project":        prd.Project,
+		"description":    prd.Description,
+		"storySummaries": summariesStr,
+		"verifyCommands": verifyStr,
+		"learnings":      learningsStr,
+		"projectRoot":    cfg.ProjectRoot,
+	})
+}
+
+// generatePrdCreatePrompt generates the prompt for creating a new PRD
+func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir) string {
+	return getTemplate("prd-create", map[string]string{
+		"feature":     featureDir.Feature,
+		"outputPath":  featureDir.PrdMdPath(),
+		"projectRoot": cfg.ProjectRoot,
+	})
+}
+
+// generatePrdRefinePrompt generates the prompt for refining a PRD
+func generatePrdRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string) string {
+	return getTemplate("prd-refine", map[string]string{
+		"feature":     featureDir.Feature,
+		"prdContent":  content,
+		"outputPath":  featureDir.PrdMdPath(),
+		"projectRoot": cfg.ProjectRoot,
+	})
+}
+
+// generatePrdFinalizePrompt generates the prompt for finalizing a PRD
+func generatePrdFinalizePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string) string {
+	return getTemplate("prd-finalize", map[string]string{
+		"feature":     featureDir.Feature,
+		"prdContent":  content,
+		"outputPath":  featureDir.PrdJsonPath(),
+		"projectRoot": cfg.ProjectRoot,
 	})
 }

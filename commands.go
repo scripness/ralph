@@ -2,11 +2,8 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 )
 
 func cmdInit(args []string) {
@@ -17,205 +14,251 @@ func cmdInit(args []string) {
 		}
 	}
 
-	cfg := resolveConfig(0, true)
-	ralphDir := filepath.Join(cfg.ProjectRoot, "scripts", "ralph")
-	prdPath := filepath.Join(ralphDir, "prd.json")
+	projectRoot := GetProjectRoot()
+	configPath := ConfigPath(projectRoot)
+	ralphDir := filepath.Join(projectRoot, ".ralph")
 
-	if fileExists(prdPath) && !force {
-		fmt.Fprintf(os.Stderr, "prd.json already exists at %s\n", prdPath)
+	// Check if already initialized
+	if fileExists(configPath) && !force {
+		fmt.Fprintf(os.Stderr, "ralph.config.json already exists at %s\n", configPath)
 		fmt.Fprintln(os.Stderr, "Use --force to overwrite.")
 		os.Exit(1)
 	}
 
-	os.MkdirAll(ralphDir, 0755)
-
-	// Write example PRD
-	if err := os.WriteFile(prdPath, getExamplePRD(), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to write prd.json: %v\n", err)
+	// Create ralph.config.json
+	if err := WriteDefaultConfig(projectRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write config: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Write .gitignore
+	// Create .ralph directory
+	if err := os.MkdirAll(ralphDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create .ralph directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create .ralph/.gitignore
 	gitignorePath := filepath.Join(ralphDir, ".gitignore")
-	if !fileExists(gitignorePath) {
-		os.WriteFile(gitignorePath, []byte("*.backup\n*.tmp\n"), 0644)
+	gitignoreContent := `# Ralph temporary files
+ralph.lock
+*.tmp
+screenshots/
+`
+	if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to write .gitignore: %v\n", err)
 	}
 
 	fmt.Println("Initialized Ralph:")
-	fmt.Printf("  - Created %s\n", prdPath)
-	fmt.Printf("  - Created %s\n", gitignorePath)
+	fmt.Printf("  - Created %s\n", configPath)
+	fmt.Printf("  - Created %s\n", ralphDir)
 	fmt.Println()
 	fmt.Println("Next steps:")
-	fmt.Println("  1. Run 'ralph prd' to create a PRD interactively, or")
-	fmt.Println("  2. Edit prd.json directly with your user stories")
-	fmt.Println("  3. Run 'ralph run' to start the agent loop")
+	fmt.Println("  1. Edit ralph.config.json with your provider and verify commands")
+	fmt.Println("  2. Run 'ralph prd <feature>' to create a PRD")
+	fmt.Println("  3. Run 'ralph run <feature>' to start the agent loop")
 }
 
 func cmdRun(args []string) {
-	iterations := 10
-	noVerify := false
-
-	for i, arg := range args {
-		if arg == "--no-verify" {
-			noVerify = true
-		} else if n, err := strconv.Atoi(arg); err == nil && i == 0 {
-			iterations = n
-		}
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: ralph run <feature>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Example: ralph run auth")
+		os.Exit(1)
 	}
 
-	cfg := resolveConfig(iterations, !noVerify)
+	feature := args[0]
+	projectRoot := GetProjectRoot()
 
-	if err := runLoop(cfg, noVerify); err != nil {
+	cfg, err := LoadConfig(projectRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	featureDir, err := FindFeatureDir(projectRoot, feature, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !featureDir.HasPrdJson {
+		fmt.Fprintf(os.Stderr, "No prd.json found for feature '%s'\n", feature)
+		fmt.Fprintf(os.Stderr, "Run 'ralph prd %s' to create and finalize a PRD first.\n", feature)
+		os.Exit(1)
+	}
+
+	if err := runLoop(cfg, featureDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func cmdVerify(args []string) {
-	cfg := resolveConfig(0, true)
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: ralph verify <feature>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Example: ralph verify auth")
+		os.Exit(1)
+	}
 
-	prd, err := loadPRD(cfg.PrdPath)
+	feature := args[0]
+	projectRoot := GetProjectRoot()
+
+	cfg, err := LoadConfig(projectRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("PRD: %s\n", cfg.PrdPath)
-	fmt.Printf("Project: %s\n", prd.Project)
+	featureDir, err := FindFeatureDir(projectRoot, feature, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
-	if err := runVerify(cfg); err != nil {
+	if !featureDir.HasPrdJson {
+		fmt.Fprintf(os.Stderr, "No prd.json found for feature '%s'\n", feature)
+		os.Exit(1)
+	}
+
+	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Feature: %s\n", feature)
+	fmt.Printf("Project: %s\n", prd.Project)
+	fmt.Printf("Path: %s\n", featureDir.Path)
+	fmt.Println()
+
+	if err := runVerify(cfg, featureDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 func cmdPrd(args []string) {
-	cfg := resolveConfig(0, true)
-
-	var featureName string
-	var outputPath string
-
-	for i, arg := range args {
-		if arg == "-o" && i+1 < len(args) {
-			outputPath = args[i+1]
-		} else if !isFlag(arg) && featureName == "" {
-			featureName = arg
-		}
-	}
-
-	if outputPath == "" {
-		tasksDir := filepath.Join(cfg.ProjectRoot, "tasks")
-		if featureName != "" {
-			outputPath = filepath.Join(tasksDir, "prd-"+featureName+".md")
-		} else {
-			outputPath = filepath.Join(tasksDir, "prd.md")
-		}
-	}
-
-	// Ensure tasks directory exists
-	os.MkdirAll(filepath.Dir(outputPath), 0755)
-
-	prompt := getTemplate("prd", map[string]string{
-		"outputPath":  outputPath,
-		"featureName": featureName,
-		"projectRoot": cfg.ProjectRoot,
-	})
-
-	fmt.Println("Starting PRD creation...")
-	fmt.Printf("Output will be saved to: %s\n", outputPath)
-	fmt.Println()
-
-	if err := runAmpWithPrompt(cfg, prompt); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println()
-	fmt.Println("PRD created successfully!")
-	fmt.Printf("  File: %s\n", outputPath)
-	fmt.Println()
-	fmt.Printf("Next: Run 'ralph convert %s' to generate prd.json\n", outputPath)
-}
-
-func cmdConvert(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: ralph convert <prd-file.md> [-o output.json]")
+		fmt.Fprintln(os.Stderr, "Usage: ralph prd <feature>")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Example: ralph convert tasks/prd-auth.md")
+		fmt.Fprintln(os.Stderr, "Example: ralph prd auth")
 		os.Exit(1)
 	}
 
-	cfg := resolveConfig(0, true)
-	prdFile := args[0]
-	prdPath := filepath.Join(cfg.ProjectRoot, prdFile)
+	feature := args[0]
+	projectRoot := GetProjectRoot()
 
-	if !fileExists(prdPath) {
-		fmt.Fprintf(os.Stderr, "PRD file not found: %s\n", prdPath)
-		os.Exit(1)
-	}
-
-	prdContent, err := os.ReadFile(prdPath)
+	cfg, err := LoadConfig(projectRoot)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to read PRD file: %v\n", err)
-		os.Exit(1)
-	}
-
-	var outputPath string
-	for i, arg := range args {
-		if arg == "-o" && i+1 < len(args) {
-			outputPath = args[i+1]
-		}
-	}
-	if outputPath == "" {
-		outputPath = filepath.Join(cfg.ProjectRoot, "scripts", "ralph", "prd.json")
-	}
-
-	// Ensure output directory exists
-	os.MkdirAll(filepath.Dir(outputPath), 0755)
-
-	prompt := getTemplate("convert", map[string]string{
-		"prdContent":  string(prdContent),
-		"outputPath":  outputPath,
-		"projectRoot": cfg.ProjectRoot,
-	})
-
-	fmt.Printf("Converting PRD: %s\n", prdPath)
-	fmt.Printf("Output: %s\n", outputPath)
-	fmt.Println()
-
-	if err := runAmpWithPrompt(cfg, prompt); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println()
-	fmt.Println("Conversion complete!")
-	fmt.Printf("  prd.json: %s\n", outputPath)
-	fmt.Println()
-	fmt.Println("Next: Run 'ralph run' to start implementing stories")
+	// Find or create feature directory
+	featureDir, err := FindFeatureDir(projectRoot, feature, true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := runPrdStateMachine(cfg, featureDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func cmdStatus(args []string) {
-	cfg := resolveConfig(0, true)
+	projectRoot := GetProjectRoot()
 
-	prd, err := loadPRD(cfg.PrdPath)
+	// If no feature specified, show all features
+	if len(args) == 0 {
+		features, err := ListFeatures(projectRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(features) == 0 {
+			fmt.Println("No features found.")
+			fmt.Println("Run 'ralph prd <feature>' to create one.")
+			return
+		}
+
+		fmt.Println("Features:")
+		for _, f := range features {
+			status := "○"
+			if f.HasPrdJson {
+				prd, err := LoadPRD(f.PrdJsonPath())
+				if err == nil {
+					complete := CountComplete(prd)
+					total := len(prd.UserStories)
+					blocked := CountBlocked(prd)
+					if complete == total {
+						status = "✓"
+					} else if blocked > 0 {
+						status = "!"
+					}
+					fmt.Printf("  %s %s (%d/%d complete", status, f.Feature, complete, total)
+					if blocked > 0 {
+						fmt.Printf(", %d blocked", blocked)
+					}
+					fmt.Println(")")
+					continue
+				}
+			}
+			state := "draft"
+			if f.HasPrdJson {
+				state = "ready"
+			} else if f.HasPrdMd {
+				state = "needs finalize"
+			}
+			fmt.Printf("  %s %s (%s)\n", status, f.Feature, state)
+		}
+		return
+	}
+
+	// Show specific feature
+	feature := args[0]
+	featureDir, err := FindFeatureDir(projectRoot, feature, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
+	if !featureDir.HasPrdJson {
+		fmt.Printf("Feature: %s\n", feature)
+		fmt.Printf("Path: %s\n", featureDir.Path)
+		fmt.Printf("Status: ")
+		if featureDir.HasPrdMd {
+			fmt.Println("PRD drafted, not finalized")
+			fmt.Printf("\nRun 'ralph prd %s' to finalize.\n", feature)
+		} else {
+			fmt.Println("No PRD")
+			fmt.Printf("\nRun 'ralph prd %s' to create one.\n", feature)
+		}
+		return
+	}
+
+	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Feature: %s\n", feature)
 	fmt.Printf("Project: %s\n", prd.Project)
 	fmt.Printf("Branch: %s\n", prd.BranchName)
 	fmt.Printf("Description: %s\n", prd.Description)
 	fmt.Println()
 
-	complete := 0
-	for _, s := range prd.UserStories {
-		if s.Passes {
-			complete++
-		}
+	complete := CountComplete(prd)
+	blocked := CountBlocked(prd)
+	fmt.Printf("Progress: %d/%d stories complete", complete, len(prd.UserStories))
+	if blocked > 0 {
+		fmt.Printf(" (%d blocked)", blocked)
 	}
-	fmt.Printf("Progress: %d/%d stories complete\n", complete, len(prd.UserStories))
+	fmt.Println()
 	fmt.Println()
 
 	fmt.Println("Stories:")
@@ -223,12 +266,21 @@ func cmdStatus(args []string) {
 		status := "○"
 		if story.Passes {
 			status = "✓"
+		} else if story.Blocked {
+			status = "✗"
 		}
 		retries := ""
 		if story.Retries > 0 {
 			retries = fmt.Sprintf(" (retries: %d)", story.Retries)
 		}
-		fmt.Printf("  %s %s: %s%s\n", status, story.ID, story.Title, retries)
+		tags := ""
+		if len(story.Tags) > 0 {
+			tags = fmt.Sprintf(" [%s]", story.Tags[0])
+			for _, t := range story.Tags[1:] {
+				tags += fmt.Sprintf(" [%s]", t)
+			}
+		}
+		fmt.Printf("  %s %s: %s%s%s\n", status, story.ID, story.Title, tags, retries)
 		if story.Notes != "" {
 			fmt.Printf("    └─ Note: %s\n", story.Notes)
 		}
@@ -236,22 +288,53 @@ func cmdStatus(args []string) {
 }
 
 func cmdNext(args []string) {
-	cfg := resolveConfig(0, true)
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: ralph next <feature>")
+		os.Exit(1)
+	}
 
-	prd, err := loadPRD(cfg.PrdPath)
+	feature := args[0]
+	projectRoot := GetProjectRoot()
+
+	featureDir, err := FindFeatureDir(projectRoot, feature, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	next := getNextStory(prd)
+	if !featureDir.HasPrdJson {
+		fmt.Fprintf(os.Stderr, "No prd.json found for feature '%s'\n", feature)
+		os.Exit(1)
+	}
+
+	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	next := GetNextStory(prd)
 	if next == nil {
-		fmt.Println("All stories complete!")
+		if HasBlockedStories(prd) {
+			fmt.Println("All remaining stories are blocked.")
+			fmt.Println("Blocked stories:")
+			for _, s := range GetBlockedStories(prd) {
+				fmt.Printf("  - %s: %s\n", s.ID, s.Title)
+				if s.Notes != "" {
+					fmt.Printf("    └─ %s\n", s.Notes)
+				}
+			}
+		} else {
+			fmt.Println("All stories complete!")
+		}
 		return
 	}
 
 	fmt.Printf("%s: %s\n", next.ID, next.Title)
 	fmt.Printf("Priority: %d\n", next.Priority)
+	if len(next.Tags) > 0 {
+		fmt.Printf("Tags: %v\n", next.Tags)
+	}
 	fmt.Printf("Retries: %d\n", next.Retries)
 	if next.Notes != "" {
 		fmt.Printf("Notes: %s\n", next.Notes)
@@ -264,9 +347,26 @@ func cmdNext(args []string) {
 }
 
 func cmdValidate(args []string) {
-	cfg := resolveConfig(0, true)
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: ralph validate <feature>")
+		os.Exit(1)
+	}
 
-	prd, err := loadPRD(cfg.PrdPath)
+	feature := args[0]
+	projectRoot := GetProjectRoot()
+
+	featureDir, err := FindFeatureDir(projectRoot, feature, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !featureDir.HasPrdJson {
+		fmt.Fprintf(os.Stderr, "No prd.json found for feature '%s'\n", feature)
+		os.Exit(1)
+	}
+
+	prd, err := LoadPRD(featureDir.PrdJsonPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -278,72 +378,79 @@ func cmdValidate(args []string) {
 }
 
 func cmdDoctor(args []string) {
-	cfg := resolveConfig(0, true)
+	projectRoot := GetProjectRoot()
 	issues := 0
 
 	fmt.Println("Ralph Environment Check")
 	fmt.Println()
 
-	// Check amp is available
-	if isCommandAvailable(cfg.Amp.Command) {
-		fmt.Printf("✓ Amp command: %s\n", cfg.Amp.Command)
-	} else {
-		fmt.Printf("✗ Amp command not found: %s\n", cfg.Amp.Command)
+	// Check ralph.config.json
+	cfg, err := LoadConfig(projectRoot)
+	if err != nil {
+		fmt.Printf("✗ ralph.config.json: %v\n", err)
 		issues++
-	}
-
-	// Check project root
-	fmt.Printf("✓ Project root: %s\n", cfg.ProjectRoot)
-	fmt.Printf("✓ Project type: %s\n", cfg.ProjectType)
-
-	// Check PRD
-	if fileExists(cfg.PrdPath) {
-		fmt.Printf("✓ PRD file: %s\n", cfg.PrdPath)
 	} else {
-		fmt.Printf("○ PRD file: %s (not found - run 'ralph init')\n", cfg.PrdPath)
-	}
+		fmt.Printf("✓ ralph.config.json found\n")
 
-	// Check quality commands
-	fmt.Println()
-	fmt.Println("Quality commands:")
-	if len(cfg.Quality) == 0 {
-		fmt.Println("  (none detected - configure in ralph.config.json)")
-	} else {
-		for _, cmd := range cfg.Quality {
-			fmt.Printf("  - %s: %s\n", cmd.Name, cmd.Cmd)
+		// Check provider command
+		if isCommandAvailable(cfg.Config.Provider.Command) {
+			fmt.Printf("✓ Provider command: %s\n", cfg.Config.Provider.Command)
+		} else {
+			fmt.Printf("✗ Provider command not found: %s\n", cfg.Config.Provider.Command)
+			issues++
 		}
 	}
 
+	// Check .ralph directory
+	ralphDir := filepath.Join(projectRoot, ".ralph")
+	if fileExists(ralphDir) {
+		fmt.Printf("✓ .ralph directory exists\n")
+	} else {
+		fmt.Printf("○ .ralph directory: not found (run 'ralph init')\n")
+	}
+
+	// Check git
+	if isCommandAvailable("git") {
+		fmt.Printf("✓ git available\n")
+	} else {
+		fmt.Printf("✗ git not found\n")
+		issues++
+	}
+
+	// List features
+	features, _ := ListFeatures(projectRoot)
+	fmt.Println()
+	if len(features) > 0 {
+		fmt.Printf("Features: %d\n", len(features))
+		for _, f := range features {
+			state := "draft"
+			if f.HasPrdJson {
+				state = "ready"
+			} else if f.HasPrdMd {
+				state = "drafted"
+			}
+			fmt.Printf("  - %s (%s)\n", f.Feature, state)
+		}
+	} else {
+		fmt.Println("Features: none")
+	}
+
+	// Check lock status
+	lock, _ := ReadLockStatus(projectRoot)
+	if lock != nil {
+		fmt.Println()
+		if isProcessAlive(lock.PID) {
+			fmt.Printf("⚠ Ralph is currently running (PID %d, feature: %s)\n", lock.PID, lock.Feature)
+		} else {
+			fmt.Printf("○ Stale lock found (PID %d no longer running)\n", lock.PID)
+		}
+	}
+
+	fmt.Println()
 	if issues > 0 {
-		fmt.Printf("\n%d issue(s) found.\n", issues)
+		fmt.Printf("%d issue(s) found.\n", issues)
 		os.Exit(1)
 	} else {
-		fmt.Println("\nAll checks passed.")
+		fmt.Println("All checks passed.")
 	}
-}
-
-func runAmpWithPrompt(cfg ResolvedConfig, prompt string) error {
-	cmd := exec.Command(cfg.Amp.Command, cfg.Amp.Args...)
-	cmd.Dir = cfg.ProjectRoot
-	cmd.Env = os.Environ()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	io.WriteString(stdin, prompt)
-	stdin.Close()
-
-	return cmd.Wait()
-}
-
-func isFlag(s string) bool {
-	return len(s) > 0 && s[0] == '-'
 }

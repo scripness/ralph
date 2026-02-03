@@ -1,8 +1,8 @@
 # Ralph
 
-Autonomous AI agent loop for implementing PRD stories with [Amp](https://ampcode.com).
+Autonomous AI agent loop for implementing PRD stories with any AI provider.
 
-Ralph runs Amp in a loop until all PRD stories are complete. Each iteration runs with fresh context, using git and prd.json as the single source of truth.
+Ralph orchestrates AI coding agents (Amp, Claude Code, OpenCode, etc.) in an infinite loop until all PRD stories are complete and verified. Provider-agnostic design with deterministic verification.
 
 ## Install
 
@@ -17,93 +17,140 @@ go install github.com/scripness/ralph@latest
 ## Quick Start
 
 ```bash
-# Initialize in your project
+# Initialize Ralph in your project
 ralph init
 
-# Create a PRD interactively
-ralph prd
+# Create a PRD for a feature
+ralph prd auth
 
-# Convert PRD markdown to prd.json
-ralph convert tasks/prd-feature.md
+# Run the loop (runs forever until complete)
+ralph run auth
 
-# Start the agent loop
-ralph run
-
-# Update to latest version
-ralph upgrade
+# Check status anytime
+ralph status auth
 ```
+
+## Key Features
+
+- **Provider-agnostic**: Works with any AI CLI (amp, claude, opencode)
+- **Idempotent**: Stop anytime, run again to resume
+- **Multi-feature**: Work on multiple features in parallel
+- **Deterministic verification**: Ralph runs all QA gates
+- **Service management**: Auto-starts dev servers for UI verification
 
 ## The Flow
 
 ```
-ralph prd              Create tasks/prd-[feature].md interactively
-  ↓                    (asks clarifying questions, writes user stories)
-ralph convert          Convert to scripts/ralph/prd.json
-  ↓                    (generates v2 schema with all fields)
-ralph run              Run loop → auto-verify → fix → repeat until done
+ralph init              Create ralph.config.json + .ralph/
+  ↓
+ralph prd auth          Brainstorm → Draft prd.md → Finalize prd.json
+  ↓
+ralph run auth          Infinite loop: implement → verify → repeat
+  ↓
+  ├── Story complete? → Mark passes=true → Next story
+  ├── Verification failed? → Retry (up to maxRetries)
+  ├── Max retries? → Mark blocked → Skip to next
+  └── All done? → Final verification → VERIFIED or RESET
 ```
 
 ## How It Works
 
-1. Ralph reads `scripts/ralph/prd.json` for user stories
-2. Picks highest-priority story where `passes: false`
-3. Sets `run.currentStoryId` (crash recovery)
-4. Implements/verifies that story via Amp
-5. Runs quality checks (auto-detected from project type)
-6. Commits changes with prd.json updates
-7. Clears `currentStoryId`, sets `passes: true`
-8. Repeats until all stories pass → outputs `<promise>COMPLETE</promise>`
-9. Auto-runs verification
-10. If issues found, resets stories and loops back
-11. Exits "Ready to merge" when fully verified
+1. Ralph loads `.ralph/*-[feature]/prd.json`
+2. Creates/switches to `ralph/{feature}` branch
+3. Picks next story (highest priority, not passed, not blocked)
+4. Sets `currentStoryId` in prd.json (crash recovery)
+5. Sends prompt to provider subprocess
+6. Provider implements code, writes tests, commits
+7. Provider outputs `<ralph>DONE</ralph>` when finished
+8. Ralph runs `verify.default` commands
+9. If UI story: restarts services, runs `verify.ui` commands
+10. Pass → mark story complete, next story
+11. Fail → increment retries, retry or block
+12. All stories pass → final verification prompt
+13. Provider outputs `<ralph>VERIFIED</ralph>` or `<ralph>RESET:US-001,US-003</ralph>`
+14. Complete → "Ready to merge"
 
 ## Commands
 
 ```bash
-ralph init              # Initialize Ralph in your project
-ralph prd [name]        # Create a PRD document interactively
-ralph convert <file>    # Convert PRD markdown to prd.json
-ralph run [iterations]  # Run the main loop (default: 10)
-ralph run --no-verify   # Skip auto-verification after completion
-ralph verify            # Run verification only
-ralph status            # Show PRD story status
-ralph next              # Show next story to work on
-ralph validate          # Validate prd.json schema
-ralph doctor            # Check Ralph environment
-ralph upgrade           # Update to latest version
+# Core
+ralph init                 # Initialize Ralph (creates config + .ralph/)
+ralph prd <feature>        # Create/refine/finalize a PRD
+ralph run <feature>        # Run the agent loop (infinite until done)
+ralph verify <feature>     # Run verification only
+
+# Status
+ralph status               # Show all features
+ralph status <feature>     # Show specific feature status
+ralph next <feature>       # Show next story to work on
+ralph validate <feature>   # Validate prd.json schema
+
+# Utility
+ralph doctor               # Check environment
+ralph upgrade              # Update to latest version
 ```
 
-## Project Detection
+## File Structure
 
-Ralph auto-detects your project type and configures quality commands:
-
-| Project Type | Detection | Quality Commands |
-|--------------|-----------|------------------|
-| Bun | `bun.lock` | typecheck, lint, test from package.json |
-| Node | `package.json` | typecheck, lint, test from package.json |
-| Rust | `Cargo.toml` | cargo check, clippy, test |
-| Go | `go.mod` | go build, vet, test |
+```
+project/
+├── ralph.config.json          # Project configuration (required)
+└── .ralph/
+    ├── 2024-01-15-auth/
+    │   ├── prd.md             # Human-readable PRD
+    │   └── prd.json           # Finalized for execution
+    ├── 2024-01-20-billing/
+    │   ├── prd.md
+    │   └── prd.json
+    ├── screenshots/           # Browser verification evidence
+    └── ralph.lock             # Prevents concurrent runs
+```
 
 ## Configuration
 
-Create `ralph.config.json` in your project root to override defaults:
+`ralph.config.json`:
 
 ```json
 {
-  "prdPath": "scripts/ralph/prd.json",
-  "iterations": 20,
-  "verify": true,
-  "quality": [
-    { "name": "typecheck", "cmd": "bun run typecheck" },
-    { "name": "test", "cmd": "bun run test" },
-    { "name": "lint", "cmd": "bun run lint" }
-  ],
-  "amp": {
+  "maxRetries": 3,
+  "provider": {
     "command": "amp",
-    "args": ["--dangerously-allow-all"]
+    "args": ["--dangerously-allow-all"],
+    "timeout": 1800
+  },
+  "services": [
+    {
+      "name": "dev",
+      "start": "bun run dev",
+      "ready": "http://localhost:3000",
+      "readyTimeout": 30,
+      "restartBeforeVerify": true
+    }
+  ],
+  "verify": {
+    "default": [
+      "bun run typecheck",
+      "bun run lint",
+      "bun run test:unit"
+    ],
+    "ui": [
+      "bun run test:e2e"
+    ]
   }
 }
 ```
+
+## Provider Signals
+
+Provider communicates with Ralph via markers in stdout:
+
+| Signal | Purpose |
+|--------|---------|
+| `<ralph>DONE</ralph>` | Story implementation complete |
+| `<ralph>LEARNING:text</ralph>` | Add learning for future context |
+| `<ralph>VERIFIED</ralph>` | Final verification passed |
+| `<ralph>RESET:US-001,US-003</ralph>` | Reset specific stories |
+| `<ralph>REASON:explanation</ralph>` | Reason for reset |
 
 ## prd.json Schema (v2)
 
@@ -114,38 +161,81 @@ Create `ralph.config.json` in your project root to override defaults:
   "branchName": "ralph/feature-name",
   "description": "Feature description",
   "run": {
-    "startedAt": "ISO timestamp",
+    "startedAt": "2024-01-15T10:00:00Z",
     "currentStoryId": null,
-    "learnings": ["patterns discovered this run"]
+    "learnings": []
   },
   "userStories": [{
     "id": "US-001",
     "title": "Story title",
-    "description": "As a...",
-    "acceptanceCriteria": ["..."],
+    "description": "As a user, I want...",
+    "acceptanceCriteria": ["Criterion 1", "Criterion 2"],
+    "tags": ["ui"],
     "priority": 1,
     "passes": false,
     "retries": 0,
+    "blocked": false,
     "lastResult": null,
     "notes": ""
   }]
 }
 ```
 
-## Crash Recovery
+## Story Tags
 
-If Ralph crashes mid-story:
-1. `run.currentStoryId` contains the story ID
-2. Next run detects dirty git tree + currentStoryId set
-3. Agent resumes that story, verifying partial work
+| Tag | Effect |
+|-----|--------|
+| `ui` | Restarts services before verify, runs `verify.ui` commands |
 
-## Self-Update
+## Idempotent Workflow
+
+Ralph is designed for interruption:
 
 ```bash
-ralph upgrade
+ralph run auth          # Working on US-003...
+^C                      # Stop (Ctrl+C)
+
+# Later...
+ralph run auth          # Resumes from US-003 automatically
 ```
 
-Checks GitHub releases, downloads the latest binary, and replaces itself.
+State is preserved in prd.json:
+- `currentStoryId`: Story being worked on
+- `passes`: Whether story is complete
+- `retries`: Number of failed attempts
+- `blocked`: Story exceeded maxRetries
+
+## Example Configs
+
+### Amp (Sourcegraph)
+```json
+{
+  "provider": {
+    "command": "amp",
+    "args": ["--dangerously-allow-all"]
+  }
+}
+```
+
+### Claude Code
+```json
+{
+  "provider": {
+    "command": "claude",
+    "args": ["--print"]
+  }
+}
+```
+
+### OpenCode
+```json
+{
+  "provider": {
+    "command": "opencode",
+    "args": []
+  }
+}
+```
 
 ## Build from Source
 
@@ -153,6 +243,12 @@ Checks GitHub releases, downloads the latest binary, and replaces itself.
 git clone https://github.com/scripness/ralph
 cd ralph
 go build -ldflags="-s -w" -o ralph .
+```
+
+## Testing
+
+```bash
+go test ./...
 ```
 
 ## License

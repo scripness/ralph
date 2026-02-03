@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-var Version = "1.0.0"
+var Version = "2.0.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -29,8 +29,6 @@ func main() {
 		cmdVerify(args)
 	case "prd":
 		cmdPrd(args)
-	case "convert":
-		cmdConvert(args)
 	case "status":
 		cmdStatus(args)
 	case "next":
@@ -49,38 +47,39 @@ func main() {
 }
 
 func showHelp() {
-	fmt.Printf(`ralph v%s - Autonomous AI agent loop for Amp
+	fmt.Printf(`ralph v%s - Autonomous AI agent loop
 
-Usage: ralph <command> [options]
+Usage: ralph <command> [feature] [options]
 
 Commands:
-  init              Initialize Ralph in the current project
-  run [iterations]  Run the agent loop (default: 10 iterations)
-  verify            Run verification only
-  prd               Create a PRD document interactively
-  convert <file>    Convert a PRD markdown file to prd.json
-  status            Show PRD story status
-  next              Show the next story to work on
-  validate          Validate prd.json schema
-  doctor            Check Ralph environment
-  upgrade           Upgrade Ralph to the latest version
+  init                 Initialize Ralph (creates ralph.config.json + .ralph/)
+  run <feature>        Run the agent loop for a feature
+  verify <feature>     Run verification only for a feature
+  prd <feature>        Create/refine/finalize a PRD for a feature
+  status [feature]     Show story status (all features or specific)
+  next <feature>       Show the next story to work on
+  validate <feature>   Validate prd.json schema
+  doctor               Check Ralph environment
+  upgrade              Upgrade Ralph to the latest version
 
 Options:
-  -h, --help        Show this help message
-  -v, --version     Show version number
-
-Run Options:
-  --no-verify       Skip auto-verification after completion
+  -h, --help           Show this help message
+  -v, --version        Show version number
 
 Examples:
-  ralph init                    # Initialize in current project
-  ralph prd                     # Create a new PRD interactively
-  ralph convert tasks/prd.md    # Convert PRD to prd.json
-  ralph run                     # Run with default 10 iterations
-  ralph run 20                  # Run with 20 iterations
-  ralph run --no-verify         # Skip verification after completion
-  ralph verify                  # Run verification only
-  ralph status                  # Check progress
-  ralph upgrade                 # Update to latest version
+  ralph init                    # Initialize Ralph in current project
+  ralph prd auth                # Create/refine PRD for 'auth' feature
+  ralph run auth                # Run the loop for 'auth' feature
+  ralph status                  # Show status of all features
+  ralph status auth             # Show status of 'auth' feature
+  ralph verify auth             # Verify 'auth' feature only
+
+File Structure:
+  ralph.config.json             # Project configuration (required)
+  .ralph/
+    2024-01-15-auth/
+      prd.md                    # Human-readable PRD
+      prd.json                  # Finalized for execution
+    screenshots/                # Browser verification evidence
 `, Version)
 }
