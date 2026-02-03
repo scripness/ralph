@@ -251,6 +251,10 @@ go build -ldflags="-s -w" -o ralph .
 go test ./...
 ```
 
+## Credits
+
+Inspired by [snarktank/ralph](https://github.com/snarktank/ralph). v2.0.0 is a complete Go rewrite with provider-agnostic architecture.
+
 ## License
 
 MIT
