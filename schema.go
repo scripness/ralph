@@ -15,19 +15,30 @@ type LastResult struct {
 	Summary     string `json:"summary"`
 }
 
+// BrowserStep represents a single browser verification step
+type BrowserStep struct {
+	Action   string `json:"action"`             // navigate, click, type, waitFor, assertText, assertVisible, screenshot
+	URL      string `json:"url,omitempty"`      // for navigate
+	Selector string `json:"selector,omitempty"` // CSS selector for click, type, waitFor, assert*
+	Value    string `json:"value,omitempty"`    // for type action
+	Contains string `json:"contains,omitempty"` // for assertText
+	Timeout  int    `json:"timeout,omitempty"`  // seconds to wait (default 10)
+}
+
 // UserStory represents a single user story in the PRD
 type UserStory struct {
-	ID                 string      `json:"id"`
-	Title              string      `json:"title"`
-	Description        string      `json:"description"`
-	AcceptanceCriteria []string    `json:"acceptanceCriteria"`
-	Tags               []string    `json:"tags,omitempty"`
-	Priority           int         `json:"priority"`
-	Passes             bool        `json:"passes"`
-	Retries            int         `json:"retries"`
-	Blocked            bool        `json:"blocked"`
-	LastResult         *LastResult `json:"lastResult"`
-	Notes              string      `json:"notes"`
+	ID                 string        `json:"id"`
+	Title              string        `json:"title"`
+	Description        string        `json:"description"`
+	AcceptanceCriteria []string      `json:"acceptanceCriteria"`
+	Tags               []string      `json:"tags,omitempty"`
+	Priority           int           `json:"priority"`
+	Passes             bool          `json:"passes"`
+	Retries            int           `json:"retries"`
+	Blocked            bool          `json:"blocked"`
+	LastResult         *LastResult   `json:"lastResult"`
+	Notes              string        `json:"notes"`
+	BrowserSteps       []BrowserStep `json:"browserSteps,omitempty"` // Interactive browser verification
 }
 
 // Run contains runtime state for the PRD

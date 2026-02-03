@@ -31,34 +31,32 @@ func NewLockFile(projectRoot string) *LockFile {
 	}
 }
 
-// Acquire attempts to acquire the lock
+// Acquire attempts to acquire the lock atomically
 func (lf *LockFile) Acquire(feature, branch string) error {
 	// Ensure .ralph directory exists
 	if err := os.MkdirAll(filepath.Dir(lf.path), 0755); err != nil {
 		return fmt.Errorf("failed to create .ralph directory: %w", err)
 	}
 
-	// Check if lock exists
+	// Check if lock exists and handle stale locks
 	if lf.isHeld() {
 		existing, err := lf.readLock()
 		if err != nil {
-			return fmt.Errorf("failed to read existing lock: %w", err)
-		}
-
-		// Check if process is still alive
-		if isProcessAlive(existing.PID) {
+			// Lock file exists but can't be read - try to remove it
+			os.Remove(lf.path)
+		} else if isProcessAlive(existing.PID) {
 			return fmt.Errorf("ralph is already running (PID %d, feature: %s)\nStarted at: %s",
 				existing.PID, existing.Feature, existing.StartedAt.Format(time.RFC3339))
-		}
-
-		// Stale lock - remove it
-		fmt.Printf("Removing stale lock (PID %d no longer running)\n", existing.PID)
-		if err := os.Remove(lf.path); err != nil {
-			return fmt.Errorf("failed to remove stale lock: %w", err)
+		} else {
+			// Stale lock - remove it
+			fmt.Printf("Removing stale lock (PID %d no longer running)\n", existing.PID)
+			if err := os.Remove(lf.path); err != nil {
+				return fmt.Errorf("failed to remove stale lock: %w", err)
+			}
 		}
 	}
 
-	// Create lock
+	// Create lock atomically using O_CREATE|O_EXCL
 	lf.info = &LockInfo{
 		PID:       os.Getpid(),
 		StartedAt: time.Now(),
@@ -70,8 +68,21 @@ func (lf *LockFile) Acquire(feature, branch string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal lock info: %w", err)
 	}
+	data = append(data, '\n')
 
-	if err := os.WriteFile(lf.path, data, 0644); err != nil {
+	// O_CREATE|O_EXCL ensures atomic creation - fails if file already exists
+	f, err := os.OpenFile(lf.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			// Another process created the lock between our check and create
+			return fmt.Errorf("ralph is already running (lock acquired by another process)")
+		}
+		return fmt.Errorf("failed to create lock file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		os.Remove(lf.path)
 		return fmt.Errorf("failed to write lock file: %w", err)
 	}
 

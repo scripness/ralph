@@ -10,9 +10,31 @@ import (
 
 // ProviderConfig configures the AI provider CLI
 type ProviderConfig struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Timeout int      `json:"timeout"` // seconds per iteration
+	Command       string   `json:"command"`
+	Args          []string `json:"args"`
+	Timeout       int      `json:"timeout"`       // seconds per iteration
+	PromptMode    string   `json:"promptMode"`    // "stdin", "arg", or "file" (auto-detected if empty)
+	KnowledgeFile string   `json:"knowledgeFile"` // "AGENTS.md", "CLAUDE.md", etc. (auto-detected if empty)
+}
+
+// ProviderDefaults contains default settings for known providers
+type ProviderDefaults struct {
+	PromptMode    string
+	KnowledgeFile string
+}
+
+// knownProviders maps provider commands to their defaults
+var knownProviders = map[string]ProviderDefaults{
+	"amp":      {PromptMode: "stdin", KnowledgeFile: "AGENTS.md"},
+	"claude":   {PromptMode: "stdin", KnowledgeFile: "CLAUDE.md"},
+	"opencode": {PromptMode: "arg", KnowledgeFile: "AGENTS.md"},
+	"aider":    {PromptMode: "stdin", KnowledgeFile: "AGENTS.md"},
+}
+
+// defaultProviderDefaults is used for unknown providers
+var defaultProviderDefaults = ProviderDefaults{
+	PromptMode:    "stdin",
+	KnowledgeFile: "AGENTS.md",
 }
 
 // ServiceConfig configures a managed service (e.g., dev server)
@@ -89,6 +111,9 @@ func LoadConfig(projectRoot string) (*ResolvedConfig, error) {
 	if cfg.Provider.Timeout <= 0 {
 		cfg.Provider.Timeout = 1800 // 30 minutes
 	}
+
+	// Auto-detect provider defaults based on command
+	applyProviderDefaults(&cfg.Provider)
 	if cfg.Browser == nil {
 		cfg.Browser = &BrowserConfig{
 			Enabled:       true,
@@ -165,6 +190,31 @@ func GetProjectRoot() string {
 func isCommandAvailable(cmd string) bool {
 	_, err := exec.LookPath(cmd)
 	return err == nil
+}
+
+// applyProviderDefaults sets PromptMode and KnowledgeFile based on known providers
+func applyProviderDefaults(p *ProviderConfig) {
+	// Get defaults for this provider (or use fallback)
+	defaults, ok := knownProviders[p.Command]
+	if !ok {
+		defaults = defaultProviderDefaults
+	}
+
+	// Only apply if not already set by user
+	if p.PromptMode == "" {
+		p.PromptMode = defaults.PromptMode
+	}
+	if p.KnowledgeFile == "" {
+		p.KnowledgeFile = defaults.KnowledgeFile
+	}
+
+	// Validate promptMode
+	switch p.PromptMode {
+	case "stdin", "arg", "file":
+		// valid
+	default:
+		p.PromptMode = "stdin" // fallback to safest
+	}
 }
 
 // WriteDefaultConfig writes a default ralph.config.json

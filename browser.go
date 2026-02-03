@@ -8,16 +8,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
 
 // BrowserRunner handles browser-based verification
 type BrowserRunner struct {
-	config      *BrowserConfig
-	projectRoot string
-	ctx         context.Context
-	cancel      context.CancelFunc
+	config        *BrowserConfig
+	projectRoot   string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	consoleErrors []string
 }
 
 // BrowserCheckResult contains results from browser verification
@@ -27,6 +29,15 @@ type BrowserCheckResult struct {
 	ConsoleErrors []string
 	Screenshot    string
 	Error         error
+	StepResults   []StepResult
+}
+
+// StepResult contains the result of a single browser step
+type StepResult struct {
+	Step    BrowserStep
+	Passed  bool
+	Error   string
+	Elapsed time.Duration
 }
 
 // NewBrowserRunner creates a new browser runner
@@ -37,7 +48,167 @@ func NewBrowserRunner(projectRoot string, config *BrowserConfig) *BrowserRunner 
 	}
 }
 
-// RunChecks runs browser checks for a story's acceptance criteria
+// RunSteps runs interactive browser steps for a story
+func (br *BrowserRunner) RunSteps(story *UserStory, baseURL string) (*BrowserCheckResult, error) {
+	if br.config == nil || !br.config.Enabled {
+		return nil, nil
+	}
+
+	// If no browser steps defined, fall back to URL checks
+	if len(story.BrowserSteps) == 0 {
+		results, err := br.RunChecks(story, baseURL)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) > 0 {
+			return &results[0], nil
+		}
+		return nil, nil
+	}
+
+	// Initialize browser
+	if err := br.init(); err != nil {
+		return nil, fmt.Errorf("failed to initialize browser: %w", err)
+	}
+	defer br.close()
+
+	result := &BrowserCheckResult{
+		URL: baseURL,
+	}
+
+	// Execute each step
+	for _, step := range story.BrowserSteps {
+		stepResult := br.executeStep(step, baseURL, story.ID)
+		result.StepResults = append(result.StepResults, stepResult)
+
+		if !stepResult.Passed {
+			result.Error = fmt.Errorf("step %s failed: %s", step.Action, stepResult.Error)
+			break
+		}
+	}
+
+	result.ConsoleErrors = br.consoleErrors
+
+	return result, nil
+}
+
+// executeStep executes a single browser step
+func (br *BrowserRunner) executeStep(step BrowserStep, baseURL, storyID string) StepResult {
+	start := time.Now()
+	result := StepResult{Step: step, Passed: true}
+
+	timeout := time.Duration(step.Timeout) * time.Second
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(br.ctx, timeout)
+	defer cancel()
+
+	var err error
+
+	switch step.Action {
+	case "navigate":
+		url := step.URL
+		if !strings.HasPrefix(url, "http") {
+			url = baseURL + step.URL
+		}
+		err = chromedp.Run(ctx,
+			chromedp.Navigate(url),
+			chromedp.WaitReady("body", chromedp.ByQuery),
+		)
+
+	case "click":
+		err = chromedp.Run(ctx,
+			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
+			chromedp.Click(step.Selector, chromedp.ByQuery),
+		)
+
+	case "type":
+		err = chromedp.Run(ctx,
+			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
+			chromedp.Clear(step.Selector, chromedp.ByQuery),
+			chromedp.SendKeys(step.Selector, step.Value, chromedp.ByQuery),
+		)
+
+	case "waitFor":
+		err = chromedp.Run(ctx,
+			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
+		)
+
+	case "assertVisible":
+		var nodes []*cdp.Node
+		err = chromedp.Run(ctx,
+			chromedp.Nodes(step.Selector, &nodes, chromedp.ByQuery),
+		)
+		if err == nil && len(nodes) == 0 {
+			err = fmt.Errorf("element not found: %s", step.Selector)
+		}
+
+	case "assertText":
+		var text string
+		err = chromedp.Run(ctx,
+			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
+			chromedp.Text(step.Selector, &text, chromedp.ByQuery),
+		)
+		if err == nil && !strings.Contains(text, step.Contains) {
+			err = fmt.Errorf("text '%s' not found in element (got: '%s')", step.Contains, truncateText(text, 100))
+		}
+
+	case "assertNotVisible":
+		var nodes []*cdp.Node
+		err = chromedp.Run(ctx,
+			chromedp.Nodes(step.Selector, &nodes, chromedp.ByQuery, chromedp.AtLeast(0)),
+		)
+		if err == nil && len(nodes) > 0 {
+			// Check if actually visible
+			var visible bool
+			chromedp.Run(ctx, chromedp.Evaluate(fmt.Sprintf(
+				`document.querySelector(%q).offsetParent !== null`, step.Selector), &visible))
+			if visible {
+				err = fmt.Errorf("element should not be visible: %s", step.Selector)
+			}
+		}
+
+	case "screenshot":
+		var buf []byte
+		err = chromedp.Run(ctx,
+			chromedp.FullScreenshot(&buf, 90),
+		)
+		if err == nil && len(buf) > 0 {
+			br.saveScreenshot(storyID, step.Selector, buf)
+		}
+
+	case "wait":
+		waitTime := time.Duration(step.Timeout) * time.Second
+		if waitTime == 0 {
+			waitTime = 1 * time.Second
+		}
+		time.Sleep(waitTime)
+
+	case "submit":
+		// Click submit and wait for navigation
+		err = chromedp.Run(ctx,
+			chromedp.WaitVisible(step.Selector, chromedp.ByQuery),
+			chromedp.Click(step.Selector, chromedp.ByQuery),
+			chromedp.WaitReady("body", chromedp.ByQuery),
+		)
+
+	default:
+		err = fmt.Errorf("unknown action: %s", step.Action)
+	}
+
+	result.Elapsed = time.Since(start)
+
+	if err != nil {
+		result.Passed = false
+		result.Error = err.Error()
+	}
+
+	return result
+}
+
+// RunChecks runs browser checks for a story's acceptance criteria (legacy/fallback)
 func (br *BrowserRunner) RunChecks(story *UserStory, baseURL string) ([]BrowserCheckResult, error) {
 	if br.config == nil || !br.config.Enabled {
 		return nil, nil
@@ -82,16 +253,24 @@ func (br *BrowserRunner) init() error {
 
 	// Create allocator context
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
-	
+
 	// Create browser context
 	ctx, cancel := chromedp.NewContext(allocCtx)
-	
+
 	// Store for cleanup
 	br.ctx = ctx
 	br.cancel = func() {
 		cancel()
 		allocCancel()
 	}
+
+	// Listen for console errors
+	br.consoleErrors = nil
+	chromedp.ListenTarget(br.ctx, func(ev interface{}) {
+		if ev, ok := ev.(*runtime.EventExceptionThrown); ok {
+			br.consoleErrors = append(br.consoleErrors, ev.ExceptionDetails.Text)
+		}
+	})
 
 	return nil
 }
@@ -106,14 +285,6 @@ func (br *BrowserRunner) close() {
 // checkURL checks a single URL
 func (br *BrowserRunner) checkURL(url, storyID string) BrowserCheckResult {
 	result := BrowserCheckResult{URL: url}
-
-	// Collect console errors
-	var consoleErrors []string
-	chromedp.ListenTarget(br.ctx, func(ev interface{}) {
-		if ev, ok := ev.(*runtime.EventExceptionThrown); ok {
-			consoleErrors = append(consoleErrors, ev.ExceptionDetails.Text)
-		}
-	})
 
 	// Create timeout context
 	ctx, cancel := context.WithTimeout(br.ctx, 30*time.Second)
@@ -133,7 +304,7 @@ func (br *BrowserRunner) checkURL(url, storyID string) BrowserCheckResult {
 		return result
 	}
 
-	result.ConsoleErrors = consoleErrors
+	result.ConsoleErrors = br.consoleErrors
 
 	// Save screenshot
 	if len(buf) > 0 {
@@ -151,12 +322,8 @@ func (br *BrowserRunner) extractURLs(story *UserStory, baseURL string) []string 
 
 	for _, criterion := range story.AcceptanceCriteria {
 		lower := strings.ToLower(criterion)
-		
+
 		// Look for common patterns
-		// "Navigate to /dashboard"
-		// "Visit the /settings page"
-		// "Go to /auth/login"
-		// "Check /api/health"
 		patterns := []string{
 			"navigate to ",
 			"visit ",
@@ -171,7 +338,6 @@ func (br *BrowserRunner) extractURLs(story *UserStory, baseURL string) []string 
 		for _, pattern := range patterns {
 			if idx := strings.Index(lower, pattern); idx != -1 {
 				rest := criterion[idx+len(pattern):]
-				// Extract path (starts with /)
 				if path := extractPath(rest); path != "" {
 					fullURL := baseURL + path
 					if !seen[fullURL] {
@@ -184,11 +350,9 @@ func (br *BrowserRunner) extractURLs(story *UserStory, baseURL string) []string 
 
 		// Also look for explicit URLs
 		if strings.Contains(criterion, "http://") || strings.Contains(criterion, "https://") {
-			// Extract URL from criterion
 			words := strings.Fields(criterion)
 			for _, word := range words {
 				if strings.HasPrefix(word, "http://") || strings.HasPrefix(word, "https://") {
-					// Clean up trailing punctuation
 					word = strings.TrimRight(word, ".,;:!?\"')")
 					if !seen[word] {
 						urls = append(urls, word)
@@ -210,21 +374,17 @@ func (br *BrowserRunner) extractURLs(story *UserStory, baseURL string) []string 
 // extractPath extracts a URL path from text
 func extractPath(text string) string {
 	text = strings.TrimSpace(text)
-	
-	// Must start with /
+
 	if !strings.HasPrefix(text, "/") {
 		return ""
 	}
 
-	// Find end of path (space or end of string)
 	end := strings.IndexAny(text, " \t\n,;:!?\"')")
 	if end == -1 {
 		end = len(text)
 	}
 
 	path := text[:end]
-	
-	// Basic validation
 	if len(path) < 2 {
 		return ""
 	}
@@ -233,41 +393,46 @@ func extractPath(text string) string {
 }
 
 // saveScreenshot saves a screenshot to the screenshots directory
-func (br *BrowserRunner) saveScreenshot(storyID, url string, data []byte) string {
+func (br *BrowserRunner) saveScreenshot(storyID, identifier string, data []byte) string {
 	screenshotDir := br.config.ScreenshotDir
 	if screenshotDir == "" {
 		screenshotDir = ".ralph/screenshots"
 	}
 
-	// Make path absolute if relative
 	if !filepath.IsAbs(screenshotDir) {
 		screenshotDir = filepath.Join(br.projectRoot, screenshotDir)
 	}
 
-	// Ensure directory exists
 	if err := os.MkdirAll(screenshotDir, 0755); err != nil {
 		fmt.Printf("Warning: failed to create screenshot dir: %v\n", err)
 		return ""
 	}
 
-	// Generate filename
-	urlSafe := strings.ReplaceAll(url, "/", "_")
-	urlSafe = strings.ReplaceAll(urlSafe, ":", "_")
-	urlSafe = strings.ReplaceAll(urlSafe, "?", "_")
-	if len(urlSafe) > 50 {
-		urlSafe = urlSafe[:50]
+	idSafe := strings.ReplaceAll(identifier, "/", "_")
+	idSafe = strings.ReplaceAll(idSafe, ":", "_")
+	idSafe = strings.ReplaceAll(idSafe, "?", "_")
+	if len(idSafe) > 50 {
+		idSafe = idSafe[:50]
 	}
-	
-	timestamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("%s-%s-%s.png", storyID, timestamp, urlSafe)
-	filepath := filepath.Join(screenshotDir, filename)
 
-	if err := os.WriteFile(filepath, data, 0644); err != nil {
+	timestamp := time.Now().Format("20060102-150405")
+	filename := fmt.Sprintf("%s-%s-%s.png", storyID, timestamp, idSafe)
+	screenshotPath := filepath.Join(screenshotDir, filename)
+
+	if err := os.WriteFile(screenshotPath, data, 0644); err != nil {
 		fmt.Printf("Warning: failed to save screenshot: %v\n", err)
 		return ""
 	}
 
-	return filepath
+	return screenshotPath
+}
+
+// truncateText truncates text to maxLen characters
+func truncateText(text string, maxLen int) string {
+	if len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen] + "..."
 }
 
 // BrowserResultsHaveErrors returns true if any check had errors
@@ -280,7 +445,7 @@ func BrowserResultsHaveErrors(results []BrowserCheckResult) bool {
 	return false
 }
 
-// FormatResults formats browser check results for display
+// FormatBrowserResults formats browser check results for display
 func FormatBrowserResults(results []BrowserCheckResult) string {
 	if len(results) == 0 {
 		return "No browser checks performed"
@@ -300,6 +465,24 @@ func FormatBrowserResults(results []BrowserCheckResult) string {
 				sb.WriteString(fmt.Sprintf("      - %s\n", err))
 			}
 		}
+		if len(r.StepResults) > 0 {
+			sb.WriteString("    Steps:\n")
+			for _, step := range r.StepResults {
+				status := "✓"
+				if !step.Passed {
+					status = "✗"
+				}
+				sb.WriteString(fmt.Sprintf("      %s %s", status, step.Step.Action))
+				if step.Step.Selector != "" {
+					sb.WriteString(fmt.Sprintf(" (%s)", step.Step.Selector))
+				}
+				sb.WriteString(fmt.Sprintf(" [%v]", step.Elapsed.Round(time.Millisecond)))
+				if !step.Passed {
+					sb.WriteString(fmt.Sprintf(" - %s", step.Error))
+				}
+				sb.WriteString("\n")
+			}
+		}
 		if r.Screenshot != "" {
 			sb.WriteString(fmt.Sprintf("    📸 Screenshot: %s\n", r.Screenshot))
 		}
@@ -307,11 +490,50 @@ func FormatBrowserResults(results []BrowserCheckResult) string {
 	return sb.String()
 }
 
+// FormatStepResult formats a single step result
+func FormatStepResult(result *BrowserCheckResult) string {
+	if result == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	allPassed := true
+
+	for _, step := range result.StepResults {
+		status := "✓"
+		if !step.Passed {
+			status = "✗"
+			allPassed = false
+		}
+		sb.WriteString(fmt.Sprintf("    %s %s", status, step.Step.Action))
+		if step.Step.Selector != "" {
+			sb.WriteString(fmt.Sprintf(" %s", step.Step.Selector))
+		}
+		if step.Step.URL != "" {
+			sb.WriteString(fmt.Sprintf(" %s", step.Step.URL))
+		}
+		sb.WriteString(fmt.Sprintf(" (%v)", step.Elapsed.Round(time.Millisecond)))
+		if !step.Passed {
+			sb.WriteString(fmt.Sprintf("\n      Error: %s", step.Error))
+		}
+		sb.WriteString("\n")
+	}
+
+	if allPassed && len(result.StepResults) > 0 {
+		sb.WriteString("    ✓ All browser steps passed\n")
+	}
+
+	if len(result.ConsoleErrors) > 0 {
+		sb.WriteString(fmt.Sprintf("    ⚠ Console errors: %d\n", len(result.ConsoleErrors)))
+	}
+
+	return sb.String()
+}
+
 // GetBaseURL extracts base URL from services config
 func GetBaseURL(services []ServiceConfig) string {
 	for _, svc := range services {
 		if svc.Ready != "" {
-			// Use the ready URL as base
 			return strings.TrimSuffix(svc.Ready, "/")
 		}
 	}

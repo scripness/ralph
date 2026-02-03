@@ -116,7 +116,9 @@ project/
   "provider": {
     "command": "amp",
     "args": ["--dangerously-allow-all"],
-    "timeout": 1800
+    "timeout": 1800,
+    "promptMode": "stdin",
+    "knowledgeFile": "AGENTS.md"
   },
   "services": [
     {
@@ -139,6 +141,22 @@ project/
   }
 }
 ```
+
+### Provider Settings
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `command` | Provider CLI command | (required) |
+| `args` | Arguments to pass | `[]` |
+| `timeout` | Seconds per iteration | `1800` |
+| `promptMode` | How to pass prompt: `stdin`, `arg`, `file` | Auto-detected |
+| `knowledgeFile` | Knowledge file name: `AGENTS.md`, `CLAUDE.md` | Auto-detected |
+
+**Auto-detection by provider:**
+- `amp` → stdin + AGENTS.md
+- `claude` → stdin + CLAUDE.md
+- `opencode` → arg + AGENTS.md
+- Other → stdin + AGENTS.md
 
 ## Provider Signals
 
@@ -188,7 +206,44 @@ Provider communicates with Ralph via markers in stdout:
 
 | Tag | Effect |
 |-----|--------|
-| `ui` | Restarts services before verify, runs `verify.ui` commands |
+| `ui` | Restarts services before verify, runs `verify.ui` commands, runs browser verification |
+
+## Browser Verification
+
+For UI stories, Ralph can run interactive browser verification like a real user. Define `browserSteps` in the story:
+
+```json
+{
+  "id": "US-003",
+  "title": "Login form works",
+  "tags": ["ui"],
+  "browserSteps": [
+    {"action": "navigate", "url": "/login"},
+    {"action": "type", "selector": "#email", "value": "test@example.com"},
+    {"action": "type", "selector": "#password", "value": "secret"},
+    {"action": "click", "selector": "button[type=submit]"},
+    {"action": "waitFor", "selector": ".dashboard"},
+    {"action": "assertText", "selector": "h1", "contains": "Welcome"}
+  ]
+}
+```
+
+**Available actions:**
+
+| Action | Fields | Description |
+|--------|--------|-------------|
+| `navigate` | `url` | Go to URL (relative or absolute) |
+| `click` | `selector` | Click an element |
+| `type` | `selector`, `value` | Type text into input |
+| `waitFor` | `selector` | Wait for element visible |
+| `assertVisible` | `selector` | Assert element exists |
+| `assertText` | `selector`, `contains` | Assert element has text |
+| `assertNotVisible` | `selector` | Assert element hidden |
+| `submit` | `selector` | Click and wait for navigation |
+| `screenshot` | - | Capture screenshot |
+| `wait` | `timeout` | Wait N seconds |
+
+All steps support optional `timeout` (seconds, default 10).
 
 ## Idempotent Workflow
 

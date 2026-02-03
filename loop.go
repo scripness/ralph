@@ -277,34 +277,83 @@ func runProvider(cfg *ResolvedConfig, prompt string) (*ProviderResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, cfg.Config.Provider.Command, cfg.Config.Provider.Args...)
+	// Build command args based on promptMode
+	args := append([]string{}, cfg.Config.Provider.Args...)
+	var promptFile string
+
+	switch cfg.Config.Provider.PromptMode {
+	case "arg":
+		// Pass prompt as final argument
+		args = append(args, prompt)
+	case "file":
+		// Write prompt to temp file and pass path as argument
+		f, err := os.CreateTemp("", "ralph-prompt-*.md")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp prompt file: %w", err)
+		}
+		promptFile = f.Name()
+		if _, err := f.WriteString(prompt); err != nil {
+			f.Close()
+			os.Remove(promptFile)
+			return nil, fmt.Errorf("failed to write prompt file: %w", err)
+		}
+		f.Close()
+		args = append(args, promptFile)
+	}
+	// "stdin" mode doesn't modify args
+
+	cmd := exec.CommandContext(ctx, cfg.Config.Provider.Command, args...)
 	cmd.Dir = cfg.ProjectRoot
 	cmd.Env = os.Environ()
 
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+	// Setup stdin pipe for stdin mode
+	var stdinPipe io.WriteCloser
+	if cfg.Config.Provider.PromptMode == "stdin" || cfg.Config.Provider.PromptMode == "" {
+		var err error
+		stdinPipe, err = cmd.StdinPipe()
+		if err != nil {
+			if promptFile != "" {
+				os.Remove(promptFile)
+			}
+			return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+		}
 	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		if promptFile != "" {
+			os.Remove(promptFile)
+		}
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		if promptFile != "" {
+			os.Remove(promptFile)
+		}
 		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
+		if promptFile != "" {
+			os.Remove(promptFile)
+		}
 		return nil, fmt.Errorf("failed to start provider: %w", err)
 	}
 
-	// Write prompt to stdin
-	go func() {
-		defer stdin.Close()
-		io.WriteString(stdin, prompt)
-	}()
+	// Cleanup prompt file when done (for file mode)
+	if promptFile != "" {
+		defer os.Remove(promptFile)
+	}
+
+	// Write prompt to stdin (for stdin mode)
+	if stdinPipe != nil {
+		go func() {
+			defer stdinPipe.Close()
+			io.WriteString(stdinPipe, prompt)
+		}()
+	}
 
 	// Collect output with marker detection
 	var mu sync.Mutex
@@ -442,22 +491,45 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 			}
 		}
 
-		// Run built-in browser checks
+		// Run built-in browser verification
 		if cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
-			fmt.Println("  → Running browser checks...")
 			baseURL := GetBaseURL(cfg.Config.Services)
 			if baseURL != "" {
 				browser := NewBrowserRunner(cfg.ProjectRoot, cfg.Config.Browser)
-				browserResults, err := browser.RunChecks(story, baseURL)
-				if err != nil {
-					fmt.Printf("  ⚠ Browser check error: %v\n", err)
-					// Don't fail on browser errors, just warn
-				} else if len(browserResults) > 0 {
-					fmt.Print(FormatBrowserResults(browserResults))
-					// Check for console errors (warn but don't fail)
-					for _, r := range browserResults {
-						if r.Error != nil {
-							fmt.Printf("  ⚠ Page load error: %v\n", r.Error)
+
+				// Use interactive steps if defined, otherwise fall back to URL checks
+				if len(story.BrowserSteps) > 0 {
+					fmt.Println("  → Running browser verification steps...")
+					browserResult, err := browser.RunSteps(story, baseURL)
+					if err != nil {
+						fmt.Printf("  ⚠ Browser verification error: %v\n", err)
+					} else if browserResult != nil {
+						fmt.Print(FormatStepResult(browserResult))
+
+						// Fail story if browser steps failed
+						if browserResult.Error != nil {
+							result.passed = false
+							result.reason = fmt.Sprintf("browser verification failed: %v", browserResult.Error)
+							return result, nil
+						}
+
+						// Warn on console errors
+						if len(browserResult.ConsoleErrors) > 0 {
+							fmt.Printf("  ⚠ Console errors detected: %d\n", len(browserResult.ConsoleErrors))
+						}
+					}
+				} else {
+					// Fallback: basic URL checks
+					fmt.Println("  → Running browser checks...")
+					browserResults, err := browser.RunChecks(story, baseURL)
+					if err != nil {
+						fmt.Printf("  ⚠ Browser check error: %v\n", err)
+					} else if len(browserResults) > 0 {
+						fmt.Print(FormatBrowserResults(browserResults))
+						for _, r := range browserResults {
+							if r.Error != nil {
+								fmt.Printf("  ⚠ Page load error: %v\n", r.Error)
+							}
 						}
 					}
 				}

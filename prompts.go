@@ -6,13 +6,13 @@ import (
 	"strings"
 )
 
-//go:embed templates/*
-var templatesFS embed.FS
+//go:embed prompts/*
+var promptsFS embed.FS
 
-func getTemplate(name string, vars map[string]string) string {
-	data, err := templatesFS.ReadFile("templates/" + name + ".md")
+func getPrompt(name string, vars map[string]string) string {
+	data, err := promptsFS.ReadFile("prompts/" + name + ".md")
 	if err != nil {
-		panic("template not found: " + name)
+		panic("prompt not found: " + name)
 	}
 
 	content := string(data)
@@ -67,7 +67,7 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		}
 	}
 
-	return getTemplate("run", map[string]string{
+	return getPrompt("run", map[string]string{
 		"storyId":            story.ID,
 		"storyTitle":         story.Title,
 		"storyDescription":   story.Description,
@@ -79,6 +79,7 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		"doneMarker":         DoneMarker,
 		"prdPath":            featureDir.PrdJsonPath(),
 		"projectRoot":        cfg.ProjectRoot,
+		"knowledgeFile":      cfg.Config.Provider.KnowledgeFile,
 	})
 }
 
@@ -120,19 +121,20 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 		}
 	}
 
-	return getTemplate("verify", map[string]string{
+	return getPrompt("verify", map[string]string{
 		"project":        prd.Project,
 		"description":    prd.Description,
 		"storySummaries": summariesStr,
 		"verifyCommands": verifyStr,
 		"learnings":      learningsStr,
 		"projectRoot":    cfg.ProjectRoot,
+		"knowledgeFile":  cfg.Config.Provider.KnowledgeFile,
 	})
 }
 
 // generatePrdCreatePrompt generates the prompt for creating a new PRD
 func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir) string {
-	return getTemplate("prd-create", map[string]string{
+	return getPrompt("prd-create", map[string]string{
 		"feature":     featureDir.Feature,
 		"outputPath":  featureDir.PrdMdPath(),
 		"projectRoot": cfg.ProjectRoot,
@@ -141,7 +143,7 @@ func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir) string
 
 // generatePrdRefinePrompt generates the prompt for refining a PRD
 func generatePrdRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string) string {
-	return getTemplate("prd-refine", map[string]string{
+	return getPrompt("prd-refine", map[string]string{
 		"feature":     featureDir.Feature,
 		"prdContent":  content,
 		"outputPath":  featureDir.PrdMdPath(),
@@ -151,7 +153,7 @@ func generatePrdRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, conten
 
 // generatePrdFinalizePrompt generates the prompt for finalizing a PRD
 func generatePrdFinalizePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string) string {
-	return getTemplate("prd-finalize", map[string]string{
+	return getPrompt("prd-finalize", map[string]string{
 		"feature":     featureDir.Feature,
 		"prdContent":  content,
 		"outputPath":  featureDir.PrdJsonPath(),
