@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -385,5 +386,25 @@ func TestBuildProviderArgs_EndToEnd(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTruncateOutput(t *testing.T) {
+	short := "line1\nline2\nline3"
+	if got := truncateOutput(short, 10); got != short {
+		t.Errorf("expected short output unchanged, got %q", got)
+	}
+
+	lines := make([]string, 100)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line%d", i)
+	}
+	long := strings.Join(lines, "\n")
+	result := truncateOutput(long, 5)
+	if !strings.Contains(result, "line99") {
+		t.Error("expected last line present")
+	}
+	if strings.Contains(result, "line0\n") {
+		t.Error("expected first line truncated")
 	}
 }

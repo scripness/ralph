@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -501,9 +502,10 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 	// Run default verification commands
 	for _, cmd := range cfg.Config.Verify.Default {
 		fmt.Printf("  → %s\n", cmd)
-		if err := runCommand(cfg.ProjectRoot, cmd); err != nil {
+		output, err := runCommand(cfg.ProjectRoot, cmd)
+		if err != nil {
 			result.passed = false
-			result.reason = fmt.Sprintf("%s failed: %v", cmd, err)
+			result.reason = fmt.Sprintf("%s failed: %v\n\n--- Output (last 50 lines) ---\n%s", cmd, err, output)
 			return result, nil
 		}
 	}
@@ -585,9 +587,10 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 		// Run UI verification commands
 		for _, cmd := range cfg.Config.Verify.UI {
 			fmt.Printf("  → %s\n", cmd)
-			if err := runCommand(cfg.ProjectRoot, cmd); err != nil {
+			output, err := runCommand(cfg.ProjectRoot, cmd)
+			if err != nil {
 				result.passed = false
-				result.reason = fmt.Sprintf("%s failed: %v", cmd, err)
+				result.reason = fmt.Sprintf("%s failed: %v\n\n--- Output (last 50 lines) ---\n%s", cmd, err, output)
 				return result, nil
 			}
 		}
@@ -596,8 +599,16 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 	// Check service health after all verification
 	if svcMgr != nil && svcMgr.HasServices() {
 		if healthIssues := svcMgr.CheckServiceHealth(); len(healthIssues) > 0 {
+			// Include recent service output for diagnostics
+			reason := fmt.Sprintf("service health check failed: %s", strings.Join(healthIssues, "; "))
+			for _, svc := range cfg.Config.Services {
+				svcOutput := svcMgr.GetRecentOutput(svc.Name, 30)
+				if svcOutput != "" {
+					reason += fmt.Sprintf("\n\n--- %s output (last 30 lines) ---\n%s", svc.Name, svcOutput)
+				}
+			}
 			result.passed = false
-			result.reason = fmt.Sprintf("service health check failed: %s", strings.Join(healthIssues, "; "))
+			result.reason = reason
 			return result, nil
 		}
 	}
@@ -613,14 +624,14 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	fmt.Println("\nRunning verification commands...")
 	for _, cmd := range cfg.Config.Verify.Default {
 		fmt.Printf("  → %s\n", cmd)
-		if err := runCommand(cfg.ProjectRoot, cmd); err != nil {
+		if _, err := runCommand(cfg.ProjectRoot, cmd); err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
 			// Don't fail yet, let provider review
 		}
 	}
 	for _, cmd := range cfg.Config.Verify.UI {
 		fmt.Printf("  → %s\n", cmd)
-		if err := runCommand(cfg.ProjectRoot, cmd); err != nil {
+		if _, err := runCommand(cfg.ProjectRoot, cmd); err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
 		}
 	}
@@ -755,13 +766,25 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	return nil
 }
 
-// runCommand runs a shell command and returns error if it fails
-func runCommand(dir, cmdStr string) error {
+// runCommand runs a shell command, printing output and returning it with any error.
+// The captured output (last maxOutputLines lines) is returned for diagnostic context.
+func runCommand(dir, cmdStr string) (string, error) {
 	cmd := exec.Command("sh", "-c", cmdStr)
 	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	var buf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	err := cmd.Run()
+	return truncateOutput(buf.String(), 50), err
+}
+
+// truncateOutput keeps the last N lines of output for diagnostic context.
+func truncateOutput(output string, maxLines int) string {
+	lines := strings.Split(output, "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // commitPrdOnly commits only the PRD file using GitOps

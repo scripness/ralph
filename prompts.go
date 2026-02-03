@@ -22,6 +22,25 @@ func getPrompt(name string, vars map[string]string) string {
 	return content
 }
 
+const maxLearningsInPrompt = 50
+
+// buildLearnings formats learnings for prompt injection, capped at maxLearningsInPrompt most recent.
+func buildLearnings(learnings []string, heading string) string {
+	if len(learnings) == 0 {
+		return ""
+	}
+	s := heading + "\n\n"
+	start := 0
+	if len(learnings) > maxLearningsInPrompt {
+		s += fmt.Sprintf("_(showing %d most recent of %d learnings)_\n\n", maxLearningsInPrompt, len(learnings))
+		start = len(learnings) - maxLearningsInPrompt
+	}
+	for _, l := range learnings[start:] {
+		s += "- " + l + "\n"
+	}
+	return s
+}
+
 // buildProgress returns a one-line progress summary like "3/6 stories complete (1 blocked)"
 func buildProgress(prd *PRD) string {
 	total := len(prd.UserStories)
@@ -150,14 +169,8 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 	}
 	verifyStr := strings.Join(verifyLines, "\n")
 
-	// Build learnings
-	learningsStr := ""
-	if len(prd.Run.Learnings) > 0 {
-		learningsStr = "## Learnings from Previous Work\n\n"
-		for _, l := range prd.Run.Learnings {
-			learningsStr += "- " + l + "\n"
-		}
-	}
+	// Build learnings (capped at maxLearningsInPrompt most recent)
+	learningsStr := buildLearnings(prd.Run.Learnings, "## Learnings from Previous Work")
 
 	// Build tags info
 	tagsStr := ""
@@ -165,10 +178,11 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		tagsStr = fmt.Sprintf("**Tags:** %s\n", strings.Join(story.Tags, ", "))
 	}
 
-	// Build retry info
+	// Build retry info with remaining retries context
 	retryStr := ""
 	if story.Retries > 0 {
-		retryStr = fmt.Sprintf("\n**Previous Attempts:** %d\n", story.Retries)
+		remaining := cfg.Config.MaxRetries - story.Retries
+		retryStr = fmt.Sprintf("\n**Previous Attempts:** %d of %d (%d remaining before blocked)\n", story.Retries, cfg.Config.MaxRetries, remaining)
 		if story.Notes != "" {
 			retryStr += fmt.Sprintf("**Previous Issue:** %s\n", story.Notes)
 		}
@@ -200,6 +214,7 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		"storyMap":           buildStoryMap(prd, story),
 		"browserSteps":       buildBrowserSteps(story),
 		"serviceURLs":        serviceURLsStr,
+		"timeout":            fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
 	})
 }
 
@@ -256,12 +271,15 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 	}
 	verifyStr := strings.Join(verifyLines, "\n")
 
-	// Build learnings
-	learningsStr := ""
-	if len(prd.Run.Learnings) > 0 {
-		learningsStr = "## Learnings\n\n"
-		for _, l := range prd.Run.Learnings {
-			learningsStr += "- " + l + "\n"
+	// Build learnings (capped)
+	learningsStr := buildLearnings(prd.Run.Learnings, "## Learnings")
+
+	// Build service URLs for verify prompt
+	verifyServiceURLs := ""
+	if len(cfg.Config.Services) > 0 {
+		verifyServiceURLs = "\n**Services:**\n"
+		for _, svc := range cfg.Config.Services {
+			verifyServiceURLs += fmt.Sprintf("- %s: %s\n", svc.Name, svc.Ready)
 		}
 	}
 
@@ -273,6 +291,8 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 		"learnings":      learningsStr,
 		"knowledgeFile":  cfg.Config.Provider.KnowledgeFile,
 		"prdPath":        featureDir.PrdJsonPath(),
+		"branchName":     prd.BranchName,
+		"serviceURLs":    verifyServiceURLs,
 	})
 }
 

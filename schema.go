@@ -200,10 +200,20 @@ func (prd *PRD) ClearCurrentStory() {
 	prd.Run.CurrentStoryID = nil
 }
 
-// AddLearning adds a learning to the PRD, deduplicating exact matches.
+// normalizeLearning normalizes a learning string for deduplication comparison.
+// Trims whitespace and trailing punctuation so near-duplicates are caught.
+func normalizeLearning(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimRight(s, ".!,;:")
+	return strings.ToLower(s)
+}
+
+// AddLearning adds a learning to the PRD, deduplicating with normalization.
+// Comparison is case-insensitive and ignores trailing punctuation.
 func (prd *PRD) AddLearning(learning string) {
+	normalized := normalizeLearning(learning)
 	for _, existing := range prd.Run.Learnings {
-		if existing == learning {
+		if normalizeLearning(existing) == normalized {
 			return
 		}
 	}

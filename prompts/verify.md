@@ -6,6 +6,8 @@ All stories have been implemented. Perform a comprehensive review to verify the 
 
 **Name:** {{project}}
 **Description:** {{description}}
+**Branch:** {{branchName}}
+{{serviceURLs}}
 
 ## Stories Implemented
 
@@ -25,7 +27,7 @@ If configured, the CLI has also run browser verification for UI stories and chec
 
 ## Your Task
 
-Review the implementation thoroughly. This is a **report-only verification phase** — review code and run verification commands, but do NOT modify any code.
+Review the implementation thoroughly. The CLI has already executed verification commands above. You may re-run specific commands if needed for deeper investigation, but do NOT modify any code. Use `git diff main...HEAD` to review the full scope of changes on this branch.
 
 ### Review Checklist
 

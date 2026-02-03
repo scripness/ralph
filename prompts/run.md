@@ -8,6 +8,7 @@ You are an autonomous coding agent working on a software project. Your task is t
 **Feature:** {{description}}
 **Branch:** {{branchName}}
 **Progress:** {{progress}}
+**Time Budget:** {{timeout}}
 {{serviceURLs}}
 
 ## Story Map
@@ -59,7 +60,7 @@ Implement the following story:
 
 1. Implement the story following existing code conventions
 2. Write tests for your implementation
-3. Run the project's tests/linters locally before committing
+3. Run the verification commands listed in the "Verification" section below before committing
 4. If this is a UI story (tagged "ui"):
    - Write e2e tests that verify the UI works
    - Ensure acceptance criteria are testable
@@ -73,6 +74,8 @@ After you signal DONE, these commands will be run by the CLI:
 {{verifyCommands}}
 
 Your story only passes if ALL verification commands succeed. Do NOT output DONE unless you are confident these will pass.
+
+**Console errors are hard failures.** If browser verification is configured, any JavaScript console error will fail your story, even if the UI appears to work correctly. Services must also remain responsive — a crashed service is a verification failure.
 
 {{browserSteps}}
 
@@ -117,11 +120,13 @@ Use this when the story itself is problematic:
 ```
 <ralph>LEARNING:description of the pattern or context</ralph>
 ```
-These are saved and shown in future iterations. Include:
+These are saved and shown in future iterations. Good learnings are:
 - **Files**: Key files created or modified (e.g., "Created components/PriorityBadge.tsx for priority display")
 - **Patterns**: Codebase conventions (e.g., "All server actions use revalidatePath('/') after mutations")
 - **Integration**: How components connect (e.g., "Priority data: schema → getUserTasks() → TaskCard")
 - **Gotchas**: Non-obvious requirements (e.g., "Must restart dev server after schema changes")
+
+Do NOT emit trivial learnings like "I implemented the login form" or learnings that duplicate ones already shown above. Keep learnings specific, actionable, and non-obvious.
 
 ### When you think a different story should be next (advisory)
 ```
@@ -129,6 +134,8 @@ These are saved and shown in future iterations. Include:
 <ralph>REASON:why this order would be better</ralph>
 ```
 The CLI may honor this suggestion if the story is valid.
+
+> **Note:** Only one REASON is captured per iteration. Place REASON immediately after the marker it applies to.
 
 {{learnings}}
 

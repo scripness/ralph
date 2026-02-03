@@ -448,6 +448,37 @@ func TestAddLearning_NilLearnings(t *testing.T) {
 	}
 }
 
+func TestAddLearning_NormalizedDedup(t *testing.T) {
+	prd := &PRD{Run: Run{Learnings: []string{}}}
+
+	prd.AddLearning("Must restart dev server after schema changes")
+	prd.AddLearning("must restart dev server after schema changes")  // case diff
+	prd.AddLearning("Must restart dev server after schema changes.") // trailing period
+
+	if len(prd.Run.Learnings) != 1 {
+		t.Errorf("expected 1 learning (normalized dedup), got %d: %v", len(prd.Run.Learnings), prd.Run.Learnings)
+	}
+}
+
+func TestNormalizeLearning(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Hello World", "hello world"},
+		{"trailing period.", "trailing period"},
+		{"  spaces  ", "spaces"},
+		{"Multiple!!!!", "multiple"},
+		{"keep:colons", "keep:colons"},
+	}
+	for _, tt := range tests {
+		got := normalizeLearning(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeLearning(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestBrowserSteps_InUserStory(t *testing.T) {
 	prd := &PRD{
 		SchemaVersion: 2,

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -604,5 +605,46 @@ func TestBuildBrowserSteps_Empty(t *testing.T) {
 	result := buildBrowserSteps(story)
 	if result != "" {
 		t.Errorf("expected empty string for no browser steps, got %q", result)
+	}
+}
+
+func TestBuildLearnings_Empty(t *testing.T) {
+	result := buildLearnings(nil, "## Learnings")
+	if result != "" {
+		t.Errorf("expected empty string for nil learnings, got %q", result)
+	}
+}
+
+func TestBuildLearnings_WithItems(t *testing.T) {
+	learnings := []string{"first", "second", "third"}
+	result := buildLearnings(learnings, "## Learnings from Previous Work")
+	if !strings.Contains(result, "## Learnings from Previous Work") {
+		t.Error("expected heading in output")
+	}
+	if !strings.Contains(result, "- first") {
+		t.Error("expected first learning in output")
+	}
+	if strings.Contains(result, "showing") {
+		t.Error("should not show truncation notice for small list")
+	}
+}
+
+func TestBuildLearnings_Capped(t *testing.T) {
+	// Create more than maxLearningsInPrompt learnings
+	learnings := make([]string, maxLearningsInPrompt+10)
+	for i := range learnings {
+		learnings[i] = fmt.Sprintf("learning %d", i)
+	}
+
+	result := buildLearnings(learnings, "## Learnings")
+	if !strings.Contains(result, "showing") {
+		t.Error("expected truncation notice for large list")
+	}
+	// Should contain the last one but not the first
+	if !strings.Contains(result, fmt.Sprintf("learning %d", maxLearningsInPrompt+9)) {
+		t.Error("expected most recent learning present")
+	}
+	if strings.Contains(result, "- learning 0\n") {
+		t.Error("expected oldest learning to be truncated")
 	}
 }

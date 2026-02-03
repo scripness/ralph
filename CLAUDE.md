@@ -223,13 +223,35 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Default branch detection**: `DefaultBranch()` tries `origin/HEAD` symbolic ref first, then falls back to checking if `main` or `master` branch exists locally.
 - **Process group killing**: Services are started with `Setpgid: true` so `syscall.Kill(-pid, SIGTERM)` kills the entire process group (including child processes).
 - **Service ready checks**: HTTP GET polling every 500ms until status < 500, with configurable timeout.
-- **Service output capture**: `capturedOutput` ring buffer captures service stdout/stderr via `io.MultiWriter`. Available via `GetRecentOutput()` for diagnostics.
+- **Service output capture**: `capturedOutput` trim buffer (keeps last ~50% on overflow) captures service stdout/stderr via `io.MultiWriter`. Available via `GetRecentOutput()` for diagnostics.
 - **Service health checks**: `CheckServiceHealth()` polls service ready URLs during verification to detect crashed/unresponsive services.
 - **Readiness gates**: `CheckReadiness()` in config.go validates QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`) before allowing `ralph run` or `ralph verify`. Covers `verify.default`, `verify.ui`, and service `start` commands. Placeholder echo commands are detected separately.
-- **Learning deduplication**: `AddLearning()` checks for exact-match duplicates before appending. Learnings are saved on all code paths: success, timeout, error, STUCK, and no-DONE.
+- **Learning deduplication**: `AddLearning()` normalizes (case-insensitive, trimmed) before checking for duplicates. Learnings are saved on all code paths: success, timeout, error, STUCK, and no-DONE. Prompt delivery caps at 50 most recent learnings to prevent context overflow.
 - **PRD quality warnings**: `WarnPRDQuality()` checks stories for missing "Typecheck passes" acceptance criteria (soft warning, does not block).
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
 - **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h. Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`.
+
+## Prompt Template Variables
+
+Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
+
+| Template | Variables |
+|----------|-----------|
+| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `maxRetriesInfo` |
+| `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs` |
+| `prd-create.md` | `feature`, `outputPath` |
+| `prd-refine.md` | `feature`, `prdContent`, `outputPath` |
+| `prd-finalize.md` | `feature`, `prdContent`, `outputPath` |
+
+## Non-obvious Behaviors
+
+- **`AllStoriesComplete` treats blocked as complete**: Blocked stories do not prevent the "all stories complete" state — they are skipped and the loop proceeds to final verification.
+- **`runProvider` returns nil error on non-zero exit**: A provider exiting with code != 0 is not treated as an error — it returns `(result, nil)`. The loop checks markers in the result to determine outcome.
+- **Verification commands run through `sh -c`**: All verification commands are wrapped in `sh -c`, so shell features (pipes, redirects, etc.) are available.
+- **`cmdVerify` acquires the lock**: Not just `cmdRun` — verification also acquires the lock file to prevent concurrent operations.
+- **Only one REASON marker is kept**: If multiple `<ralph>REASON:...</ralph>` markers are emitted, each overwrites the previous. Only the last one survives.
+- **SUGGEST_NEXT is advisory only**: The marker is captured but `GetNextStory` selects purely by priority. The suggestion is not currently acted upon.
+- **Verification output is captured for retries**: When verification fails, the last 50 lines of command output are stored in `story.Notes` so the retry agent can see what specifically failed.
 
 ## Testing
 
@@ -243,6 +265,8 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `lock_test.go` - lock acquisition, stale detection
 - `browser_test.go` - runner init, screenshot saving
 - `atomic_test.go` - atomic writes, JSON validation
+- `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, DefaultBranch)
+- `update_check_test.go` - update check cache path
 
 Run with `go test ./...` or `go test -v ./...` for verbose output.
 
@@ -266,8 +290,8 @@ Config: `.goreleaser.yaml`. Release workflow: `.github/workflows/release.yml`. C
 
 ## Common Development Tasks
 
-- **Add a new provider**: Add entry to `providerDefaults` map in config.go, no other changes needed
-- **Add a new browser action**: Add case to `executeStep()` switch in browser.go, add to schema validation in schema.go
+- **Add a new provider**: Add entry to `knownProviders` map in config.go, no other changes needed
+- **Add a new browser action**: Add case to `executeStep()` switch in browser.go
 - **Add a new marker**: Add regex pattern and field to `ProviderResult` in loop.go, handle in `processLine()`
 - **Add a new command**: Add case to `main()` switch in main.go, implement handler in commands.go
 - **Modify prompt**: Edit the `.md` file in `prompts/` directory (embedded at compile time)
