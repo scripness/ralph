@@ -253,7 +253,7 @@ go test ./...
 
 ## Credits
 
-Inspired by [snarktank/ralph](https://github.com/snarktank/ralph). v2.0.0 is a complete Go rewrite with provider-agnostic architecture.
+Inspired by [snarktank/ralph](https://github.com/snarktank/ralph). v2.0.0 is a complete rewrite with provider-agnostic architecture.
 
 ## License
 
