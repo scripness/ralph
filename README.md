@@ -1,8 +1,10 @@
-# Ralph
+# Ralph v2
 
 Autonomous AI agent loop for implementing PRD stories with any AI provider.
 
 Ralph orchestrates AI coding agents (Amp, Claude Code, OpenCode, etc.) in an infinite loop until all PRD stories are complete and verified. Provider-agnostic design with deterministic verification.
+
+> **Note**: This is Ralph v2, a complete Go rewrite of the original [snarktank/ralph](https://github.com/snarktank/ralph) bash-based loop. See [Background](#background) for the evolution from v1 to v2.
 
 ## Install
 
@@ -32,11 +34,14 @@ ralph status auth
 
 ## Key Features
 
-- **Provider-agnostic**: Works with any AI CLI (amp, claude, opencode)
-- **Idempotent**: Stop anytime, run again to resume
-- **Multi-feature**: Work on multiple features in parallel
-- **Deterministic verification**: Ralph runs all QA gates
-- **Service management**: Auto-starts dev servers for UI verification
+- **Provider-agnostic**: Works with any AI CLI (amp, claude, opencode, aider, etc.)
+- **Idempotent**: Stop anytime, resume exactly where you left off
+- **Multi-feature**: Work on multiple features in parallel with date-prefixed directories
+- **Deterministic verification**: CLI runs all QA gates, not the AI
+- **Service management**: Auto-starts dev servers, waits for ready, restarts for UI tests
+- **Interactive browser verification**: Real user simulation with chromedp (click, type, assert)
+- **Crash recovery**: Tracks `currentStoryId` to resume interrupted stories
+- **Atomic operations**: Lock file prevents concurrent runs, atomic JSON writes
 
 ## The Flow
 
@@ -197,7 +202,8 @@ Provider communicates with Ralph via markers in stdout:
     "retries": 0,
     "blocked": false,
     "lastResult": null,
-    "notes": ""
+    "notes": "",
+    "browserSteps": []
   }]
 }
 ```
@@ -309,9 +315,49 @@ go build -ldflags="-s -w" -o ralph .
 go test ./...
 ```
 
-## Credits
+## Background
 
-Inspired by [snarktank/ralph](https://github.com/snarktank/ralph). v2.0.0 is a complete rewrite with provider-agnostic architecture.
+Ralph v2 is a complete rewrite of the original [snarktank/ralph](https://github.com/snarktank/ralph) (the "Ralph pattern" by Geoffrey Huntley).
+
+### Original Ralph (v1)
+
+The original Ralph was a bash script (`ralph.sh`) that:
+- Spawned fresh AI instances (Amp or Claude Code) in a loop
+- Used `prompt.md` / `CLAUDE.md` for agent instructions
+- Stored memory in `progress.txt` (append-only log)
+- Relied on the agent to manage story state in `prd.json`
+- Had fixed iteration limits (default 10)
+- Required provider-specific skills (dev-browser, etc.)
+
+### Ralph v2 (this repo)
+
+v2 is a Go CLI that improves on v1:
+
+| Aspect | v1 (bash) | v2 (Go CLI) |
+|--------|-----------|-------------|
+| **Architecture** | Bash script | Compiled Go binary |
+| **Provider support** | Amp or Claude only | Any AI CLI (provider-agnostic) |
+| **Story selection** | Agent decides | CLI decides (deterministic) |
+| **State management** | Agent updates prd.json | CLI manages all state |
+| **Memory** | progress.txt file | Learnings in prd.json |
+| **Iteration limit** | Fixed (default 10) | Infinite until verified |
+| **Multi-feature** | Manual archive/switch | Built-in date-prefixed dirs |
+| **Crash recovery** | None | currentStoryId tracking |
+| **Verification** | Agent runs commands | CLI runs commands |
+| **Browser testing** | Provider skill (dev-browser) | Built-in chromedp |
+| **Service management** | None | Built-in start/ready/restart |
+| **Concurrency** | None | Lock file prevents conflicts |
+
+### The Ralph Pattern
+
+The core idea remains the same:
+1. Break work into small, atomic user stories
+2. Run AI agents in a loop, one story at a time
+3. Verify each story with automated tests
+4. Persist learnings for future iterations
+5. Continue until all stories pass verification
+
+For more on the pattern, see [ghuntley.com/ralph/](https://ghuntley.com/ralph/).
 
 ## License
 
