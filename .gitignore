@@ -2,9 +2,6 @@
 ralph
 ralph.exe
 
-# Test artifacts
-scripts/
-
 # IDE
 .idea/
 .vscode/
