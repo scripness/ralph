@@ -120,11 +120,7 @@ project/
 {
   "maxRetries": 3,
   "provider": {
-    "command": "amp",
-    "args": ["--dangerously-allow-all"],
-    "timeout": 1800,
-    "promptMode": "stdin",
-    "knowledgeFile": "AGENTS.md"
+    "command": "amp"
   },
   "services": [
     {
@@ -153,16 +149,26 @@ project/
 | Field | Description | Default |
 |-------|-------------|---------|
 | `command` | Provider CLI command | (required) |
-| `args` | Arguments to pass | `[]` |
+| `args` | Arguments to pass | Auto-detected |
 | `timeout` | Seconds per iteration | `1800` |
 | `promptMode` | How to pass prompt: `stdin`, `arg`, `file` | Auto-detected |
+| `promptFlag` | Flag before prompt in arg/file modes (e.g. `--message`) | Auto-detected |
 | `knowledgeFile` | Knowledge file name: `AGENTS.md`, `CLAUDE.md` | Auto-detected |
 
+Only `command` is required. Everything else is auto-detected from the provider name.
+
 **Auto-detection by provider:**
-- `amp` → stdin + AGENTS.md
-- `claude` → stdin + CLAUDE.md
-- `opencode` → arg + AGENTS.md
-- Other → stdin + AGENTS.md
+
+| Provider | args | promptMode | promptFlag | knowledgeFile |
+|----------|------|-----------|------------|---------------|
+| `amp` | `--dangerously-allow-all` | stdin | | AGENTS.md |
+| `claude` | `--print --dangerously-skip-permissions` | stdin | | CLAUDE.md |
+| `opencode` | `run` | arg | | AGENTS.md |
+| `aider` | `--yes-always` | arg | `--message` | AGENTS.md |
+| `codex` | `exec --full-auto` | arg | | AGENTS.md |
+| other | | stdin | | AGENTS.md |
+
+Setting `"args": []` explicitly opts out of default args.
 
 ## Provider Signals
 
@@ -272,33 +278,40 @@ State is preserved in prd.json:
 
 ## Example Configs
 
+Only `command` is needed — args, promptMode, promptFlag, and knowledgeFile are all auto-detected.
+
 ### Amp (Sourcegraph)
 ```json
 {
-  "provider": {
-    "command": "amp",
-    "args": ["--dangerously-allow-all"]
-  }
+  "provider": { "command": "amp" }
 }
 ```
 
 ### Claude Code
 ```json
 {
-  "provider": {
-    "command": "claude",
-    "args": ["--print"]
-  }
+  "provider": { "command": "claude" }
 }
 ```
 
 ### OpenCode
 ```json
 {
-  "provider": {
-    "command": "opencode",
-    "args": []
-  }
+  "provider": { "command": "opencode" }
+}
+```
+
+### Aider
+```json
+{
+  "provider": { "command": "aider" }
+}
+```
+
+### Codex
+```json
+{
+  "provider": { "command": "codex" }
 }
 ```
 

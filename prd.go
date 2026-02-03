@@ -189,7 +189,11 @@ func prdEditManual(path string) error {
 
 // runProviderInteractive runs the provider with stdin/stdout connected
 func runProviderInteractive(cfg *ResolvedConfig, prompt string) error {
-	args := append(cfg.Config.Provider.Args, prompt)
+	args := append([]string{}, cfg.Config.Provider.Args...)
+	if cfg.Config.Provider.PromptFlag != "" {
+		args = append(args, cfg.Config.Provider.PromptFlag)
+	}
+	args = append(args, prompt)
 	cmd := runCommandInteractive(cfg.Config.Provider.Command, args...)
 	cmd.dir = cfg.ProjectRoot
 	return cmd.Run()

@@ -271,36 +271,51 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	}
 }
 
+// buildProviderArgs builds the final argument list for a provider subprocess.
+// It returns the args to pass and an optional temp file path (for file mode) that
+// the caller must clean up.
+func buildProviderArgs(baseArgs []string, promptMode, promptFlag, prompt string) (args []string, promptFile string, err error) {
+	args = append([]string{}, baseArgs...)
+
+	switch promptMode {
+	case "arg":
+		if promptFlag != "" {
+			args = append(args, promptFlag)
+		}
+		args = append(args, prompt)
+	case "file":
+		f, ferr := os.CreateTemp("", "ralph-prompt-*.md")
+		if ferr != nil {
+			return nil, "", fmt.Errorf("failed to create temp prompt file: %w", ferr)
+		}
+		promptFile = f.Name()
+		if _, ferr := f.WriteString(prompt); ferr != nil {
+			f.Close()
+			os.Remove(promptFile)
+			return nil, "", fmt.Errorf("failed to write prompt file: %w", ferr)
+		}
+		f.Close()
+		if promptFlag != "" {
+			args = append(args, promptFlag)
+		}
+		args = append(args, promptFile)
+	}
+	// "stdin" mode doesn't modify args
+
+	return args, promptFile, nil
+}
+
 // runProvider runs the provider with the given prompt
 func runProvider(cfg *ResolvedConfig, prompt string) (*ProviderResult, error) {
 	timeout := time.Duration(cfg.Config.Provider.Timeout) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Build command args based on promptMode
-	args := append([]string{}, cfg.Config.Provider.Args...)
-	var promptFile string
-
-	switch cfg.Config.Provider.PromptMode {
-	case "arg":
-		// Pass prompt as final argument
-		args = append(args, prompt)
-	case "file":
-		// Write prompt to temp file and pass path as argument
-		f, err := os.CreateTemp("", "ralph-prompt-*.md")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create temp prompt file: %w", err)
-		}
-		promptFile = f.Name()
-		if _, err := f.WriteString(prompt); err != nil {
-			f.Close()
-			os.Remove(promptFile)
-			return nil, fmt.Errorf("failed to write prompt file: %w", err)
-		}
-		f.Close()
-		args = append(args, promptFile)
+	p := cfg.Config.Provider
+	args, promptFile, err := buildProviderArgs(p.Args, p.PromptMode, p.PromptFlag, prompt)
+	if err != nil {
+		return nil, err
 	}
-	// "stdin" mode doesn't modify args
 
 	cmd := exec.CommandContext(ctx, cfg.Config.Provider.Command, args...)
 	cmd.Dir = cfg.ProjectRoot

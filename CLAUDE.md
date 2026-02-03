@@ -97,17 +97,20 @@ Ralph is provider-agnostic. It spawns any AI CLI as a subprocess and communicate
 
 Three prompt delivery modes:
 - `stdin` (default): pipe prompt text to provider's stdin
-- `arg`: pass prompt as final command argument
-- `file`: write prompt to temp file, pass path as argument
+- `arg`: pass prompt as final command argument (optionally preceded by `promptFlag`)
+- `file`: write prompt to temp file, pass path as argument (optionally preceded by `promptFlag`)
 
-Auto-detected defaults by provider command name:
-| Provider | promptMode | knowledgeFile |
-|----------|-----------|---------------|
-| `amp` | stdin | AGENTS.md |
-| `claude` | stdin | CLAUDE.md |
-| `opencode` | arg | AGENTS.md |
-| `aider` | stdin | AGENTS.md |
-| other | stdin | AGENTS.md |
+Auto-detected defaults by provider command name (all fields auto-detected when only `command` is set):
+| Provider | promptMode | promptFlag | defaultArgs | knowledgeFile |
+|----------|-----------|------------|-------------|---------------|
+| `amp` | stdin | | `--dangerously-allow-all` | AGENTS.md |
+| `claude` | stdin | | `--print --dangerously-skip-permissions` | CLAUDE.md |
+| `opencode` | arg | | `run` | AGENTS.md |
+| `aider` | arg | `--message` | `--yes-always` | AGENTS.md |
+| `codex` | arg | | `exec --full-auto` | AGENTS.md |
+| other | stdin | | | AGENTS.md |
+
+`defaultArgs` are applied only when `args` key is absent from config JSON. Setting `"args": []` explicitly opts out of default args.
 
 ## Key Differences from Original Ralph (snarktank/ralph v1)
 
@@ -170,7 +173,7 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
 }
 ```
 
-`promptMode` and `knowledgeFile` are auto-detected from `provider.command` if not set.
+`promptMode`, `promptFlag`, `args`, and `knowledgeFile` are auto-detected from `provider.command` if not set. Only `command` is required.
 
 ## PRD Schema (v2)
 

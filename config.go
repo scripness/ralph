@@ -14,21 +14,25 @@ type ProviderConfig struct {
 	Args          []string `json:"args"`
 	Timeout       int      `json:"timeout"`       // seconds per iteration
 	PromptMode    string   `json:"promptMode"`    // "stdin", "arg", or "file" (auto-detected if empty)
+	PromptFlag    string   `json:"promptFlag"`    // flag before prompt in arg/file modes (e.g. "--message")
 	KnowledgeFile string   `json:"knowledgeFile"` // "AGENTS.md", "CLAUDE.md", etc. (auto-detected if empty)
 }
 
 // ProviderDefaults contains default settings for known providers
 type ProviderDefaults struct {
 	PromptMode    string
+	PromptFlag    string
+	DefaultArgs   []string
 	KnowledgeFile string
 }
 
 // knownProviders maps provider commands to their defaults
 var knownProviders = map[string]ProviderDefaults{
-	"amp":      {PromptMode: "stdin", KnowledgeFile: "AGENTS.md"},
-	"claude":   {PromptMode: "stdin", KnowledgeFile: "CLAUDE.md"},
-	"opencode": {PromptMode: "arg", KnowledgeFile: "AGENTS.md"},
-	"aider":    {PromptMode: "stdin", KnowledgeFile: "AGENTS.md"},
+	"amp":      {PromptMode: "stdin", DefaultArgs: []string{"--dangerously-allow-all"}, KnowledgeFile: "AGENTS.md"},
+	"claude":   {PromptMode: "stdin", DefaultArgs: []string{"--print", "--dangerously-skip-permissions"}, KnowledgeFile: "CLAUDE.md"},
+	"opencode": {PromptMode: "arg", DefaultArgs: []string{"run"}, KnowledgeFile: "AGENTS.md"},
+	"aider":    {PromptMode: "arg", PromptFlag: "--message", DefaultArgs: []string{"--yes-always"}, KnowledgeFile: "AGENTS.md"},
+	"codex":    {PromptMode: "arg", DefaultArgs: []string{"exec", "--full-auto"}, KnowledgeFile: "AGENTS.md"},
 }
 
 // defaultProviderDefaults is used for unknown providers
@@ -192,7 +196,7 @@ func isCommandAvailable(cmd string) bool {
 	return err == nil
 }
 
-// applyProviderDefaults sets PromptMode and KnowledgeFile based on known providers
+// applyProviderDefaults sets PromptMode, PromptFlag, Args, and KnowledgeFile based on known providers
 func applyProviderDefaults(p *ProviderConfig) {
 	// Get defaults for this provider (or use fallback)
 	defaults, ok := knownProviders[p.Command]
@@ -204,8 +208,17 @@ func applyProviderDefaults(p *ProviderConfig) {
 	if p.PromptMode == "" {
 		p.PromptMode = defaults.PromptMode
 	}
+	if p.PromptFlag == "" {
+		p.PromptFlag = defaults.PromptFlag
+	}
 	if p.KnowledgeFile == "" {
 		p.KnowledgeFile = defaults.KnowledgeFile
+	}
+
+	// Apply default args only when Args is nil (JSON key absent).
+	// "args": [] (explicit empty) preserves user intent — no defaults applied.
+	if p.Args == nil && len(defaults.DefaultArgs) > 0 {
+		p.Args = append([]string{}, defaults.DefaultArgs...)
 	}
 
 	// Validate promptMode
@@ -223,7 +236,6 @@ func WriteDefaultConfig(projectRoot string) error {
 		MaxRetries: 3,
 		Provider: ProviderConfig{
 			Command: "amp",
-			Args:    []string{"--dangerously-allow-all"},
 			Timeout: 1800,
 		},
 		Verify: VerifyConfig{

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -182,52 +183,81 @@ func TestWriteDefaultConfig(t *testing.T) {
 	}
 }
 
-func TestApplyProviderDefaults_Amp(t *testing.T) {
+func TestApplyProviderDefaults_AllProviders(t *testing.T) {
+	tests := []struct {
+		name          string
+		command       string
+		wantMode      string
+		wantFlag      string
+		wantArgs      []string
+		wantKnowledge string
+	}{
+		{"amp", "amp", "stdin", "", []string{"--dangerously-allow-all"}, "AGENTS.md"},
+		{"claude", "claude", "stdin", "", []string{"--print", "--dangerously-skip-permissions"}, "CLAUDE.md"},
+		{"opencode", "opencode", "arg", "", []string{"run"}, "AGENTS.md"},
+		{"aider", "aider", "arg", "--message", []string{"--yes-always"}, "AGENTS.md"},
+		{"codex", "codex", "arg", "", []string{"exec", "--full-auto"}, "AGENTS.md"},
+		{"unknown", "my-custom-ai", "stdin", "", nil, "AGENTS.md"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &ProviderConfig{Command: tt.command}
+			applyProviderDefaults(p)
+
+			if p.PromptMode != tt.wantMode {
+				t.Errorf("promptMode: got %q, want %q", p.PromptMode, tt.wantMode)
+			}
+			if p.PromptFlag != tt.wantFlag {
+				t.Errorf("promptFlag: got %q, want %q", p.PromptFlag, tt.wantFlag)
+			}
+			if p.KnowledgeFile != tt.wantKnowledge {
+				t.Errorf("knowledgeFile: got %q, want %q", p.KnowledgeFile, tt.wantKnowledge)
+			}
+			if tt.wantArgs == nil {
+				if p.Args != nil {
+					t.Errorf("args: got %v, want nil", p.Args)
+				}
+			} else {
+				if len(p.Args) != len(tt.wantArgs) {
+					t.Fatalf("args length: got %d, want %d", len(p.Args), len(tt.wantArgs))
+				}
+				for i, a := range tt.wantArgs {
+					if p.Args[i] != a {
+						t.Errorf("args[%d]: got %q, want %q", i, p.Args[i], a)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestApplyProviderDefaults_NilArgsGetsDefaults(t *testing.T) {
 	p := &ProviderConfig{Command: "amp"}
+	// Args is nil (JSON key absent)
 	applyProviderDefaults(p)
 
-	if p.PromptMode != "stdin" {
-		t.Errorf("expected promptMode='stdin' for amp, got '%s'", p.PromptMode)
-	}
-	if p.KnowledgeFile != "AGENTS.md" {
-		t.Errorf("expected knowledgeFile='AGENTS.md' for amp, got '%s'", p.KnowledgeFile)
+	if len(p.Args) != 1 || p.Args[0] != "--dangerously-allow-all" {
+		t.Errorf("expected default args for amp, got %v", p.Args)
 	}
 }
 
-func TestApplyProviderDefaults_Claude(t *testing.T) {
-	p := &ProviderConfig{Command: "claude"}
+func TestApplyProviderDefaults_EmptyArgsPreserved(t *testing.T) {
+	p := &ProviderConfig{Command: "amp", Args: []string{}}
+	// Args is explicitly empty — user intent to have no args
 	applyProviderDefaults(p)
 
-	if p.PromptMode != "stdin" {
-		t.Errorf("expected promptMode='stdin' for claude, got '%s'", p.PromptMode)
-	}
-	if p.KnowledgeFile != "CLAUDE.md" {
-		t.Errorf("expected knowledgeFile='CLAUDE.md' for claude, got '%s'", p.KnowledgeFile)
+	if len(p.Args) != 0 {
+		t.Errorf("expected empty args preserved, got %v", p.Args)
 	}
 }
 
-func TestApplyProviderDefaults_Opencode(t *testing.T) {
-	p := &ProviderConfig{Command: "opencode"}
+func TestApplyProviderDefaults_CustomArgsPreserved(t *testing.T) {
+	p := &ProviderConfig{Command: "amp", Args: []string{"--custom"}}
 	applyProviderDefaults(p)
 
-	if p.PromptMode != "arg" {
-		t.Errorf("expected promptMode='arg' for opencode, got '%s'", p.PromptMode)
-	}
-	if p.KnowledgeFile != "AGENTS.md" {
-		t.Errorf("expected knowledgeFile='AGENTS.md' for opencode, got '%s'", p.KnowledgeFile)
-	}
-}
-
-func TestApplyProviderDefaults_UnknownProvider(t *testing.T) {
-	p := &ProviderConfig{Command: "my-custom-ai"}
-	applyProviderDefaults(p)
-
-	// Should use defaults
-	if p.PromptMode != "stdin" {
-		t.Errorf("expected default promptMode='stdin', got '%s'", p.PromptMode)
-	}
-	if p.KnowledgeFile != "AGENTS.md" {
-		t.Errorf("expected default knowledgeFile='AGENTS.md', got '%s'", p.KnowledgeFile)
+	if len(p.Args) != 1 || p.Args[0] != "--custom" {
+		t.Errorf("expected custom args preserved, got %v", p.Args)
 	}
 }
 
@@ -235,16 +265,23 @@ func TestApplyProviderDefaults_UserOverride(t *testing.T) {
 	p := &ProviderConfig{
 		Command:       "amp",
 		PromptMode:    "file",
+		PromptFlag:    "--prompt",
 		KnowledgeFile: "CUSTOM.md",
+		Args:          []string{"--my-flag"},
 	}
 	applyProviderDefaults(p)
 
-	// User values should not be overwritten
 	if p.PromptMode != "file" {
 		t.Errorf("expected user-set promptMode='file', got '%s'", p.PromptMode)
 	}
+	if p.PromptFlag != "--prompt" {
+		t.Errorf("expected user-set promptFlag='--prompt', got '%s'", p.PromptFlag)
+	}
 	if p.KnowledgeFile != "CUSTOM.md" {
 		t.Errorf("expected user-set knowledgeFile='CUSTOM.md', got '%s'", p.KnowledgeFile)
+	}
+	if len(p.Args) != 1 || p.Args[0] != "--my-flag" {
+		t.Errorf("expected user-set args preserved, got %v", p.Args)
 	}
 }
 
@@ -255,18 +292,70 @@ func TestApplyProviderDefaults_InvalidPromptMode(t *testing.T) {
 	}
 	applyProviderDefaults(p)
 
-	// Invalid mode should fallback to stdin
 	if p.PromptMode != "stdin" {
 		t.Errorf("expected fallback promptMode='stdin', got '%s'", p.PromptMode)
 	}
 }
 
-func TestLoadConfig_ProviderDefaults(t *testing.T) {
+func TestLoadConfig_ProviderDefaults_AllProviders(t *testing.T) {
+	tests := []struct {
+		name          string
+		command       string
+		wantMode      string
+		wantFlag      string
+		wantArgs      []string
+		wantKnowledge string
+	}{
+		{"amp", "amp", "stdin", "", []string{"--dangerously-allow-all"}, "AGENTS.md"},
+		{"claude", "claude", "stdin", "", []string{"--print", "--dangerously-skip-permissions"}, "CLAUDE.md"},
+		{"opencode", "opencode", "arg", "", []string{"run"}, "AGENTS.md"},
+		{"aider", "aider", "arg", "--message", []string{"--yes-always"}, "AGENTS.md"},
+		{"codex", "codex", "arg", "", []string{"exec", "--full-auto"}, "AGENTS.md"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configContent := fmt.Sprintf(`{
+				"provider": {"command": %q},
+				"verify": {"default": ["echo test"]}
+			}`, tt.command)
+			os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
+
+			cfg, err := LoadConfig(dir)
+			if err != nil {
+				t.Fatalf("LoadConfig error: %v", err)
+			}
+
+			p := cfg.Config.Provider
+			if p.PromptMode != tt.wantMode {
+				t.Errorf("promptMode: got %q, want %q", p.PromptMode, tt.wantMode)
+			}
+			if p.PromptFlag != tt.wantFlag {
+				t.Errorf("promptFlag: got %q, want %q", p.PromptFlag, tt.wantFlag)
+			}
+			if p.KnowledgeFile != tt.wantKnowledge {
+				t.Errorf("knowledgeFile: got %q, want %q", p.KnowledgeFile, tt.wantKnowledge)
+			}
+			if len(p.Args) != len(tt.wantArgs) {
+				t.Fatalf("args length: got %d (%v), want %d (%v)", len(p.Args), p.Args, len(tt.wantArgs), tt.wantArgs)
+			}
+			for i, a := range tt.wantArgs {
+				if p.Args[i] != a {
+					t.Errorf("args[%d]: got %q, want %q", i, p.Args[i], a)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadConfig_ProviderExplicitEmptyArgs(t *testing.T) {
 	dir := t.TempDir()
 
 	configContent := `{
 		"provider": {
-			"command": "claude"
+			"command": "amp",
+			"args": []
 		},
 		"verify": {
 			"default": ["bun run test"]
@@ -279,11 +368,37 @@ func TestLoadConfig_ProviderDefaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should auto-detect claude defaults
-	if cfg.Config.Provider.PromptMode != "stdin" {
-		t.Errorf("expected promptMode='stdin', got '%s'", cfg.Config.Provider.PromptMode)
+	// Explicit empty args should NOT get defaults
+	if len(cfg.Config.Provider.Args) != 0 {
+		t.Errorf("expected empty args preserved, got %v", cfg.Config.Provider.Args)
 	}
-	if cfg.Config.Provider.KnowledgeFile != "CLAUDE.md" {
-		t.Errorf("expected knowledgeFile='CLAUDE.md', got '%s'", cfg.Config.Provider.KnowledgeFile)
+}
+
+func TestWriteDefaultConfig_AutoDetection(t *testing.T) {
+	dir := t.TempDir()
+
+	err := WriteDefaultConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("failed to load written config: %v", err)
+	}
+
+	// WriteDefaultConfig sets command=amp with no args in JSON,
+	// so LoadConfig should auto-detect all amp defaults
+	if cfg.Config.Provider.Command != "amp" {
+		t.Errorf("expected command='amp', got '%s'", cfg.Config.Provider.Command)
+	}
+	if cfg.Config.Provider.PromptMode != "stdin" {
+		t.Errorf("expected auto-detected promptMode='stdin', got '%s'", cfg.Config.Provider.PromptMode)
+	}
+	if cfg.Config.Provider.KnowledgeFile != "AGENTS.md" {
+		t.Errorf("expected auto-detected knowledgeFile='AGENTS.md', got '%s'", cfg.Config.Provider.KnowledgeFile)
+	}
+	if len(cfg.Config.Provider.Args) != 1 || cfg.Config.Provider.Args[0] != "--dangerously-allow-all" {
+		t.Errorf("expected auto-detected args [--dangerously-allow-all], got %v", cfg.Config.Provider.Args)
 	}
 }

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -186,5 +189,201 @@ func TestProcessLine_CombinedMarkers(t *testing.T) {
 	}
 	if result.Reason != "Depends on US-003 which isn't complete" {
 		t.Errorf("unexpected reason: %s", result.Reason)
+	}
+}
+
+func TestBuildProviderArgs_StdinMode(t *testing.T) {
+	args, promptFile, err := buildProviderArgs([]string{"--flag"}, "stdin", "", "hello")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if promptFile != "" {
+		t.Errorf("expected no prompt file for stdin mode, got %q", promptFile)
+	}
+	// stdin mode: args unchanged, prompt not appended
+	if len(args) != 1 || args[0] != "--flag" {
+		t.Errorf("expected [--flag], got %v", args)
+	}
+}
+
+func TestBuildProviderArgs_ArgMode(t *testing.T) {
+	args, promptFile, err := buildProviderArgs([]string{"run"}, "arg", "", "do stuff")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if promptFile != "" {
+		t.Errorf("expected no prompt file for arg mode, got %q", promptFile)
+	}
+	if len(args) != 2 || args[0] != "run" || args[1] != "do stuff" {
+		t.Errorf("expected [run, do stuff], got %v", args)
+	}
+}
+
+func TestBuildProviderArgs_ArgModeWithFlag(t *testing.T) {
+	args, _, err := buildProviderArgs([]string{"--yes-always"}, "arg", "--message", "do stuff")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(args) != 3 || args[0] != "--yes-always" || args[1] != "--message" || args[2] != "do stuff" {
+		t.Errorf("expected [--yes-always, --message, do stuff], got %v", args)
+	}
+}
+
+func TestBuildProviderArgs_FileMode(t *testing.T) {
+	args, promptFile, err := buildProviderArgs([]string{"--flag"}, "file", "", "prompt content")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer os.Remove(promptFile)
+
+	if promptFile == "" {
+		t.Fatal("expected prompt file to be created")
+	}
+	// Verify file contents
+	data, err := os.ReadFile(promptFile)
+	if err != nil {
+		t.Fatalf("failed to read prompt file: %v", err)
+	}
+	if string(data) != "prompt content" {
+		t.Errorf("expected prompt file content 'prompt content', got %q", string(data))
+	}
+	// Last arg should be the file path
+	if len(args) != 2 || args[0] != "--flag" || args[1] != promptFile {
+		t.Errorf("expected [--flag, %s], got %v", promptFile, args)
+	}
+}
+
+func TestBuildProviderArgs_FileModeWithFlag(t *testing.T) {
+	args, promptFile, err := buildProviderArgs([]string{"--base"}, "file", "--prompt-file", "content")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer os.Remove(promptFile)
+
+	if len(args) != 3 || args[0] != "--base" || args[1] != "--prompt-file" || args[2] != promptFile {
+		t.Errorf("expected [--base, --prompt-file, %s], got %v", promptFile, args)
+	}
+}
+
+func TestBuildProviderArgs_DoesNotMutateBaseArgs(t *testing.T) {
+	base := []string{"--flag1", "--flag2"}
+	origLen := len(base)
+
+	_, _, err := buildProviderArgs(base, "arg", "", "prompt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(base) != origLen {
+		t.Errorf("base args were mutated: expected len %d, got %d", origLen, len(base))
+	}
+}
+
+func TestBuildProviderArgs_ProviderIntegration(t *testing.T) {
+	// Simulate what each provider's final args look like after auto-detection
+	tests := []struct {
+		name     string
+		base     []string
+		mode     string
+		flag     string
+		prompt   string
+		wantArgs []string
+	}{
+		{
+			"amp",
+			[]string{"--dangerously-allow-all"},
+			"stdin", "", "implement story",
+			[]string{"--dangerously-allow-all"},
+		},
+		{
+			"claude",
+			[]string{"--print", "--dangerously-skip-permissions"},
+			"stdin", "", "implement story",
+			[]string{"--print", "--dangerously-skip-permissions"},
+		},
+		{
+			"opencode",
+			[]string{"run"},
+			"arg", "", "implement story",
+			[]string{"run", "implement story"},
+		},
+		{
+			"aider",
+			[]string{"--yes-always"},
+			"arg", "--message", "implement story",
+			[]string{"--yes-always", "--message", "implement story"},
+		},
+		{
+			"codex",
+			[]string{"exec", "--full-auto"},
+			"arg", "", "implement story",
+			[]string{"exec", "--full-auto", "implement story"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, _, err := buildProviderArgs(tt.base, tt.mode, tt.flag, tt.prompt)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(args) != len(tt.wantArgs) {
+				t.Fatalf("args length: got %d, want %d (%v vs %v)", len(args), len(tt.wantArgs), args, tt.wantArgs)
+			}
+			for i, a := range tt.wantArgs {
+				if args[i] != a {
+					t.Errorf("args[%d]: got %q, want %q", i, args[i], a)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildProviderArgs_EndToEnd(t *testing.T) {
+	// Full pipeline: JSON config → LoadConfig → buildProviderArgs
+	// Verifies the final command each provider would execute
+	tests := []struct {
+		command  string
+		wantArgs []string // expected args AFTER buildProviderArgs (prompt included for arg mode)
+	}{
+		{"amp", []string{"--dangerously-allow-all"}},
+		{"claude", []string{"--print", "--dangerously-skip-permissions"}},
+		{"opencode", []string{"run", "test prompt"}},
+		{"aider", []string{"--yes-always", "--message", "test prompt"}},
+		{"codex", []string{"exec", "--full-auto", "test prompt"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			dir := t.TempDir()
+			configContent := fmt.Sprintf(`{
+				"provider": {"command": %q},
+				"verify": {"default": ["echo ok"]}
+			}`, tt.command)
+			os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
+
+			cfg, err := LoadConfig(dir)
+			if err != nil {
+				t.Fatalf("LoadConfig error: %v", err)
+			}
+
+			p := cfg.Config.Provider
+			args, promptFile, err := buildProviderArgs(p.Args, p.PromptMode, p.PromptFlag, "test prompt")
+			if err != nil {
+				t.Fatalf("buildProviderArgs error: %v", err)
+			}
+			if promptFile != "" {
+				os.Remove(promptFile)
+			}
+
+			if len(args) != len(tt.wantArgs) {
+				t.Fatalf("args: got %v, want %v", args, tt.wantArgs)
+			}
+			for i, a := range tt.wantArgs {
+				if args[i] != a {
+					t.Errorf("args[%d]: got %q, want %q", i, args[i], a)
+				}
+			}
+		})
 	}
 }
