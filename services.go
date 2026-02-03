@@ -266,18 +266,6 @@ func (sm *ServiceManager) GetRecentOutput(name string, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-// GetAllRecentOutput returns recent output from all services.
-func (sm *ServiceManager) GetAllRecentOutput(maxLines int) string {
-	var parts []string
-	for name := range sm.outputs {
-		output := sm.GetRecentOutput(name, maxLines)
-		if output != "" {
-			parts = append(parts, fmt.Sprintf("=== %s ===\n%s", name, output))
-		}
-	}
-	return strings.Join(parts, "\n")
-}
-
 // ClearCapturedOutput clears all captured service output.
 func (sm *ServiceManager) ClearCapturedOutput() {
 	for _, co := range sm.outputs {

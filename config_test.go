@@ -572,6 +572,24 @@ func TestCheckReadiness_ServiceCommandNotInPATH(t *testing.T) {
 	}
 }
 
+func TestConfigPath(t *testing.T) {
+	got := ConfigPath("/my/project")
+	want := "/my/project/ralph.config.json"
+	if got != want {
+		t.Errorf("ConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestGetProjectRoot_WithGitDir(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+
+	root := findGitRoot(dir)
+	if root != dir {
+		t.Errorf("expected '%s', got '%s'", dir, root)
+	}
+}
+
 func TestExtractBaseCommand(t *testing.T) {
 	tests := []struct {
 		input string

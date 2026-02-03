@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 )
@@ -154,7 +153,3 @@ func ReadLockStatus(projectRoot string) (*LockInfo, error) {
 	return lf.readLock()
 }
 
-// parsePID parses a PID from a string
-func parsePID(s string) (int, error) {
-	return strconv.Atoi(s)
-}

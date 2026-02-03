@@ -57,7 +57,7 @@ func showHelp() {
 Usage: ralph <command> [feature] [options]
 
 Commands:
-  init                 Initialize Ralph (creates ralph.config.json + .ralph/)
+  init [--force]       Initialize Ralph (creates ralph.config.json + .ralph/)
   run <feature>        Run the agent loop for a feature
   verify <feature>     Run verification only for a feature
   prd <feature>        Create/refine/finalize a PRD for a feature

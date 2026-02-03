@@ -102,20 +102,6 @@ func (g *GitOps) GetCommitMessage(hash string) string {
 	return strings.TrimSpace(out)
 }
 
-// IsClean returns true if the working tree is clean
-func (g *GitOps) IsClean() bool {
-	out, err := g.run("status", "--porcelain")
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(out) == ""
-}
-
-// HasUncommittedChanges returns true if there are uncommitted changes
-func (g *GitOps) HasUncommittedChanges() bool {
-	return !g.IsClean()
-}
-
 // DefaultBranch returns the default branch name (main or master).
 func (g *GitOps) DefaultBranch() string {
 	// Try origin/HEAD

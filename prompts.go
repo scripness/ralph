@@ -174,6 +174,15 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		}
 	}
 
+	// Build service URLs
+	serviceURLsStr := ""
+	if len(cfg.Config.Services) > 0 {
+		serviceURLsStr = "\n**Services:**\n"
+		for _, svc := range cfg.Config.Services {
+			serviceURLsStr += fmt.Sprintf("- %s: %s\n", svc.Name, svc.Ready)
+		}
+	}
+
 	return getPrompt("run", map[string]string{
 		"storyId":            story.ID,
 		"storyTitle":         story.Title,
@@ -190,6 +199,7 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		"progress":           buildProgress(prd),
 		"storyMap":           buildStoryMap(prd, story),
 		"browserSteps":       buildBrowserSteps(story),
+		"serviceURLs":        serviceURLsStr,
 	})
 }
 

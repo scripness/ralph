@@ -89,6 +89,34 @@ func TestServiceManager_ClearCapturedOutput(t *testing.T) {
 	}
 }
 
+func TestServiceManager_HasServices(t *testing.T) {
+	smWith := NewServiceManager("/tmp", []ServiceConfig{{Name: "dev"}})
+	if !smWith.HasServices() {
+		t.Error("expected HasServices=true with services")
+	}
+
+	smWithout := NewServiceManager("/tmp", nil)
+	if smWithout.HasServices() {
+		t.Error("expected HasServices=false without services")
+	}
+}
+
+func TestServiceManager_HasUIServices(t *testing.T) {
+	smUI := NewServiceManager("/tmp", []ServiceConfig{
+		{Name: "dev", RestartBeforeVerify: true},
+	})
+	if !smUI.HasUIServices() {
+		t.Error("expected HasUIServices=true with RestartBeforeVerify")
+	}
+
+	smNoUI := NewServiceManager("/tmp", []ServiceConfig{
+		{Name: "dev", RestartBeforeVerify: false},
+	})
+	if smNoUI.HasUIServices() {
+		t.Error("expected HasUIServices=false without RestartBeforeVerify")
+	}
+}
+
 func TestServiceManager_CheckServiceHealth_NoServices(t *testing.T) {
 	sm := NewServiceManager("/tmp", nil)
 	issues := sm.CheckServiceHealth()

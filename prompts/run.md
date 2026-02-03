@@ -8,6 +8,7 @@ You are an autonomous coding agent working on a software project. Your task is t
 **Feature:** {{description}}
 **Branch:** {{branchName}}
 **Progress:** {{progress}}
+{{serviceURLs}}
 
 ## Story Map
 
@@ -39,8 +40,7 @@ Implement the following story:
 **ID:** {{storyId}}
 **Title:** {{storyTitle}}
 **Description:** {{storyDescription}}
-{{tags}}
-{{retryInfo}}
+{{tags}}{{retryInfo}}
 
 ## Acceptance Criteria
 
@@ -106,6 +106,8 @@ Use this when you cannot proceed. Examples:
 <ralph>BLOCK:{{storyId}}</ralph>
 <ralph>REASON:why this story cannot be implemented</ralph>
 ```
+You can also block multiple stories at once: `<ralph>BLOCK:US-001,US-003</ralph>`
+
 Use this when the story itself is problematic:
 - Missing dependencies from other stories
 - Contradictory requirements

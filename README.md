@@ -83,7 +83,7 @@ ralph run auth          Infinite loop: implement → verify → repeat
 
 ```bash
 # Core
-ralph init                 # Initialize Ralph (creates config + .ralph/)
+ralph init [--force]       # Initialize Ralph (creates config + .ralph/)
 ralph prd <feature>        # Create/refine/finalize a PRD
 ralph run <feature>        # Run the agent loop (infinite until done)
 ralph verify <feature>     # Run verification only
@@ -175,13 +175,13 @@ Setting `"args": []` explicitly opts out of default args.
 
 ## Provider Signals
 
-Provider communicates with Ralph via markers in stdout:
+Provider communicates with Ralph via markers in stdout or stderr:
 
 | Signal | Purpose |
 |--------|---------|
 | `<ralph>DONE</ralph>` | Story implementation complete (runs verification) |
 | `<ralph>STUCK</ralph>` | Provider can't proceed (counts as failed attempt) |
-| `<ralph>BLOCK:US-001</ralph>` | Mark story as blocked (skipped, no retry) |
+| `<ralph>BLOCK:US-001</ralph>` | Mark story as blocked (comma-separated for multiple: `BLOCK:US-001,US-003`) |
 | `<ralph>LEARNING:text</ralph>` | Add learning for future context |
 | `<ralph>SUGGEST_NEXT:US-003</ralph>` | Advisory: suggest next story (optional) |
 | `<ralph>VERIFIED</ralph>` | Final verification passed |

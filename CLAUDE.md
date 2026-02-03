@@ -10,7 +10,7 @@ The core idea ("the Ralph Pattern"): break work into small user stories, spawn f
 
 ```
 main.go           CLI entry point, command dispatch
-commands.go       Command handlers (init, run, verify, prd, status, next, validate, doctor)
+commands.go       Command handlers (init, run, verify, prd, status, next, validate, doctor); doctor checks lock status
 config.go         Configuration loading, validation, provider defaults, readiness checks
 schema.go         PRD data structures, story state machine, validation, PRD quality checks
 prompts.go        Prompt template loading + variable substitution (//go:embed prompts/*)
@@ -45,10 +45,11 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
 
 ## How the CLI Works (End-to-End)
 
-1. `ralph init` creates `ralph.config.json` and `.ralph/` directory
-2. `ralph prd <feature>` runs an interactive state machine: create prd.md -> refine -> finalize to prd.json
+1. `ralph init` creates `ralph.config.json` and `.ralph/` directory (with `.ralph/.gitignore`). Use `--force` to overwrite existing config.
+2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> refine (edit/regenerate) -> finalize to prd.json. Each phase presents lettered options (a/b/c/q) via stdin.
 3. `ralph run <feature>` enters the main loop:
    - Readiness gate: refuses to run if QA commands are missing/placeholder or command binaries aren't in PATH
+   - Signal handling: SIGINT/SIGTERM releases the lock and exits with code 130
    - Loads config + PRD, acquires lock, ensures git branch, starts services
    - Each iteration: picks next story (highest priority, not passed/blocked), generates prompt, spawns provider subprocess, captures output with marker detection
    - After provider signals `<ralph>DONE</ralph>`, CLI runs verification commands + browser checks (console errors are hard failures) + service health checks
@@ -83,12 +84,12 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Knowledge updates**: Update AGENTS.md/CLAUDE.md with discovered patterns
 - **Learnings**: Output `<ralph>LEARNING:...</ralph>` for cross-iteration memory
 
-### Provider communication protocol (markers in stdout):
+### Provider communication protocol (markers in stdout or stderr):
 | Marker | Meaning |
 |--------|---------|
 | `<ralph>DONE</ralph>` | Story implementation complete, ready for CLI verification |
 | `<ralph>STUCK</ralph>` | Cannot proceed, counts as failed attempt |
-| `<ralph>BLOCK:US-XXX</ralph>` | Story is impossible, skip permanently |
+| `<ralph>BLOCK:US-XXX</ralph>` | Story is impossible, skip permanently (comma-separated for multiple: `BLOCK:US-001,US-003`) |
 | `<ralph>LEARNING:text</ralph>` | Save insight for future iterations |
 | `<ralph>SUGGEST_NEXT:US-XXX</ralph>` | Advisory hint for story ordering |
 | `<ralph>VERIFIED</ralph>` | Final verification passed (verify phase only) |
@@ -97,7 +98,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 
 ## Provider Integration
 
-Ralph is provider-agnostic. It spawns any AI CLI as a subprocess and communicates via stdin/stdout.
+Ralph is provider-agnostic. It spawns any AI CLI as a subprocess and communicates via stdin/stdout (markers are scanned on both stdout and stderr).
 
 Three prompt delivery modes:
 - `stdin` (default): pipe prompt text to provider's stdin
@@ -115,6 +116,8 @@ Auto-detected defaults by provider command name (all fields auto-detected when o
 | other | stdin | | | AGENTS.md |
 
 `defaultArgs` are applied only when `args` key is absent from config JSON. Setting `"args": []` explicitly opts out of default args.
+
+For interactive PRD sessions (`ralph prd`), `stdin` prompt mode is automatically overridden to `arg` since the provider needs stdin for interactive input.
 
 ## Key Differences from Original Ralph (snarktank/ralph v1)
 
@@ -146,11 +149,7 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
 {
   "maxRetries": 3,
   "provider": {
-    "command": "amp",
-    "args": ["--dangerously-allow-all"],
-    "timeout": 1800,
-    "promptMode": "stdin",
-    "knowledgeFile": "AGENTS.md"
+    "command": "amp"
   },
   "services": [
     {
@@ -168,6 +167,7 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
   "browser": {
     "enabled": true,
     "headless": true,
+    "executablePath": "/usr/bin/chromium",
     "screenshotDir": ".ralph/screenshots"
   },
   "commits": {
@@ -214,12 +214,14 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 ## Codebase Patterns
 
 - **Atomic state updates**: All prd.json writes go through `AtomicWriteJSON` (write temp -> validate -> rename). Never write prd.json directly.
-- **Marker detection**: `processLine()` in loop.go scans each line of provider stdout with regex. Markers are detected during execution, not after.
+- **Marker detection**: `processLine()` in loop.go scans each line of provider stdout and stderr with regex. Markers are detected during execution, not after.
 - **Provider subprocess**: Spawned via `os/exec` with context timeout. Three modes for prompt delivery (stdin pipe, arg append, temp file).
 - **Lock file**: JSON with pid/startedAt/feature/branch. Stale detection via `kill(pid, 0)`. Atomic creation via `O_CREATE|O_EXCL`.
-- **Feature directories**: `.ralph/YYYY-MM-DD-feature/` format. `FindFeatureDir` finds most recent match by suffix.
+- **Feature directories**: `.ralph/YYYY-MM-DD-feature/` or `.ralph/YYYYMMDD-feature/` format. `FindFeatureDir` finds most recent match by suffix.
 - **Browser steps**: Defined in prd.json per story. Executed by rod in headless Chrome. Screenshots saved to `.ralph/screenshots/`.
 - **Console error enforcement**: Browser console errors are hard verification failures (not warnings). Checked in both per-story and final verification.
+- **Default branch detection**: `DefaultBranch()` tries `origin/HEAD` symbolic ref first, then falls back to checking if `main` or `master` branch exists locally.
+- **Process group killing**: Services are started with `Setpgid: true` so `syscall.Kill(-pid, SIGTERM)` kills the entire process group (including child processes).
 - **Service ready checks**: HTTP GET polling every 500ms until status < 500, with configurable timeout.
 - **Service output capture**: `capturedOutput` ring buffer captures service stdout/stderr via `io.MultiWriter`. Available via `GetRecentOutput()` for diagnostics.
 - **Service health checks**: `CheckServiceHealth()` polls service ready URLs during verification to detect crashed/unresponsive services.

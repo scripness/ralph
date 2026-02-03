@@ -15,11 +15,11 @@ All stories have been implemented. Perform a comprehensive review to verify the 
 
 ## Verification Commands
 
-The CLI has run (or will run) these commands:
+The CLI has already run these commands:
 
 {{verifyCommands}}
 
-The CLI has also run browser verification for all UI stories (checking for console errors and step failures) and verified that all managed services are still responding. Any issues from these checks are shown in the output above.
+If configured, the CLI has also run browser verification for UI stories and checked that managed services are still responding. Any issues are shown in the output above.
 
 {{learnings}}
 
@@ -36,12 +36,12 @@ Review the implementation thoroughly. This is a **report-only verification phase
 5. **Edge Cases**: Are error conditions handled?
 6. **Missing Pieces**: Is anything incomplete or skipped?
 
-### Run Verification
+### Review Verification Output
 
-If you need to verify behavior:
-- Run the verification commands listed above
+Review the output from the verification commands above:
 - Check test output for failures
 - Review any error messages carefully
+- Note any warnings that could indicate latent issues
 
 ## Response Options
 

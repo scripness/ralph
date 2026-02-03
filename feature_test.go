@@ -103,6 +103,25 @@ func TestFindFeatureDir_DetectsPrdFiles(t *testing.T) {
 	}
 }
 
+func TestFindFeatureDir_YYYYMMDDFormat(t *testing.T) {
+	dir := t.TempDir()
+	ralphDir := filepath.Join(dir, ".ralph")
+	featureDir := filepath.Join(ralphDir, "20240115-auth")
+	os.MkdirAll(featureDir, 0755)
+
+	fd, err := FindFeatureDir(dir, "auth", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if fd.Feature != "auth" {
+		t.Errorf("expected feature='auth', got '%s'", fd.Feature)
+	}
+	if fd.Path != featureDir {
+		t.Errorf("expected path='%s', got '%s'", featureDir, fd.Path)
+	}
+}
+
 func TestListFeatures(t *testing.T) {
 	dir := t.TempDir()
 	ralphDir := filepath.Join(dir, ".ralph")

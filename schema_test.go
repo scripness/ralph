@@ -544,6 +544,215 @@ func TestWarnPRDQuality_CaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestSetCurrentStory(t *testing.T) {
+	prd := &PRD{Run: Run{}}
+
+	prd.SetCurrentStory("US-001")
+
+	if prd.Run.CurrentStoryID == nil || *prd.Run.CurrentStoryID != "US-001" {
+		t.Errorf("expected currentStoryId='US-001', got %v", prd.Run.CurrentStoryID)
+	}
+	if prd.Run.StartedAt == nil {
+		t.Error("expected startedAt to be set")
+	}
+}
+
+func TestSetCurrentStory_PreservesStartedAt(t *testing.T) {
+	ts := "2024-01-15T10:00:00Z"
+	prd := &PRD{Run: Run{StartedAt: &ts}}
+
+	prd.SetCurrentStory("US-002")
+
+	if prd.Run.StartedAt == nil || *prd.Run.StartedAt != ts {
+		t.Errorf("expected startedAt preserved as '%s', got %v", ts, prd.Run.StartedAt)
+	}
+}
+
+func TestClearCurrentStory(t *testing.T) {
+	id := "US-001"
+	prd := &PRD{Run: Run{CurrentStoryID: &id}}
+
+	prd.ClearCurrentStory()
+
+	if prd.Run.CurrentStoryID != nil {
+		t.Errorf("expected currentStoryId=nil, got %v", prd.Run.CurrentStoryID)
+	}
+}
+
+func TestMarkStoryPassed(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: false},
+		},
+	}
+
+	prd.MarkStoryPassed("US-001", "abc123", "Implemented login")
+
+	story := GetStoryByID(prd, "US-001")
+	if !story.Passes {
+		t.Error("expected passes=true")
+	}
+	if story.LastResult == nil {
+		t.Fatal("expected lastResult to be set")
+	}
+	if story.LastResult.Commit != "abc123" {
+		t.Errorf("expected commit='abc123', got '%s'", story.LastResult.Commit)
+	}
+	if story.LastResult.Summary != "Implemented login" {
+		t.Errorf("expected summary='Implemented login', got '%s'", story.LastResult.Summary)
+	}
+	if story.LastResult.CompletedAt == "" {
+		t.Error("expected completedAt to be set")
+	}
+}
+
+func TestMarkStoryPassed_NotFound(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: false},
+		},
+	}
+
+	// Should not panic
+	prd.MarkStoryPassed("US-999", "abc", "summary")
+
+	story := GetStoryByID(prd, "US-001")
+	if story.Passes {
+		t.Error("expected US-001 to remain unpassed")
+	}
+}
+
+func TestHasBlockedStories(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Blocked: false},
+			{ID: "US-002", Blocked: true},
+		},
+	}
+
+	if !HasBlockedStories(prd) {
+		t.Error("expected HasBlockedStories=true")
+	}
+
+	prdNoBlocked := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Blocked: false},
+		},
+	}
+	if HasBlockedStories(prdNoBlocked) {
+		t.Error("expected HasBlockedStories=false")
+	}
+}
+
+func TestGetBlockedStories(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Blocked: false},
+			{ID: "US-002", Blocked: true},
+			{ID: "US-003", Blocked: true},
+		},
+	}
+
+	blocked := GetBlockedStories(prd)
+	if len(blocked) != 2 {
+		t.Fatalf("expected 2 blocked stories, got %d", len(blocked))
+	}
+	if blocked[0].ID != "US-002" || blocked[1].ID != "US-003" {
+		t.Errorf("unexpected blocked stories: %v", blocked)
+	}
+}
+
+func TestCountComplete(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: true},
+			{ID: "US-002", Passes: false},
+			{ID: "US-003", Passes: true},
+		},
+	}
+
+	if count := CountComplete(prd); count != 2 {
+		t.Errorf("expected 2 complete, got %d", count)
+	}
+}
+
+func TestCountBlocked(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Blocked: false},
+			{ID: "US-002", Blocked: true},
+			{ID: "US-003", Blocked: true},
+		},
+	}
+
+	if count := CountBlocked(prd); count != 2 {
+		t.Errorf("expected 2 blocked, got %d", count)
+	}
+}
+
+func TestGetStoryByID(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Title: "First"},
+			{ID: "US-002", Title: "Second"},
+		},
+	}
+
+	story := GetStoryByID(prd, "US-002")
+	if story == nil {
+		t.Fatal("expected story, got nil")
+	}
+	if story.Title != "Second" {
+		t.Errorf("expected title='Second', got '%s'", story.Title)
+	}
+
+	notFound := GetStoryByID(prd, "US-999")
+	if notFound != nil {
+		t.Errorf("expected nil for non-existent ID, got %v", notFound)
+	}
+}
+
+func TestSavePRD_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	prdPath := filepath.Join(dir, "prd.json")
+
+	original := &PRD{
+		SchemaVersion: 2,
+		Project:       "RoundTrip",
+		BranchName:    "ralph/test",
+		Description:   "Test round trip",
+		Run:           Run{Learnings: []string{"learning1"}},
+		UserStories: []UserStory{
+			{
+				ID:                 "US-001",
+				Title:              "Test",
+				Description:        "Desc",
+				AcceptanceCriteria: []string{"works"},
+				Priority:           1,
+			},
+		},
+	}
+
+	if err := SavePRD(prdPath, original); err != nil {
+		t.Fatalf("SavePRD failed: %v", err)
+	}
+
+	loaded, err := LoadPRD(prdPath)
+	if err != nil {
+		t.Fatalf("LoadPRD failed: %v", err)
+	}
+
+	if loaded.Project != "RoundTrip" {
+		t.Errorf("expected project='RoundTrip', got '%s'", loaded.Project)
+	}
+	if len(loaded.Run.Learnings) != 1 || loaded.Run.Learnings[0] != "learning1" {
+		t.Errorf("expected learnings preserved, got %v", loaded.Run.Learnings)
+	}
+	if len(loaded.UserStories) != 1 || loaded.UserStories[0].ID != "US-001" {
+		t.Errorf("expected stories preserved, got %v", loaded.UserStories)
+	}
+}
+
 func TestLoadPRD_WithBrowserSteps(t *testing.T) {
 	dir := t.TempDir()
 	prdPath := filepath.Join(dir, "prd.json")
