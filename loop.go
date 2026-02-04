@@ -626,20 +626,22 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	var summaryLines []string
 	for _, cmd := range cfg.Config.Verify.Default {
 		fmt.Printf("  → %s\n", cmd)
-		if _, err := runCommand(cfg.ProjectRoot, cmd); err != nil {
+		output, err := runCommand(cfg.ProjectRoot, cmd)
+		if err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
 			verifyFailed = true
-			summaryLines = append(summaryLines, "FAIL: "+cmd)
+			summaryLines = append(summaryLines, "FAIL: "+cmd+"\n"+output)
 		} else {
 			summaryLines = append(summaryLines, "PASS: "+cmd)
 		}
 	}
 	for _, cmd := range cfg.Config.Verify.UI {
 		fmt.Printf("  → %s\n", cmd)
-		if _, err := runCommand(cfg.ProjectRoot, cmd); err != nil {
+		output, err := runCommand(cfg.ProjectRoot, cmd)
+		if err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
 			verifyFailed = true
-			summaryLines = append(summaryLines, "FAIL: "+cmd)
+			summaryLines = append(summaryLines, "FAIL: "+cmd+"\n"+output)
 		} else {
 			summaryLines = append(summaryLines, "PASS: "+cmd)
 		}
@@ -651,7 +653,7 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 		if baseURL != "" {
 			for i := range prd.UserStories {
 				story := &prd.UserStories[i]
-				if story.Blocked || !IsUIStory(story) || len(story.BrowserSteps) == 0 {
+				if story.Blocked || !IsUIStory(story) {
 					continue
 				}
 
@@ -665,26 +667,61 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 				}
 
 				browser := NewBrowserRunner(cfg.ProjectRoot, cfg.Config.Browser)
-				browserResult, err := browser.RunSteps(story, baseURL)
-				if err != nil {
-					fmt.Printf("    ⚠ Browser error: %v\n", err)
-				} else if browserResult != nil {
-					fmt.Print(FormatStepResult(browserResult))
-					if browserResult.Error != nil {
-						fmt.Printf("    ✗ Failed: %v\n", browserResult.Error)
-						verifyFailed = true
-						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (error: %v)", story.ID, browserResult.Error))
-					}
-					if len(browserResult.ConsoleErrors) > 0 {
-						fmt.Printf("    ✗ Console errors: %d\n", len(browserResult.ConsoleErrors))
-						for _, ce := range browserResult.ConsoleErrors {
-							fmt.Printf("      - %s\n", ce)
+
+				if len(story.BrowserSteps) > 0 {
+					// Interactive browser steps
+					browserResult, err := browser.RunSteps(story, baseURL)
+					if err != nil {
+						fmt.Printf("    ⚠ Browser error: %v\n", err)
+					} else if browserResult != nil {
+						fmt.Print(FormatStepResult(browserResult))
+						if browserResult.Error != nil {
+							fmt.Printf("    ✗ Failed: %v\n", browserResult.Error)
+							verifyFailed = true
+							summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (error: %v)", story.ID, browserResult.Error))
 						}
-						verifyFailed = true
-						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (console errors: %d)", story.ID, len(browserResult.ConsoleErrors)))
+						if len(browserResult.ConsoleErrors) > 0 {
+							fmt.Printf("    ✗ Console errors: %d\n", len(browserResult.ConsoleErrors))
+							for _, ce := range browserResult.ConsoleErrors {
+								fmt.Printf("      - %s\n", ce)
+							}
+							verifyFailed = true
+							summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (console errors: %d)", story.ID, len(browserResult.ConsoleErrors)))
+						}
+						if browserResult.Error == nil && len(browserResult.ConsoleErrors) == 0 {
+							summaryLines = append(summaryLines, fmt.Sprintf("PASS: browser %s", story.ID))
+						}
 					}
-					if browserResult.Error == nil && len(browserResult.ConsoleErrors) == 0 {
-						summaryLines = append(summaryLines, fmt.Sprintf("PASS: browser %s", story.ID))
+				} else {
+					// Fallback: basic URL checks for UI stories without explicit browserSteps
+					fmt.Println("    → Running browser checks (fallback)...")
+					browserResults, err := browser.RunChecks(story, baseURL)
+					if err != nil {
+						fmt.Printf("    ⚠ Browser check error: %v\n", err)
+					} else if len(browserResults) > 0 {
+						fmt.Print(FormatBrowserResults(browserResults))
+						hasFailed := false
+						for _, r := range browserResults {
+							if r.Error != nil {
+								verifyFailed = true
+								hasFailed = true
+								summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (page load: %v)", story.ID, r.Error))
+								break
+							}
+							if len(r.ConsoleErrors) > 0 {
+								fmt.Printf("    ✗ Console errors: %d\n", len(r.ConsoleErrors))
+								for _, ce := range r.ConsoleErrors {
+									fmt.Printf("      - %s\n", ce)
+								}
+								verifyFailed = true
+								hasFailed = true
+								summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (console errors: %d)", story.ID, len(r.ConsoleErrors)))
+								break
+							}
+						}
+						if !hasFailed {
+							summaryLines = append(summaryLines, fmt.Sprintf("PASS: browser %s", story.ID))
+						}
 					}
 				}
 			}
@@ -701,6 +738,17 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 			summaryLines = append(summaryLines, "FAIL: service health: "+strings.Join(healthIssues, "; "))
 		} else {
 			summaryLines = append(summaryLines, "PASS: service health")
+		}
+	}
+
+	// Check knowledgeFile modification
+	git := NewGitOps(cfg.ProjectRoot)
+	knowledgeFile := cfg.Config.Provider.KnowledgeFile
+	if knowledgeFile != "" {
+		if git.HasFileChanged(knowledgeFile) {
+			summaryLines = append(summaryLines, fmt.Sprintf("PASS: %s was updated", knowledgeFile))
+		} else {
+			summaryLines = append(summaryLines, fmt.Sprintf("WARN: %s was NOT modified on this branch — verify documentation is up to date", knowledgeFile))
 		}
 	}
 

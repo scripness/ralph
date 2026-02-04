@@ -33,12 +33,18 @@ Review the implementation thoroughly. The CLI has already executed verification 
 
 {{diffSummary}}
 
+### Acceptance Criteria Checklist
+
+You MUST verify every criterion below. Check each one against the actual implementation. Any unchecked item is a RESET for that story.
+
+{{criteriaChecklist}}
+
 ### Review Checklist
 
 Every item below must pass. If ANY item fails, you MUST RESET the affected stories.
 
 1. **Test Coverage**: Does every new function/route/behavior have tests? Untested code is a RESET.
-2. **Acceptance Criteria**: Does each story meet ALL its criteria?
+2. **Acceptance Criteria**: Confirm every checkbox above is satisfied. Missing criteria = RESET.
 3. **Code Quality**: Are patterns consistent with the codebase?
 4. **Integration**: Do the stories work together as a complete feature?
 5. **Edge Cases**: Are error conditions handled?
@@ -51,6 +57,8 @@ Every item below must pass. If ANY item fails, you MUST RESET the affected stori
 
 Review the verification results summary above:
 - Any FAIL line means that check did not pass — investigate before marking VERIFIED
+- FAIL lines include the command output (last 50 lines) — read it to understand what failed
+- Any WARN line indicates a potential issue that should be investigated
 - Check test output for failures
 - Review any error messages carefully
 - Note any warnings that could indicate latent issues

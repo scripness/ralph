@@ -240,6 +240,29 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 	})
 }
 
+// buildCriteriaChecklist builds a structured acceptance criteria checklist for the verify prompt.
+// Each story gets an explicit list of criteria the verify agent must confirm.
+func buildCriteriaChecklist(prd *PRD) string {
+	var lines []string
+	for _, s := range prd.UserStories {
+		if s.Blocked {
+			continue
+		}
+		if len(s.AcceptanceCriteria) == 0 {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("### %s: %s", s.ID, s.Title))
+		for _, c := range s.AcceptanceCriteria {
+			lines = append(lines, fmt.Sprintf("- [ ] %s", c))
+		}
+		lines = append(lines, "")
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
+}
+
 // generateVerifyPrompt generates the prompt for final verification
 func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, verifySummary string) string {
 	// Build story summaries with acceptance criteria
@@ -331,18 +354,19 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	}
 
 	return getPrompt("verify", map[string]string{
-		"project":          prd.Project,
-		"description":      prd.Description,
-		"storySummaries":   summariesStr,
-		"verifyCommands":   verifyStr,
-		"learnings":        learningsStr,
-		"knowledgeFile":    cfg.Config.Provider.KnowledgeFile,
-		"prdPath":          featureDir.PrdJsonPath(),
-		"branchName":       prd.BranchName,
-		"serviceURLs":      verifyServiceURLs,
-		"diffSummary":      diffStr,
-		"btcaInstructions": btcaStr,
-		"verifySummary":    verifySummary,
+		"project":            prd.Project,
+		"description":        prd.Description,
+		"storySummaries":     summariesStr,
+		"verifyCommands":     verifyStr,
+		"learnings":          learningsStr,
+		"knowledgeFile":      cfg.Config.Provider.KnowledgeFile,
+		"prdPath":            featureDir.PrdJsonPath(),
+		"branchName":         prd.BranchName,
+		"serviceURLs":        verifyServiceURLs,
+		"diffSummary":        diffStr,
+		"btcaInstructions":   btcaStr,
+		"verifySummary":      verifySummary,
+		"criteriaChecklist":  buildCriteriaChecklist(prd),
 	})
 }
 

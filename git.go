@@ -123,6 +123,17 @@ func (g *GitOps) DefaultBranch() string {
 	return "main"
 }
 
+// HasFileChanged returns true if the given file path (relative to project root) was
+// modified on the current branch compared to the default branch.
+func (g *GitOps) HasFileChanged(relativePath string) bool {
+	base := g.DefaultBranch()
+	out, err := g.run("diff", "--name-only", base+"...HEAD", "--", relativePath)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) != ""
+}
+
 // GetDiffSummary returns the stat summary of changes from the default branch to HEAD.
 func (g *GitOps) GetDiffSummary() string {
 	base := g.DefaultBranch()

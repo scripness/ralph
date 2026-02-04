@@ -65,13 +65,14 @@ func TestGetPrompt_Verify(t *testing.T) {
 		"storySummaries":   "- US-001: Complete",
 		"verifyCommands":   "- bun run test",
 		"learnings":        "",
-		"knowledgeFile":    "CLAUDE.md",
-		"prdPath":          "/project/.ralph/2024-01-15-auth/prd.json",
-		"branchName":       "ralph/test",
-		"serviceURLs":      "",
-		"diffSummary":      "",
-		"btcaInstructions": "",
-		"verifySummary":    "",
+		"knowledgeFile":      "CLAUDE.md",
+		"prdPath":            "/project/.ralph/2024-01-15-auth/prd.json",
+		"branchName":         "ralph/test",
+		"serviceURLs":        "",
+		"diffSummary":        "",
+		"btcaInstructions":   "",
+		"verifySummary":      "",
+		"criteriaChecklist":  "",
 	})
 
 	if !strings.Contains(prompt, "TestProject") {
@@ -203,6 +204,7 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"btcaInstructions":   "",
 			"diffSummary":        "",
 			"verifySummary":      "",
+			"criteriaChecklist":  "",
 		})
 
 		for _, term := range forbiddenTerms {
@@ -662,18 +664,19 @@ func TestBuildLearnings_Capped(t *testing.T) {
 func TestGetPrompt_VerifyWithSummary(t *testing.T) {
 	summary := "PASS: bun run typecheck\nFAIL: bun run test\nPASS: service health"
 	prompt := getPrompt("verify", map[string]string{
-		"project":          "TestProject",
-		"description":      "Test description",
-		"storySummaries":   "- US-001: Complete",
-		"verifyCommands":   "- bun run typecheck\n- bun run test",
-		"learnings":        "",
-		"knowledgeFile":    "CLAUDE.md",
-		"prdPath":          "/project/.ralph/2024-01-15-auth/prd.json",
-		"branchName":       "ralph/test",
-		"serviceURLs":      "",
-		"diffSummary":      "## Changes Summary\n\n```\n 3 files changed, 50 insertions(+)\n```\n",
-		"btcaInstructions": "",
-		"verifySummary":    summary,
+		"project":            "TestProject",
+		"description":        "Test description",
+		"storySummaries":     "- US-001: Complete",
+		"verifyCommands":     "- bun run typecheck\n- bun run test",
+		"learnings":          "",
+		"knowledgeFile":      "CLAUDE.md",
+		"prdPath":            "/project/.ralph/2024-01-15-auth/prd.json",
+		"branchName":         "ralph/test",
+		"serviceURLs":        "",
+		"diffSummary":        "## Changes Summary\n\n```\n 3 files changed, 50 insertions(+)\n```\n",
+		"btcaInstructions":   "",
+		"verifySummary":      summary,
+		"criteriaChecklist":  "### US-001: Login\n- [ ] Form validates\n- [ ] Token returned\n",
 	})
 
 	if !strings.Contains(prompt, "PASS: bun run typecheck") {
@@ -690,6 +693,12 @@ func TestGetPrompt_VerifyWithSummary(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Changes Summary") {
 		t.Error("prompt should contain changes summary heading")
+	}
+	if !strings.Contains(prompt, "### US-001: Login") {
+		t.Error("prompt should contain criteria checklist story header")
+	}
+	if !strings.Contains(prompt, "- [ ] Form validates") {
+		t.Error("prompt should contain criteria checkbox items")
 	}
 }
 
@@ -752,5 +761,94 @@ func TestGetPrompt_RunWithoutBtca(t *testing.T) {
 	}
 	if strings.Contains(prompt, "btca") {
 		t.Error("prompt should NOT mention btca when using web search fallback")
+	}
+}
+
+func TestBuildCriteriaChecklist(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{
+				ID:                 "US-001",
+				Title:              "Login form",
+				AcceptanceCriteria: []string{"Form validates email", "Token returned on success"},
+			},
+			{
+				ID:                 "US-002",
+				Title:              "Logout",
+				AcceptanceCriteria: []string{"Session cleared"},
+			},
+			{
+				ID:      "US-003",
+				Title:   "Broken",
+				Blocked: true,
+				AcceptanceCriteria: []string{"Should not appear"},
+			},
+		},
+	}
+
+	result := buildCriteriaChecklist(prd)
+
+	if !strings.Contains(result, "### US-001: Login form") {
+		t.Error("expected US-001 header")
+	}
+	if !strings.Contains(result, "- [ ] Form validates email") {
+		t.Error("expected US-001 criterion checkbox")
+	}
+	if !strings.Contains(result, "- [ ] Token returned on success") {
+		t.Error("expected US-001 second criterion checkbox")
+	}
+	if !strings.Contains(result, "### US-002: Logout") {
+		t.Error("expected US-002 header")
+	}
+	if !strings.Contains(result, "- [ ] Session cleared") {
+		t.Error("expected US-002 criterion checkbox")
+	}
+	if strings.Contains(result, "US-003") {
+		t.Error("blocked story should not appear in checklist")
+	}
+	if strings.Contains(result, "Should not appear") {
+		t.Error("blocked story criteria should not appear")
+	}
+}
+
+func TestBuildCriteriaChecklist_Empty(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Title: "No criteria"},
+		},
+	}
+
+	result := buildCriteriaChecklist(prd)
+	if result != "" {
+		t.Errorf("expected empty string for stories without criteria, got %q", result)
+	}
+}
+
+func TestGetPrompt_VerifyWithCriteriaChecklist(t *testing.T) {
+	checklist := "### US-001: Login\n- [ ] Form validates\n- [ ] Token returned\n"
+	prompt := getPrompt("verify", map[string]string{
+		"project":            "TestProject",
+		"description":        "Test description",
+		"storySummaries":     "- US-001: Complete",
+		"verifyCommands":     "- bun run test",
+		"learnings":          "",
+		"knowledgeFile":      "CLAUDE.md",
+		"prdPath":            "/test/prd.json",
+		"branchName":         "ralph/test",
+		"serviceURLs":        "",
+		"diffSummary":        "",
+		"btcaInstructions":   "",
+		"verifySummary":      "",
+		"criteriaChecklist":  checklist,
+	})
+
+	if !strings.Contains(prompt, "### US-001: Login") {
+		t.Error("prompt should contain criteria checklist story header")
+	}
+	if !strings.Contains(prompt, "- [ ] Form validates") {
+		t.Error("prompt should contain criteria checkbox")
+	}
+	if !strings.Contains(prompt, "Acceptance Criteria Checklist") {
+		t.Error("prompt should contain acceptance criteria checklist heading")
 	}
 }

@@ -199,3 +199,55 @@ func TestGitOps_GetDiffSummary_SameBranch(t *testing.T) {
 		t.Errorf("expected empty diff summary on same branch, got: %s", summary)
 	}
 }
+
+func TestGitOps_HasFileChanged(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	// Create a branch and modify a file
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	// Create AGENTS.md on the branch
+	os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# Agents"), 0644)
+	run("add", "AGENTS.md")
+	run("commit", "-m", "add agents doc")
+
+	// AGENTS.md should show as changed
+	if !git.HasFileChanged("AGENTS.md") {
+		t.Error("expected AGENTS.md to show as changed on branch")
+	}
+
+	// README.md was not modified on this branch
+	if git.HasFileChanged("README.md") {
+		t.Error("expected README.md to NOT show as changed on branch")
+	}
+
+	// Non-existent file should not show as changed
+	if git.HasFileChanged("nonexistent.txt") {
+		t.Error("expected nonexistent file to NOT show as changed")
+	}
+}
+
+func TestGitOps_HasFileChanged_SameBranch(t *testing.T) {
+	_, git := initTestRepo(t)
+
+	// On main with no divergence, nothing changed
+	if git.HasFileChanged("README.md") {
+		t.Error("expected no changes on same branch")
+	}
+}

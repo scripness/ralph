@@ -232,8 +232,10 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
 - **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h. Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`.
 - **btca detection**: `CheckBtcaAvailable()` checks if btca is in PATH. Prompts always include a documentation verification section: btca instructions when available, web search fallback when not. `CheckReadinessWarnings()` returns soft warnings (btca missing) that don't block execution.
-- **Verification summary**: `runFinalVerification` accumulates structured PASS/FAIL lines for each verification step and passes them to the verify prompt as `verifySummary`.
+- **Verification summary**: `runFinalVerification` accumulates structured PASS/FAIL/WARN lines for each verification step (including truncated command output for failures) and passes them to the verify prompt as `verifySummary`.
 - **Git diff in verify prompt**: `GetDiffSummary()` provides `git diff --stat` output from the default branch to HEAD, injected into the verify prompt as `diffSummary`.
+- **KnowledgeFile change detection**: `HasFileChanged()` in git.go checks if a file was modified on the current branch vs default branch using `git diff --name-only`. Used in final verification to report whether the knowledgeFile was updated.
+- **Criteria checklist**: `buildCriteriaChecklist()` in prompts.go generates a structured checkbox list of all non-blocked stories' acceptance criteria for the verify prompt.
 
 ## Prompt Template Variables
 
@@ -242,7 +244,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 | Template | Variables |
 |----------|-----------|
 | `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `btcaInstructions` |
-| `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs`, `diffSummary`, `btcaInstructions`, `verifySummary` |
+| `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs`, `diffSummary`, `btcaInstructions`, `verifySummary`, `criteriaChecklist` |
 | `prd-create.md` | `feature`, `outputPath` |
 | `prd-refine.md` | `feature`, `prdContent`, `outputPath` |
 | `prd-finalize.md` | `feature`, `prdContent`, `outputPath` |
@@ -257,6 +259,10 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **SUGGEST_NEXT is advisory only**: The marker is captured but `GetNextStory` selects purely by priority. The suggestion is not currently acted upon.
 - **Verification output is captured for retries**: When verification fails, the last 50 lines of command output are stored in `story.Notes` so the retry agent can see what specifically failed.
 - **Final VERIFIED is gated on all verification**: If any `verify.default`, `verify.ui` command, browser step, or service health check failed during final verification, the CLI overrides a provider's `VERIFIED` marker and returns not-verified. The provider cannot skip past failing checks.
+- **FAIL summary lines include command output**: When verification commands fail in `runFinalVerification`, the truncated output (last 50 lines) is appended to the FAIL line in `verifySummary`, so the verify agent can see what failed without re-running commands.
+- **Browser fallback in final verify**: Final verification runs browser checks for ALL UI stories, not just those with explicit `browserSteps`. Stories without steps get the `RunChecks` fallback (URL-based page load + console error detection).
+- **KnowledgeFile modification check**: Final verification checks whether the configured `knowledgeFile` (AGENTS.md/CLAUDE.md) was modified on the branch and reports WARN/PASS in the summary.
+- **Acceptance criteria checklist**: The verify prompt includes a structured checkbox checklist (`criteriaChecklist`) of every non-blocked story's acceptance criteria, making it harder for the verify agent to skip criteria checks.
 
 ## Testing
 
