@@ -106,6 +106,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		}
 	}
 
+	// Pre-resolve browser binary (downloads Chromium if needed)
+	EnsureBrowser(cfg.Config.Browser, prd)
+
 	iteration := 0
 	for {
 		iteration++
@@ -866,6 +869,9 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			return fmt.Errorf("failed to start services: %w", err)
 		}
 	}
+
+	// Pre-resolve browser binary (downloads Chromium if needed)
+	EnsureBrowser(cfg.Config.Browser, prd)
 
 	verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr)
 	if err != nil {

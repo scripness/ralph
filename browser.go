@@ -558,6 +558,78 @@ func formatConsoleArgs(args []*proto.RuntimeRemoteObject) string {
 	return strings.Join(parts, " ")
 }
 
+// browserLogger adapts rod's Logger interface to Ralph-style indented output.
+type browserLogger struct{}
+
+func (browserLogger) Println(args ...interface{}) {
+	fmt.Print("  ")
+	fmt.Println(args...)
+}
+
+// EnsureBrowser pre-resolves the browser binary, downloading Chromium if needed.
+// Mutates config in-place: sets ExecutablePath on success, sets Enabled=false on failure.
+// Skips entirely if browser is disabled, executablePath is already set, or no UI stories exist.
+func EnsureBrowser(config *BrowserConfig, prd *PRD) {
+	if config == nil || !config.Enabled || config.ExecutablePath != "" {
+		return
+	}
+
+	// Gate: only download if PRD has UI stories
+	hasUI := false
+	if prd != nil {
+		for i := range prd.UserStories {
+			if IsUIStory(&prd.UserStories[i]) {
+				hasUI = true
+				break
+			}
+		}
+	}
+	if !hasUI {
+		return
+	}
+
+	b := launcher.NewBrowser()
+
+	// Fast path: binary already exists (cheap os.Stat, no Chrome process launch).
+	if _, err := os.Stat(b.BinPath()); err == nil {
+		config.ExecutablePath = b.BinPath()
+		fmt.Println("✓ Browser ready")
+		return
+	}
+
+	// Slow path: download needed
+	fmt.Println("Downloading Chromium for browser verification...")
+	b.Logger = browserLogger{}
+	binPath, err := b.Get()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ Failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  Set browser.executablePath in ralph.config.json to use an existing browser.")
+		config.Enabled = false
+		return
+	}
+
+	config.ExecutablePath = binPath
+	fmt.Println("✓ Browser ready")
+}
+
+// CheckBrowserStatus returns a status string for cmdDoctor (no download, no mutation).
+func CheckBrowserStatus(config *BrowserConfig) (status string, ok bool) {
+	if config == nil || !config.Enabled {
+		return "disabled", true
+	}
+	if config.ExecutablePath != "" {
+		if fileExists(config.ExecutablePath) {
+			return config.ExecutablePath, true
+		}
+		return fmt.Sprintf("not found: %s", config.ExecutablePath), false
+	}
+	b := launcher.NewBrowser()
+	if _, err := os.Stat(b.BinPath()); err == nil {
+		return "Chromium available", true
+	}
+	return "Chromium not yet downloaded (will auto-download on first run)", true
+}
+
 // GetBaseURL extracts base URL from services config
 func GetBaseURL(services []ServiceConfig) string {
 	for _, svc := range services {

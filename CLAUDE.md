@@ -223,6 +223,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Browser steps**: Defined in prd.json per story. Executed by rod in headless Chrome. Screenshots saved to `.ralph/screenshots/`.
 - **Console error capture**: BrowserRunner captures both `RuntimeExceptionThrown` (uncaught exceptions) and `RuntimeConsoleAPICalled` (`console.error()`) events. Access to `consoleErrors` is protected by `sync.Mutex` since event handlers run in goroutines.
 - **Console error enforcement**: Browser console errors are hard verification failures (not warnings). Checked in both per-story and final verification.
+- **Browser pre-download**: `EnsureBrowser()` pre-resolves the Chromium binary before the main loop. Uses `os.Stat` (not `Validate()`) for fast path (~1μs vs ~2s). Mutates `config.Browser.ExecutablePath` in-place on success; sets `Enabled=false` on download failure to prevent silent per-story retry. Gated on UI stories — skips entirely if no stories have the "ui" tag. `CheckBrowserStatus()` provides read-only status for `cmdDoctor`.
 - **Default branch detection**: `DefaultBranch()` tries `origin/HEAD` symbolic ref first, then falls back to checking if `main` or `master` branch exists locally.
 - **Process group killing**: Services are started with `Setpgid: true` so `syscall.Kill(-pid, SIGTERM)` kills the entire process group (including child processes).
 - **Service ready checks**: HTTP GET polling every 500ms until status < 500, with configurable timeout.
@@ -272,6 +273,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **Provider must commit code to pass**: Signaling DONE without making a new git commit is treated as a failed attempt and counts toward maxRetries. The pre-run commit hash is captured AFTER the PRD state commit to avoid false positives.
 - **Working tree cleanliness is checked but not enforced**: Uncommitted files after provider finishes generate a warning but don't fail the story. This catches providers that left untracked or modified files.
 - **Test file heuristic in verify summary**: If no test files (`*_test.*`, `*.test.*`, `*.spec.*`, `__tests__/`) are modified on the branch, a WARN is included in the `verifySummary` for the verify agent to act on.
+- **EnsureBrowser skips without UI stories**: If no story in the PRD has a "ui" tag, `EnsureBrowser` returns immediately — no `os.Stat`, no download attempt. Failed browser download disables browser for the entire run (`Enabled=false`), preventing repeated download retries on each story.
 
 ## Testing
 

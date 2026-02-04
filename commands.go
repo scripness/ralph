@@ -522,9 +522,15 @@ func cmdDoctor(args []string) {
 
 		// Browser check
 		if cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
-			fmt.Printf("✓ Browser verification: enabled (rod auto-downloads Chrome if needed)\n")
+			status, ok := CheckBrowserStatus(cfg.Config.Browser)
+			if ok {
+				fmt.Printf("✓ Browser: %s\n", status)
+			} else {
+				fmt.Printf("✗ Browser: %s\n", status)
+				issues++
+			}
 		} else {
-			fmt.Printf("○ Browser verification: disabled\n")
+			fmt.Printf("○ Browser: disabled\n")
 		}
 	}
 

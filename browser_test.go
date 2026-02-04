@@ -376,6 +376,91 @@ func TestFormatConsoleArgs_EmptyDescription(t *testing.T) {
 	}
 }
 
+func TestEnsureBrowser_Disabled(t *testing.T) {
+	// nil config → no-op
+	EnsureBrowser(nil, nil)
+
+	// Enabled=false → no-op
+	cfg := &BrowserConfig{Enabled: false}
+	EnsureBrowser(cfg, nil)
+	if cfg.Enabled {
+		t.Error("expected Enabled to remain false")
+	}
+}
+
+func TestEnsureBrowser_ExplicitPath(t *testing.T) {
+	cfg := &BrowserConfig{Enabled: true, ExecutablePath: "/usr/bin/chromium"}
+	prd := &PRD{UserStories: []UserStory{{Tags: []string{"ui"}}}}
+
+	EnsureBrowser(cfg, prd)
+
+	// Should not overwrite an explicit path
+	if cfg.ExecutablePath != "/usr/bin/chromium" {
+		t.Errorf("expected path unchanged, got %q", cfg.ExecutablePath)
+	}
+}
+
+func TestEnsureBrowser_NoUIStories(t *testing.T) {
+	cfg := &BrowserConfig{Enabled: true}
+	prd := &PRD{UserStories: []UserStory{
+		{Tags: []string{"backend"}},
+		{Tags: []string{"api"}},
+	}}
+
+	EnsureBrowser(cfg, prd)
+
+	// No UI stories → ExecutablePath should remain empty (no download attempted)
+	if cfg.ExecutablePath != "" {
+		t.Errorf("expected empty ExecutablePath for non-UI PRD, got %q", cfg.ExecutablePath)
+	}
+}
+
+func TestEnsureBrowser_NilPRD(t *testing.T) {
+	cfg := &BrowserConfig{Enabled: true}
+
+	EnsureBrowser(cfg, nil)
+
+	// nil PRD → no UI stories → no download
+	if cfg.ExecutablePath != "" {
+		t.Errorf("expected empty ExecutablePath for nil PRD, got %q", cfg.ExecutablePath)
+	}
+}
+
+func TestCheckBrowserStatus_Disabled(t *testing.T) {
+	status, ok := CheckBrowserStatus(nil)
+	if status != "disabled" || !ok {
+		t.Errorf("expected (disabled, true), got (%q, %v)", status, ok)
+	}
+
+	status, ok = CheckBrowserStatus(&BrowserConfig{Enabled: false})
+	if status != "disabled" || !ok {
+		t.Errorf("expected (disabled, true), got (%q, %v)", status, ok)
+	}
+}
+
+func TestCheckBrowserStatus_ExplicitPathMissing(t *testing.T) {
+	cfg := &BrowserConfig{Enabled: true, ExecutablePath: "/nonexistent/chromium"}
+	status, ok := CheckBrowserStatus(cfg)
+	if ok {
+		t.Error("expected ok=false for missing executable")
+	}
+	if status != "not found: /nonexistent/chromium" {
+		t.Errorf("unexpected status: %q", status)
+	}
+}
+
+func TestCheckBrowserStatus_ExplicitPathExists(t *testing.T) {
+	// Use a path that definitely exists
+	cfg := &BrowserConfig{Enabled: true, ExecutablePath: "/dev/null"}
+	status, ok := CheckBrowserStatus(cfg)
+	if !ok {
+		t.Error("expected ok=true for existing path")
+	}
+	if status != "/dev/null" {
+		t.Errorf("unexpected status: %q", status)
+	}
+}
+
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
 }
