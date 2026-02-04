@@ -75,20 +75,6 @@ func TestServiceManager_GetRecentOutput(t *testing.T) {
 	}
 }
 
-func TestServiceManager_ClearCapturedOutput(t *testing.T) {
-	sm := NewServiceManager("/tmp", nil)
-
-	co := &capturedOutput{maxBytes: 1024}
-	co.Write([]byte("data"))
-	sm.outputs["test"] = co
-
-	sm.ClearCapturedOutput()
-
-	if co.String() != "" {
-		t.Errorf("expected empty after clear, got '%s'", co.String())
-	}
-}
-
 func TestServiceManager_HasServices(t *testing.T) {
 	smWith := NewServiceManager("/tmp", []ServiceConfig{{Name: "dev"}})
 	if !smWith.HasServices() {

@@ -914,10 +914,10 @@ func commitPrdOnly(projectRoot, prdPath, message string) error {
 	return git.CommitFile(prdPath, message)
 }
 
-// getLastCommit returns the last commit hash
+// getLastCommit returns the last commit hash (short, for display)
 func getLastCommit(projectRoot string) string {
 	git := NewGitOps(projectRoot)
-	return git.GetLastCommit()
+	return git.GetLastCommitShort()
 }
 
 // getCommitMessage returns the commit message for a hash

@@ -84,8 +84,17 @@ func (g *GitOps) CommitFile(filePath, message string) error {
 	return err
 }
 
-// GetLastCommit returns the last commit hash (short)
+// GetLastCommit returns the last commit hash (full).
 func (g *GitOps) GetLastCommit() string {
+	out, err := g.run("rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// GetLastCommitShort returns the last commit hash (short, for display).
+func (g *GitOps) GetLastCommitShort() string {
 	out, err := g.run("rev-parse", "--short", "HEAD")
 	if err != nil {
 		return ""

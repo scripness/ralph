@@ -138,8 +138,23 @@ func TestGitOps_GetLastCommit(t *testing.T) {
 	if hash == "" {
 		t.Error("expected non-empty commit hash")
 	}
+	if len(hash) != 40 {
+		t.Errorf("expected full 40-char hash, got '%s' (len %d)", hash, len(hash))
+	}
+}
+
+func TestGitOps_GetLastCommitShort(t *testing.T) {
+	_, git := initTestRepo(t)
+
+	hash := git.GetLastCommitShort()
+	if hash == "" {
+		t.Error("expected non-empty short commit hash")
+	}
 	if len(hash) < 7 {
 		t.Errorf("expected short hash >= 7 chars, got '%s'", hash)
+	}
+	if len(hash) > 12 {
+		t.Errorf("expected short hash <= 12 chars, got '%s' (len %d)", hash, len(hash))
 	}
 }
 

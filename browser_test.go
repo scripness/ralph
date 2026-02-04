@@ -249,23 +249,6 @@ func TestFormatStepResult_AllPassed(t *testing.T) {
 	}
 }
 
-func TestBrowserResultsHaveErrors(t *testing.T) {
-	noErrors := []BrowserCheckResult{
-		{URL: "http://localhost", Error: nil, ConsoleErrors: nil},
-	}
-	if BrowserResultsHaveErrors(noErrors) {
-		t.Error("expected no errors")
-	}
-
-	withError := []BrowserCheckResult{
-		{URL: "http://localhost", Error: nil},
-		{URL: "http://localhost", Error: nil, ConsoleErrors: []string{"error"}},
-	}
-	if !BrowserResultsHaveErrors(withError) {
-		t.Error("expected errors due to console errors")
-	}
-}
-
 func TestFormatBrowserResults(t *testing.T) {
 	results := []BrowserCheckResult{
 		{

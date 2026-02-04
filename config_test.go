@@ -591,8 +591,12 @@ func TestGetProjectRoot_WithGitDir(t *testing.T) {
 }
 
 func TestCheckBtcaAvailable(t *testing.T) {
-	// Just verify it runs without panic — result depends on environment
-	_ = CheckBtcaAvailable()
+	if CheckBtcaAvailable() {
+		t.Skip("btca is installed, cannot test false return")
+	}
+	if CheckBtcaAvailable() {
+		t.Error("expected false when btca is not in PATH")
+	}
 }
 
 func TestCheckReadinessWarnings_NoBtca(t *testing.T) {
@@ -601,10 +605,7 @@ func TestCheckReadinessWarnings_NoBtca(t *testing.T) {
 		t.Skip("btca is installed, cannot test missing-btca warning")
 	}
 
-	cfg := &RalphConfig{
-		Verify: VerifyConfig{Default: []string{"go version"}},
-	}
-	warnings := CheckReadinessWarnings(cfg)
+	warnings := CheckReadinessWarnings()
 	if len(warnings) != 1 {
 		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
 	}

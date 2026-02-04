@@ -270,7 +270,7 @@ func WriteDefaultConfig(projectRoot string) error {
 // HasPlaceholderVerifyCommands returns true if any verify commands are placeholders.
 func HasPlaceholderVerifyCommands(cfg *RalphConfig) bool {
 	for _, cmd := range cfg.Verify.Default {
-		if strings.HasPrefix(cmd, "echo '") || strings.HasPrefix(cmd, "echo \"") {
+		if isPlaceholderCommand(cmd) {
 			return true
 		}
 	}
@@ -298,7 +298,7 @@ func CheckBtcaAvailable() bool {
 }
 
 // CheckReadinessWarnings returns non-blocking warnings about the environment.
-func CheckReadinessWarnings(cfg *RalphConfig) []string {
+func CheckReadinessWarnings() []string {
 	var warnings []string
 	if !CheckBtcaAvailable() {
 		warnings = append(warnings, "btca not found in PATH \u2014 agents cannot verify against latest docs. Install: https://github.com/nicobailon/btca-tool")

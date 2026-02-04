@@ -126,7 +126,7 @@ func cmdRun(args []string) {
 	}
 
 	// Environment warnings (soft — warn but don't block)
-	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
+	if warnings := CheckReadinessWarnings(); len(warnings) > 0 {
 		for _, w := range warnings {
 			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
 		}
@@ -198,7 +198,7 @@ func cmdVerify(args []string) {
 	}
 
 	// Environment warnings (soft — warn but don't block)
-	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
+	if warnings := CheckReadinessWarnings(); len(warnings) > 0 {
 		for _, w := range warnings {
 			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
 		}

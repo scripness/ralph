@@ -266,9 +266,3 @@ func (sm *ServiceManager) GetRecentOutput(name string, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-// ClearCapturedOutput clears all captured service output.
-func (sm *ServiceManager) ClearCapturedOutput() {
-	for _, co := range sm.outputs {
-		co.Reset()
-	}
-}

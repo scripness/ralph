@@ -296,6 +296,11 @@ func (br *BrowserRunner) close() {
 
 // checkURL checks a single URL
 func (br *BrowserRunner) checkURL(url, storyID string) BrowserCheckResult {
+	// Reset console errors so each URL gets a clean slate
+	br.mu.Lock()
+	br.consoleErrors = nil
+	br.mu.Unlock()
+
 	result := BrowserCheckResult{URL: url}
 
 	page := br.page.Timeout(30 * time.Second)
@@ -450,16 +455,6 @@ func truncateText(text string, maxLen int) string {
 		return text
 	}
 	return text[:maxLen] + "..."
-}
-
-// BrowserResultsHaveErrors returns true if any check had errors
-func BrowserResultsHaveErrors(results []BrowserCheckResult) bool {
-	for _, r := range results {
-		if r.Error != nil || len(r.ConsoleErrors) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // FormatBrowserResults formats browser check results for display
