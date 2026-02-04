@@ -197,6 +197,27 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		}
 	}
 
+	// Build btca instructions (conditional on availability)
+	btcaStr := ""
+	if CheckBtcaAvailable() {
+		btcaStr = "## Documentation Verification\n\n" +
+			"Before committing, verify your implementation against current documentation using `btca`:\n\n" +
+			"```\nbtca ask --resource <library> --question \"Is this the correct pattern for <what you built>?\"\n```\n\n" +
+			"Check:\n" +
+			"- APIs you used (current? deprecated?)\n" +
+			"- Configuration patterns (best practices?)\n" +
+			"- Security patterns (input validation, auth, etc.)\n\n" +
+			"If btca has no relevant resource, use web search against official docs instead.\n"
+	} else {
+		btcaStr = "## Documentation Verification\n\n" +
+			"Before committing, verify your implementation against current official documentation using web search:\n\n" +
+			"- Search for the official docs of any library or framework you used\n" +
+			"- Confirm APIs you used are current and not deprecated\n" +
+			"- Verify configuration patterns follow current best practices\n" +
+			"- Check security patterns (input validation, auth, etc.) are up to date\n\n" +
+			"Do not rely on memory alone — docs change between versions. Verify against the latest.\n"
+	}
+
 	return getPrompt("run", map[string]string{
 		"storyId":            story.ID,
 		"storyTitle":         story.Title,
@@ -215,11 +236,12 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		"browserSteps":       buildBrowserSteps(story),
 		"serviceURLs":        serviceURLsStr,
 		"timeout":            fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
+		"btcaInstructions":   btcaStr,
 	})
 }
 
 // generateVerifyPrompt generates the prompt for final verification
-func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD) string {
+func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, verifySummary string) string {
 	// Build story summaries with acceptance criteria
 	var summaries []string
 	for _, s := range prd.UserStories {
@@ -283,16 +305,44 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 		}
 	}
 
+	// Build git diff summary
+	git := NewGitOps(cfg.ProjectRoot)
+	diffStat := git.GetDiffSummary()
+	diffStr := ""
+	if diffStat != "" {
+		diffStr = "## Changes Summary\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n\nFor full diff: `git diff " + git.DefaultBranch() + "...HEAD`\n"
+	}
+
+	// Build btca instructions for verify context
+	btcaStr := ""
+	if CheckBtcaAvailable() {
+		btcaStr = "### Documentation Compliance\n\n" +
+			"Use `btca` to verify implementations follow current best practices:\n\n" +
+			"```\nbtca ask --resource <library> --question \"Does this follow current best practices for <pattern>?\"\n```\n\n" +
+			"Check: API patterns are current, no deprecated usage, security practices are up to date.\n" +
+			"If btca has no relevant resource, use web search. Deprecated patterns = RESET.\n"
+	} else {
+		btcaStr = "### Documentation Compliance\n\n" +
+			"Use web search to verify implementations follow current best practices:\n\n" +
+			"- Search official docs for each library/framework used in the implementation\n" +
+			"- Confirm API patterns are current and not deprecated\n" +
+			"- Verify security practices (auth, validation, etc.) are up to date\n\n" +
+			"Deprecated patterns or outdated API usage = RESET.\n"
+	}
+
 	return getPrompt("verify", map[string]string{
-		"project":        prd.Project,
-		"description":    prd.Description,
-		"storySummaries": summariesStr,
-		"verifyCommands": verifyStr,
-		"learnings":      learningsStr,
-		"knowledgeFile":  cfg.Config.Provider.KnowledgeFile,
-		"prdPath":        featureDir.PrdJsonPath(),
-		"branchName":     prd.BranchName,
-		"serviceURLs":    verifyServiceURLs,
+		"project":          prd.Project,
+		"description":      prd.Description,
+		"storySummaries":   summariesStr,
+		"verifyCommands":   verifyStr,
+		"learnings":        learningsStr,
+		"knowledgeFile":    cfg.Config.Provider.KnowledgeFile,
+		"prdPath":          featureDir.PrdJsonPath(),
+		"branchName":       prd.BranchName,
+		"serviceURLs":      verifyServiceURLs,
+		"diffSummary":      diffStr,
+		"btcaInstructions": btcaStr,
+		"verifySummary":    verifySummary,
 	})
 }
 

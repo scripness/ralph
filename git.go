@@ -123,6 +123,16 @@ func (g *GitOps) DefaultBranch() string {
 	return "main"
 }
 
+// GetDiffSummary returns the stat summary of changes from the default branch to HEAD.
+func (g *GitOps) GetDiffSummary() string {
+	base := g.DefaultBranch()
+	out, err := g.run("diff", "--stat", base+"...HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
 // run executes a git command and returns the output
 func (g *GitOps) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)

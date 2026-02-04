@@ -590,6 +590,32 @@ func TestGetProjectRoot_WithGitDir(t *testing.T) {
 	}
 }
 
+func TestCheckBtcaAvailable(t *testing.T) {
+	// Just verify it runs without panic — result depends on environment
+	_ = CheckBtcaAvailable()
+}
+
+func TestCheckReadinessWarnings_NoBtca(t *testing.T) {
+	// btca is unlikely to be in PATH during tests
+	if CheckBtcaAvailable() {
+		t.Skip("btca is installed, cannot test missing-btca warning")
+	}
+
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{Default: []string{"go version"}},
+	}
+	warnings := CheckReadinessWarnings(cfg)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "btca not found") {
+		t.Errorf("expected btca warning, got: %s", warnings[0])
+	}
+	if !strings.Contains(warnings[0], "nicobailon/btca-tool") {
+		t.Errorf("expected install URL in warning, got: %s", warnings[0])
+	}
+}
+
 func TestExtractBaseCommand(t *testing.T) {
 	tests := []struct {
 		input string

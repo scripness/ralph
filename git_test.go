@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -148,5 +149,53 @@ func TestGitOps_DefaultBranch(t *testing.T) {
 	branch := git.DefaultBranch()
 	if branch != "main" && branch != "master" {
 		t.Errorf("expected 'main' or 'master', got '%s'", branch)
+	}
+}
+
+func TestGitOps_GetDiffSummary(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	// Create a branch and add a commit
+	git.CreateBranch("ralph/feature")
+	os.WriteFile(filepath.Join(dir, "new-file.txt"), []byte("content"), 0644)
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	run("add", "new-file.txt")
+	run("commit", "-m", "add new file")
+
+	summary := git.GetDiffSummary()
+	if summary == "" {
+		t.Error("expected non-empty diff summary")
+	}
+	if !strings.Contains(summary, "new-file.txt") {
+		t.Errorf("expected summary to mention new-file.txt, got: %s", summary)
+	}
+	if !strings.Contains(summary, "1 file changed") {
+		t.Errorf("expected summary to contain file change count, got: %s", summary)
+	}
+}
+
+func TestGitOps_GetDiffSummary_SameBranch(t *testing.T) {
+	_, git := initTestRepo(t)
+
+	// On main with no divergence, diff summary should be empty
+	summary := git.GetDiffSummary()
+	if summary != "" {
+		t.Errorf("expected empty diff summary on same branch, got: %s", summary)
 	}
 }

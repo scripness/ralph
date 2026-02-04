@@ -83,6 +83,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Signal markers**: Output `<ralph>DONE</ralph>`, `<ralph>STUCK</ralph>`, etc.
 - **Knowledge updates**: Update AGENTS.md/CLAUDE.md with discovered patterns
 - **Learnings**: Output `<ralph>LEARNING:...</ralph>` for cross-iteration memory
+- **Documentation verification**: Use btca to check implementations against current docs (when available)
 
 ### Provider communication protocol (markers in stdout or stderr):
 | Marker | Meaning |
@@ -230,6 +231,9 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **PRD quality warnings**: `WarnPRDQuality()` checks stories for missing "Typecheck passes" acceptance criteria (soft warning, does not block).
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
 - **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h. Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`.
+- **btca detection**: `CheckBtcaAvailable()` checks if btca is in PATH. Prompts always include a documentation verification section: btca instructions when available, web search fallback when not. `CheckReadinessWarnings()` returns soft warnings (btca missing) that don't block execution.
+- **Verification summary**: `runFinalVerification` accumulates structured PASS/FAIL lines for each verification step and passes them to the verify prompt as `verifySummary`.
+- **Git diff in verify prompt**: `GetDiffSummary()` provides `git diff --stat` output from the default branch to HEAD, injected into the verify prompt as `diffSummary`.
 
 ## Prompt Template Variables
 
@@ -237,8 +241,8 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 
 | Template | Variables |
 |----------|-----------|
-| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `maxRetriesInfo` |
-| `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs` |
+| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `btcaInstructions` |
+| `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs`, `diffSummary`, `btcaInstructions`, `verifySummary` |
 | `prd-create.md` | `feature`, `outputPath` |
 | `prd-refine.md` | `feature`, `prdContent`, `outputPath` |
 | `prd-finalize.md` | `feature`, `prdContent`, `outputPath` |
@@ -252,12 +256,12 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **Only one REASON marker is kept**: If multiple `<ralph>REASON:...</ralph>` markers are emitted, each overwrites the previous. Only the last one survives.
 - **SUGGEST_NEXT is advisory only**: The marker is captured but `GetNextStory` selects purely by priority. The suggestion is not currently acted upon.
 - **Verification output is captured for retries**: When verification fails, the last 50 lines of command output are stored in `story.Notes` so the retry agent can see what specifically failed.
-- **Final VERIFIED is gated on verify commands**: If any `verify.default` or `verify.ui` command failed during final verification, the CLI overrides a provider's `VERIFIED` marker and returns not-verified. The provider cannot skip past failing tests.
+- **Final VERIFIED is gated on all verification**: If any `verify.default`, `verify.ui` command, browser step, or service health check failed during final verification, the CLI overrides a provider's `VERIFIED` marker and returns not-verified. The provider cannot skip past failing checks.
 
 ## Testing
 
 Tests are in `*_test.go` files alongside source. Key test files:
-- `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation
+- `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation, btca availability
 - `schema_test.go` - PRD validation, story state transitions, browser steps, learning deduplication, PRD quality
 - `services_test.go` - output capture, service manager, health checks
 - `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism
@@ -266,7 +270,7 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `lock_test.go` - lock acquisition, stale detection
 - `browser_test.go` - runner init, screenshot saving
 - `atomic_test.go` - atomic writes, JSON validation
-- `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, DefaultBranch)
+- `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, DefaultBranch, GetDiffSummary)
 - `update_check_test.go` - update check cache path
 
 Run with `go test ./...` or `go test -v ./...` for verbose output.

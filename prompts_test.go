@@ -23,6 +23,7 @@ func TestGetPrompt_Run(t *testing.T) {
 		"progress":           "1/3 stories complete",
 		"storyMap":           "✓ US-000: Setup\n→ US-001: Test Story [CURRENT]",
 		"browserSteps":       "",
+		"btcaInstructions":   "",
 	})
 
 	if !strings.Contains(prompt, "US-001") {
@@ -59,13 +60,18 @@ func TestGetPrompt_Run(t *testing.T) {
 
 func TestGetPrompt_Verify(t *testing.T) {
 	prompt := getPrompt("verify", map[string]string{
-		"project":        "TestProject",
-		"description":    "Test description",
-		"storySummaries": "- US-001: Complete",
-		"verifyCommands": "- bun run test",
-		"learnings":      "",
-		"knowledgeFile":  "CLAUDE.md",
-		"prdPath":        "/project/.ralph/2024-01-15-auth/prd.json",
+		"project":          "TestProject",
+		"description":      "Test description",
+		"storySummaries":   "- US-001: Complete",
+		"verifyCommands":   "- bun run test",
+		"learnings":        "",
+		"knowledgeFile":    "CLAUDE.md",
+		"prdPath":          "/project/.ralph/2024-01-15-auth/prd.json",
+		"branchName":       "ralph/test",
+		"serviceURLs":      "",
+		"diffSummary":      "",
+		"btcaInstructions": "",
+		"verifySummary":    "",
 	})
 
 	if !strings.Contains(prompt, "TestProject") {
@@ -193,6 +199,10 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"prdContent":         "Test",
 			"outputPath":         "/test",
 			"prdPath":            "/test/prd.json",
+			"serviceURLs":        "",
+			"btcaInstructions":   "",
+			"diffSummary":        "",
+			"verifySummary":      "",
 		})
 
 		for _, term := range forbiddenTerms {
@@ -464,7 +474,7 @@ func TestGenerateVerifyPrompt(t *testing.T) {
 		},
 	}
 
-	prompt := generateVerifyPrompt(cfg, featureDir, prd)
+	prompt := generateVerifyPrompt(cfg, featureDir, prd, "")
 
 	if !strings.Contains(prompt, "MyProject") {
 		t.Error("prompt should contain project name")
@@ -646,5 +656,101 @@ func TestBuildLearnings_Capped(t *testing.T) {
 	}
 	if strings.Contains(result, "- learning 0\n") {
 		t.Error("expected oldest learning to be truncated")
+	}
+}
+
+func TestGetPrompt_VerifyWithSummary(t *testing.T) {
+	summary := "PASS: bun run typecheck\nFAIL: bun run test\nPASS: service health"
+	prompt := getPrompt("verify", map[string]string{
+		"project":          "TestProject",
+		"description":      "Test description",
+		"storySummaries":   "- US-001: Complete",
+		"verifyCommands":   "- bun run typecheck\n- bun run test",
+		"learnings":        "",
+		"knowledgeFile":    "CLAUDE.md",
+		"prdPath":          "/project/.ralph/2024-01-15-auth/prd.json",
+		"branchName":       "ralph/test",
+		"serviceURLs":      "",
+		"diffSummary":      "## Changes Summary\n\n```\n 3 files changed, 50 insertions(+)\n```\n",
+		"btcaInstructions": "",
+		"verifySummary":    summary,
+	})
+
+	if !strings.Contains(prompt, "PASS: bun run typecheck") {
+		t.Error("prompt should contain passing verification result")
+	}
+	if !strings.Contains(prompt, "FAIL: bun run test") {
+		t.Error("prompt should contain failing verification result")
+	}
+	if !strings.Contains(prompt, "PASS: service health") {
+		t.Error("prompt should contain service health result")
+	}
+	if !strings.Contains(prompt, "3 files changed") {
+		t.Error("prompt should contain diff summary")
+	}
+	if !strings.Contains(prompt, "Changes Summary") {
+		t.Error("prompt should contain changes summary heading")
+	}
+}
+
+func TestGetPrompt_RunWithBtca(t *testing.T) {
+	btcaInstr := "## Documentation Verification\n\nBefore committing, verify your implementation..."
+	prompt := getPrompt("run", map[string]string{
+		"storyId":            "US-001",
+		"storyTitle":         "Test Story",
+		"storyDescription":   "As a user...",
+		"acceptanceCriteria": "- Criterion 1",
+		"tags":               "",
+		"retryInfo":          "",
+		"verifyCommands":     "- bun run test",
+		"learnings":          "",
+		"knowledgeFile":      "AGENTS.md",
+		"project":            "TestProject",
+		"description":        "Test feature",
+		"branchName":         "ralph/test",
+		"progress":           "0/1",
+		"storyMap":           "→ US-001: Test [CURRENT]",
+		"browserSteps":       "",
+		"btcaInstructions":   btcaInstr,
+	})
+
+	if !strings.Contains(prompt, "Documentation Verification") {
+		t.Error("prompt should contain btca documentation verification section")
+	}
+	if !strings.Contains(prompt, "verify your implementation") {
+		t.Error("prompt should contain btca instructions content")
+	}
+}
+
+func TestGetPrompt_RunWithoutBtca(t *testing.T) {
+	// When btca is not available, the web search fallback instructions are used
+	webSearchInstr := "## Documentation Verification\n\nBefore committing, verify your implementation against current official documentation using web search:"
+	prompt := getPrompt("run", map[string]string{
+		"storyId":            "US-001",
+		"storyTitle":         "Test Story",
+		"storyDescription":   "As a user...",
+		"acceptanceCriteria": "- Criterion 1",
+		"tags":               "",
+		"retryInfo":          "",
+		"verifyCommands":     "- bun run test",
+		"learnings":          "",
+		"knowledgeFile":      "AGENTS.md",
+		"project":            "TestProject",
+		"description":        "Test feature",
+		"branchName":         "ralph/test",
+		"progress":           "0/1",
+		"storyMap":           "→ US-001: Test [CURRENT]",
+		"browserSteps":       "",
+		"btcaInstructions":   webSearchInstr,
+	})
+
+	if !strings.Contains(prompt, "Documentation Verification") {
+		t.Error("prompt should contain documentation verification section even without btca")
+	}
+	if !strings.Contains(prompt, "web search") {
+		t.Error("prompt should contain web search fallback instructions")
+	}
+	if strings.Contains(prompt, "btca") {
+		t.Error("prompt should NOT mention btca when using web search fallback")
 	}
 }

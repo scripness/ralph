@@ -125,6 +125,14 @@ func cmdRun(args []string) {
 		os.Exit(1)
 	}
 
+	// Environment warnings (soft — warn but don't block)
+	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
+		}
+		fmt.Fprintln(os.Stderr, "")
+	}
+
 	// PRD quality warnings (soft — warn but don't block)
 	if warnings := WarnPRDQuality(prd); len(warnings) > 0 {
 		for _, w := range warnings {
@@ -187,6 +195,14 @@ func cmdVerify(args []string) {
 		fmt.Fprintln(os.Stderr, "Prepare your project for agentic work, then try again.")
 		fmt.Fprintln(os.Stderr, "Run 'ralph doctor' for a full environment check.")
 		os.Exit(1)
+	}
+
+	// Environment warnings (soft — warn but don't block)
+	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
+		}
+		fmt.Fprintln(os.Stderr, "")
 	}
 
 	// Acquire lock to prevent concurrent run+verify
@@ -528,6 +544,13 @@ func cmdDoctor(args []string) {
 		}
 	} else {
 		fmt.Println("Features: none")
+	}
+
+	// Check btca
+	if CheckBtcaAvailable() {
+		fmt.Println("✓ btca available (documentation verification)")
+	} else {
+		fmt.Println("○ btca not found (install for doc verification: https://github.com/nicobailon/btca-tool)")
 	}
 
 	// Check lock status

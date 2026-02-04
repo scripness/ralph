@@ -15,19 +15,23 @@ All stories have been implemented. Perform a comprehensive review to verify the 
 
 > For complete story details (descriptions, browser steps), see {{prdPath}}.
 
-## Verification Commands
+## Verification Results
 
-The CLI has already run these commands:
+{{verifySummary}}
+
+### Commands Run
 
 {{verifyCommands}}
 
-If configured, the CLI has also run browser verification for UI stories and checked that managed services are still responding. Any issues are shown in the output above.
+If configured, the CLI has also run browser verification and service health checks. Results are in the summary above.
 
 {{learnings}}
 
 ## Your Task
 
-Review the implementation thoroughly. The CLI has already executed verification commands above. You may re-run specific commands if needed for deeper investigation, but do NOT modify any code. Use `git diff main...HEAD` to review the full scope of changes on this branch.
+Review the implementation thoroughly. The CLI has already executed verification commands and the results are summarized above. You may re-run specific commands if needed for deeper investigation, but do NOT modify any code.
+
+{{diffSummary}}
 
 ### Review Checklist
 
@@ -41,9 +45,12 @@ Every item below must pass. If ANY item fails, you MUST RESET the affected stori
 6. **Documentation**: Has `{{knowledgeFile}}` been updated with patterns discovered during implementation? New conventions or gotchas left undocumented is a RESET.
 7. **Missing Pieces**: Is anything incomplete or skipped?
 
+{{btcaInstructions}}
+
 ### Review Verification Output
 
-Review the output from the verification commands above:
+Review the verification results summary above:
+- Any FAIL line means that check did not pass — investigate before marking VERIFIED
 - Check test output for failures
 - Review any error messages carefully
 - Note any warnings that could indicate latent issues

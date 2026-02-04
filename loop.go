@@ -623,11 +623,15 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	// Run all verification commands first
 	fmt.Println("\nRunning verification commands...")
 	verifyFailed := false
+	var summaryLines []string
 	for _, cmd := range cfg.Config.Verify.Default {
 		fmt.Printf("  → %s\n", cmd)
 		if _, err := runCommand(cfg.ProjectRoot, cmd); err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
 			verifyFailed = true
+			summaryLines = append(summaryLines, "FAIL: "+cmd)
+		} else {
+			summaryLines = append(summaryLines, "PASS: "+cmd)
 		}
 	}
 	for _, cmd := range cfg.Config.Verify.UI {
@@ -635,6 +639,9 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 		if _, err := runCommand(cfg.ProjectRoot, cmd); err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
 			verifyFailed = true
+			summaryLines = append(summaryLines, "FAIL: "+cmd)
+		} else {
+			summaryLines = append(summaryLines, "PASS: "+cmd)
 		}
 	}
 
@@ -665,12 +672,19 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 					fmt.Print(FormatStepResult(browserResult))
 					if browserResult.Error != nil {
 						fmt.Printf("    ✗ Failed: %v\n", browserResult.Error)
+						verifyFailed = true
+						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (error: %v)", story.ID, browserResult.Error))
 					}
 					if len(browserResult.ConsoleErrors) > 0 {
 						fmt.Printf("    ✗ Console errors: %d\n", len(browserResult.ConsoleErrors))
 						for _, ce := range browserResult.ConsoleErrors {
 							fmt.Printf("      - %s\n", ce)
 						}
+						verifyFailed = true
+						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (console errors: %d)", story.ID, len(browserResult.ConsoleErrors)))
+					}
+					if browserResult.Error == nil && len(browserResult.ConsoleErrors) == 0 {
+						summaryLines = append(summaryLines, fmt.Sprintf("PASS: browser %s", story.ID))
 					}
 				}
 			}
@@ -683,11 +697,17 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 			for _, issue := range healthIssues {
 				fmt.Printf("  ✗ %s\n", issue)
 			}
+			verifyFailed = true
+			summaryLines = append(summaryLines, "FAIL: service health: "+strings.Join(healthIssues, "; "))
+		} else {
+			summaryLines = append(summaryLines, "PASS: service health")
 		}
 	}
 
+	verifySummary := strings.Join(summaryLines, "\n")
+
 	// Send verification prompt to provider
-	prompt := generateVerifyPrompt(cfg, featureDir, prd)
+	prompt := generateVerifyPrompt(cfg, featureDir, prd, verifySummary)
 	result, err := runProvider(cfg, prompt)
 
 	// Save learnings from verification
@@ -710,8 +730,8 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	// Check for VERIFIED marker
 	if result.Verified {
 		if verifyFailed {
-			fmt.Println("\nProvider signaled VERIFIED but verification commands failed.")
-			fmt.Println("Overriding to not-verified — fix failing commands before verification can pass.")
+			fmt.Println("\nProvider signaled VERIFIED but verification failed.")
+			fmt.Println("Overriding to not-verified — fix failing checks before verification can pass.")
 			return false, nil
 		}
 		return true, nil

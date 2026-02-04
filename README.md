@@ -16,6 +16,10 @@ curl -fsSL https://raw.githubusercontent.com/scripness/ralph/main/install.sh | b
 go install github.com/scripness/ralph@latest
 ```
 
+## Recommended Tools
+
+- **[btca](https://github.com/nicobailon/btca-tool)** — Documentation verification tool. When installed, Ralph agents can verify implementations against latest library docs and best practices. Install is optional; `ralph doctor` will show its status.
+
 ## Quick Start
 
 ```bash

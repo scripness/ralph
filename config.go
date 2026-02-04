@@ -286,6 +286,20 @@ func isPlaceholderCommand(cmd string) bool {
 	return strings.HasPrefix(cmd, "echo '") || strings.HasPrefix(cmd, "echo \"")
 }
 
+// CheckBtcaAvailable returns true if btca is in PATH.
+func CheckBtcaAvailable() bool {
+	return isCommandAvailable("btca")
+}
+
+// CheckReadinessWarnings returns non-blocking warnings about the environment.
+func CheckReadinessWarnings(cfg *RalphConfig) []string {
+	var warnings []string
+	if !CheckBtcaAvailable() {
+		warnings = append(warnings, "btca not found in PATH \u2014 agents cannot verify against latest docs. Install: https://github.com/nicobailon/btca-tool")
+	}
+	return warnings
+}
+
 // CheckReadiness validates that the project is ready for Ralph.
 // Returns a list of issues. Empty list means ready.
 func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
