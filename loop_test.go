@@ -389,6 +389,42 @@ func TestBuildProviderArgs_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestRunCommand_Timeout(t *testing.T) {
+	dir := t.TempDir()
+	output, err := runCommand(dir, "sleep 10", 1)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected 'timed out' in error, got: %v", err)
+	}
+	// Output should be captured (may be empty for sleep)
+	_ = output
+}
+
+func TestRunCommand_Success(t *testing.T) {
+	dir := t.TempDir()
+	output, err := runCommand(dir, "echo hello", 30)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(output, "hello") {
+		t.Errorf("expected 'hello' in output, got: %q", output)
+	}
+}
+
+func TestRunCommand_NonZeroExit(t *testing.T) {
+	dir := t.TempDir()
+	_, err := runCommand(dir, "exit 1", 30)
+	if err == nil {
+		t.Fatal("expected error for non-zero exit")
+	}
+	// Should NOT be a timeout error
+	if strings.Contains(err.Error(), "timed out") {
+		t.Error("expected non-timeout error")
+	}
+}
+
 func TestTruncateOutput(t *testing.T) {
 	short := "line1\nline2\nline3"
 	if got := truncateOutput(short, 10); got != short {

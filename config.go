@@ -55,6 +55,7 @@ type ServiceConfig struct {
 type VerifyConfig struct {
 	Default []string `json:"default"`
 	UI      []string `json:"ui,omitempty"`
+	Timeout int      `json:"timeout,omitempty"` // seconds per command, default 300
 }
 
 // BrowserConfig configures built-in browser verification
@@ -138,6 +139,11 @@ func LoadConfig(projectRoot string) (*ResolvedConfig, error) {
 		if cfg.Services[i].ReadyTimeout <= 0 {
 			cfg.Services[i].ReadyTimeout = 30
 		}
+	}
+
+	// Apply verify timeout default
+	if cfg.Verify.Timeout <= 0 {
+		cfg.Verify.Timeout = 300 // 5 minutes per command
 	}
 
 	// Validate required fields

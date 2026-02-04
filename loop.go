@@ -189,6 +189,10 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			}
 		}
 
+		// Capture commit hash AFTER PRD commit, BEFORE provider runs
+		// This avoids false positives from the PRD state commit above
+		preRunCommit := git.GetLastCommit()
+
 		// Generate and send prompt
 		prompt := generateRunPrompt(cfg, featureDir, prd, story)
 		result, err := runProvider(cfg, prompt)
@@ -245,6 +249,26 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no completion signal", story.ID))
 			}
 			continue
+		}
+
+		// Check that provider actually committed something
+		if !git.HasNewCommitSince(preRunCommit) {
+			fmt.Println("\n⚠ Provider signaled DONE but made no new commit.")
+			prd.MarkStoryFailed(story.ID, "No commit made — provider signaled DONE without committing code", cfg.Config.MaxRetries)
+			prd.ClearCurrentStory()
+			if err := SavePRD(prdPath, prd); err != nil {
+				return fmt.Errorf("failed to save PRD: %w", err)
+			}
+			if cfg.Config.Commits.PrdChanges {
+				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no commit", story.ID))
+			}
+			continue
+		}
+
+		// Warn if working tree is dirty (provider left uncommitted files)
+		if !git.IsWorkingTreeClean() {
+			fmt.Println("\n⚠ Working tree has uncommitted changes after provider finished.")
+			fmt.Println("  Provider may have left untracked or modified files.")
 		}
 
 		// Run verification
@@ -502,7 +526,7 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 	// Run default verification commands
 	for _, cmd := range cfg.Config.Verify.Default {
 		fmt.Printf("  → %s\n", cmd)
-		output, err := runCommand(cfg.ProjectRoot, cmd)
+		output, err := runCommand(cfg.ProjectRoot, cmd, cfg.Config.Verify.Timeout)
 		if err != nil {
 			result.passed = false
 			result.reason = fmt.Sprintf("%s failed: %v\n\n--- Output (last 50 lines) ---\n%s", cmd, err, output)
@@ -533,7 +557,9 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 					fmt.Println("  → Running browser verification steps...")
 					browserResult, err := browser.RunSteps(story, baseURL)
 					if err != nil {
-						fmt.Printf("  ⚠ Browser verification error: %v\n", err)
+						result.passed = false
+						result.reason = fmt.Sprintf("browser initialization failed: %v", err)
+						return result, nil
 					} else if browserResult != nil {
 						fmt.Print(FormatStepResult(browserResult))
 
@@ -560,7 +586,9 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 					fmt.Println("  → Running browser checks...")
 					browserResults, err := browser.RunChecks(story, baseURL)
 					if err != nil {
-						fmt.Printf("  ⚠ Browser check error: %v\n", err)
+						result.passed = false
+						result.reason = fmt.Sprintf("browser initialization failed: %v", err)
+						return result, nil
 					} else if len(browserResults) > 0 {
 						fmt.Print(FormatBrowserResults(browserResults))
 						for _, r := range browserResults {
@@ -587,7 +615,7 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 		// Run UI verification commands
 		for _, cmd := range cfg.Config.Verify.UI {
 			fmt.Printf("  → %s\n", cmd)
-			output, err := runCommand(cfg.ProjectRoot, cmd)
+			output, err := runCommand(cfg.ProjectRoot, cmd, cfg.Config.Verify.Timeout)
 			if err != nil {
 				result.passed = false
 				result.reason = fmt.Sprintf("%s failed: %v\n\n--- Output (last 50 lines) ---\n%s", cmd, err, output)
@@ -626,7 +654,7 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	var summaryLines []string
 	for _, cmd := range cfg.Config.Verify.Default {
 		fmt.Printf("  → %s\n", cmd)
-		output, err := runCommand(cfg.ProjectRoot, cmd)
+		output, err := runCommand(cfg.ProjectRoot, cmd, cfg.Config.Verify.Timeout)
 		if err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
 			verifyFailed = true
@@ -637,7 +665,7 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	}
 	for _, cmd := range cfg.Config.Verify.UI {
 		fmt.Printf("  → %s\n", cmd)
-		output, err := runCommand(cfg.ProjectRoot, cmd)
+		output, err := runCommand(cfg.ProjectRoot, cmd, cfg.Config.Verify.Timeout)
 		if err != nil {
 			fmt.Printf("  ✗ %s failed\n", cmd)
 			verifyFailed = true
@@ -662,6 +690,8 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 				if svcMgr.HasUIServices() {
 					if err := svcMgr.RestartForVerify(); err != nil {
 						fmt.Printf("    ⚠ Service restart failed: %v\n", err)
+						verifyFailed = true
+						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: service restart for %s (%v)", story.ID, err))
 						continue
 					}
 				}
@@ -672,7 +702,9 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 					// Interactive browser steps
 					browserResult, err := browser.RunSteps(story, baseURL)
 					if err != nil {
-						fmt.Printf("    ⚠ Browser error: %v\n", err)
+						fmt.Printf("    ✗ Browser error: %v\n", err)
+						verifyFailed = true
+						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (init: %v)", story.ID, err))
 					} else if browserResult != nil {
 						fmt.Print(FormatStepResult(browserResult))
 						if browserResult.Error != nil {
@@ -697,7 +729,9 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 					fmt.Println("    → Running browser checks (fallback)...")
 					browserResults, err := browser.RunChecks(story, baseURL)
 					if err != nil {
-						fmt.Printf("    ⚠ Browser check error: %v\n", err)
+						fmt.Printf("    ✗ Browser check error: %v\n", err)
+						verifyFailed = true
+						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (init: %v)", story.ID, err))
 					} else if len(browserResults) > 0 {
 						fmt.Print(FormatBrowserResults(browserResults))
 						hasFailed := false
@@ -750,6 +784,13 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 		} else {
 			summaryLines = append(summaryLines, fmt.Sprintf("WARN: %s was NOT modified on this branch — verify documentation is up to date", knowledgeFile))
 		}
+	}
+
+	// Check if test files were modified
+	if git.HasTestFileChanges() {
+		summaryLines = append(summaryLines, "PASS: test files were modified")
+	} else {
+		summaryLines = append(summaryLines, "WARN: no test files were modified on this branch — verify test coverage exists")
 	}
 
 	verifySummary := strings.Join(summaryLines, "\n")
@@ -841,15 +882,20 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	return nil
 }
 
-// runCommand runs a shell command, printing output and returning it with any error.
+// runCommand runs a shell command with a per-command timeout, printing output and returning it with any error.
 // The captured output (last maxOutputLines lines) is returned for diagnostic context.
-func runCommand(dir, cmdStr string) (string, error) {
-	cmd := exec.Command("sh", "-c", cmdStr)
+func runCommand(dir, cmdStr string, timeoutSec int) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Dir = dir
 	var buf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
 	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return truncateOutput(buf.String(), 50), fmt.Errorf("timed out after %ds", timeoutSec)
+	}
 	return truncateOutput(buf.String(), 50), err
 }
 

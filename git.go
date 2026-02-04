@@ -144,6 +144,52 @@ func (g *GitOps) GetDiffSummary() string {
 	return strings.TrimSpace(out)
 }
 
+// HasNewCommitSince returns true if HEAD is different from the given hash.
+func (g *GitOps) HasNewCommitSince(hash string) bool {
+	current := g.GetLastCommit()
+	return current != "" && current != hash
+}
+
+// IsWorkingTreeClean returns true if there are no uncommitted changes.
+// Includes untracked files — a dirty tree means provider left artifacts.
+func (g *GitOps) IsWorkingTreeClean() bool {
+	out, err := g.run("status", "--porcelain")
+	if err != nil {
+		return true // assume clean on error
+	}
+	return strings.TrimSpace(out) == ""
+}
+
+// GetChangedFiles returns the list of files changed from the default branch to HEAD.
+// Uses three-dot diff (merge-base) which is correct for feature branches.
+func (g *GitOps) GetChangedFiles() []string {
+	base := g.DefaultBranch()
+	out, err := g.run("diff", "--name-only", base+"...HEAD")
+	if err != nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\n")
+}
+
+// HasTestFileChanges returns true if any changed files look like test files.
+// Covers Go (_test.go), JS/TS (.test./.spec.), and Jest (__tests__/).
+func (g *GitOps) HasTestFileChanges() bool {
+	for _, f := range g.GetChangedFiles() {
+		lower := strings.ToLower(f)
+		if strings.Contains(lower, "_test.") ||
+			strings.Contains(lower, ".test.") ||
+			strings.Contains(lower, ".spec.") ||
+			strings.Contains(lower, "__tests__/") {
+			return true
+		}
+	}
+	return false
+}
+
 // run executes a git command and returns the output
 func (g *GitOps) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)

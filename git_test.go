@@ -251,3 +251,273 @@ func TestGitOps_HasFileChanged_SameBranch(t *testing.T) {
 		t.Error("expected no changes on same branch")
 	}
 }
+
+func TestGitOps_HasNewCommitSince(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	hash1 := git.GetLastCommit()
+
+	// Same hash → false
+	if git.HasNewCommitSince(hash1) {
+		t.Error("expected false when HEAD matches given hash")
+	}
+
+	// Make a new commit
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("data"), 0644)
+	run("add", "new.txt")
+	run("commit", "-m", "second commit")
+
+	// Different hash → true
+	if !git.HasNewCommitSince(hash1) {
+		t.Error("expected true after new commit")
+	}
+
+	// Empty hash input → true (current != "")
+	if !git.HasNewCommitSince("") {
+		t.Error("expected true when given empty hash")
+	}
+}
+
+func TestGitOps_IsWorkingTreeClean(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	// Clean repo → true
+	if !git.IsWorkingTreeClean() {
+		t.Error("expected clean working tree after init")
+	}
+
+	// Untracked file → false
+	os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("data"), 0644)
+	if git.IsWorkingTreeClean() {
+		t.Error("expected dirty with untracked file")
+	}
+
+	// Stage the file
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	run("add", "untracked.txt")
+	// Staged but not committed → false
+	if git.IsWorkingTreeClean() {
+		t.Error("expected dirty with staged but uncommitted file")
+	}
+
+	// Commit → clean
+	run("commit", "-m", "add file")
+	if !git.IsWorkingTreeClean() {
+		t.Error("expected clean after commit")
+	}
+}
+
+func TestGitOps_GetChangedFiles(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	// Same branch, no divergence → nil
+	files := git.GetChangedFiles()
+	if files != nil {
+		t.Errorf("expected nil on same branch, got %v", files)
+	}
+
+	// Create branch and add files
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	os.WriteFile(filepath.Join(dir, "file1.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(dir, "file2.go"), []byte("package main"), 0644)
+	run("add", ".")
+	run("commit", "-m", "add files")
+
+	files = git.GetChangedFiles()
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
+	}
+
+	// Delete README.md (which existed on main) and commit
+	os.Remove(filepath.Join(dir, "README.md"))
+	run("add", "README.md")
+	run("commit", "-m", "delete README")
+
+	// Deleted file from main should appear in the diff
+	files = git.GetChangedFiles()
+	found := false
+	for _, f := range files {
+		if f == "README.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected deleted README.md in changed files, got %v", files)
+	}
+}
+
+func TestGitOps_HasTestFileChanges(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	// No changes → false
+	if git.HasTestFileChanges() {
+		t.Error("expected false with no changes")
+	}
+
+	// Source files only → false
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
+	run("add", "main.go")
+	run("commit", "-m", "add source")
+	if git.HasTestFileChanges() {
+		t.Error("expected false with only source files")
+	}
+
+	// _test.go → true
+	os.WriteFile(filepath.Join(dir, "main_test.go"), []byte("package main"), 0644)
+	run("add", "main_test.go")
+	run("commit", "-m", "add Go test")
+	if !git.HasTestFileChanges() {
+		t.Error("expected true with _test.go file")
+	}
+}
+
+func TestGitOps_HasTestFileChanges_JSPatterns(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	// .test.ts file → true
+	os.WriteFile(filepath.Join(dir, "app.test.ts"), []byte("test"), 0644)
+	run("add", "app.test.ts")
+	run("commit", "-m", "add TS test")
+	if !git.HasTestFileChanges() {
+		t.Error("expected true with .test.ts file")
+	}
+}
+
+func TestGitOps_HasTestFileChanges_SpecPattern(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	os.WriteFile(filepath.Join(dir, "widget.spec.js"), []byte("test"), 0644)
+	run("add", "widget.spec.js")
+	run("commit", "-m", "add spec")
+	if !git.HasTestFileChanges() {
+		t.Error("expected true with .spec.js file")
+	}
+}
+
+func TestGitOps_HasTestFileChanges_TestsDir(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	os.MkdirAll(filepath.Join(dir, "__tests__"), 0755)
+	os.WriteFile(filepath.Join(dir, "__tests__", "app.js"), []byte("test"), 0644)
+	run("add", "__tests__/app.js")
+	run("commit", "-m", "add __tests__")
+	if !git.HasTestFileChanges() {
+		t.Error("expected true with __tests__/ file")
+	}
+}

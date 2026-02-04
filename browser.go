@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -18,6 +19,7 @@ type BrowserRunner struct {
 	projectRoot   string
 	browser       *rod.Browser
 	page          *rod.Page
+	mu            sync.Mutex // protects consoleErrors
 	consoleErrors []string
 }
 
@@ -86,7 +88,9 @@ func (br *BrowserRunner) RunSteps(story *UserStory, baseURL string) (*BrowserChe
 		}
 	}
 
-	result.ConsoleErrors = br.consoleErrors
+	br.mu.Lock()
+	result.ConsoleErrors = append([]string{}, br.consoleErrors...)
+	br.mu.Unlock()
 
 	return result, nil
 }
@@ -262,10 +266,22 @@ func (br *BrowserRunner) init() error {
 	}
 	br.page = page
 
-	// Listen for console errors
+	// Listen for console errors (uncaught exceptions)
 	br.consoleErrors = nil
 	go br.page.EachEvent(func(e *proto.RuntimeExceptionThrown) {
+		br.mu.Lock()
 		br.consoleErrors = append(br.consoleErrors, e.ExceptionDetails.Text)
+		br.mu.Unlock()
+	})()
+
+	// Listen for console.error() calls
+	go br.page.EachEvent(func(e *proto.RuntimeConsoleAPICalled) {
+		if e.Type == proto.RuntimeConsoleAPICalledTypeError {
+			msg := formatConsoleArgs(e.Args)
+			br.mu.Lock()
+			br.consoleErrors = append(br.consoleErrors, msg)
+			br.mu.Unlock()
+		}
 	})()
 
 	return nil
@@ -303,7 +319,9 @@ func (br *BrowserRunner) checkURL(url, storyID string) BrowserCheckResult {
 		return result
 	}
 
-	result.ConsoleErrors = br.consoleErrors
+	br.mu.Lock()
+	result.ConsoleErrors = append([]string{}, br.consoleErrors...)
+	br.mu.Unlock()
 
 	// Save screenshot
 	if len(buf) > 0 {
@@ -527,6 +545,22 @@ func FormatStepResult(result *BrowserCheckResult) string {
 	}
 
 	return sb.String()
+}
+
+// formatConsoleArgs converts RuntimeRemoteObject args to a readable string.
+func formatConsoleArgs(args []*proto.RuntimeRemoteObject) string {
+	var parts []string
+	for _, arg := range args {
+		if arg.Value.Raw() != nil {
+			parts = append(parts, fmt.Sprintf("%v", arg.Value.Val()))
+		} else if arg.Description != "" {
+			parts = append(parts, arg.Description)
+		}
+	}
+	if len(parts) == 0 {
+		return "console.error()"
+	}
+	return strings.Join(parts, " ")
 }
 
 // GetBaseURL extracts base URL from services config

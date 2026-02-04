@@ -616,6 +616,57 @@ func TestCheckReadinessWarnings_NoBtca(t *testing.T) {
 	}
 }
 
+func TestVerifyTimeoutDefault(t *testing.T) {
+	dir := t.TempDir()
+	configContent := `{
+		"provider": {"command": "amp"},
+		"verify": {"default": ["echo ok"]}
+	}`
+	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Config.Verify.Timeout != 300 {
+		t.Errorf("expected default verify.timeout=300, got %d", cfg.Config.Verify.Timeout)
+	}
+}
+
+func TestVerifyTimeoutExplicit(t *testing.T) {
+	dir := t.TempDir()
+	configContent := `{
+		"provider": {"command": "amp"},
+		"verify": {"default": ["echo ok"], "timeout": 600}
+	}`
+	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Config.Verify.Timeout != 600 {
+		t.Errorf("expected verify.timeout=600, got %d", cfg.Config.Verify.Timeout)
+	}
+}
+
+func TestVerifyTimeoutZero(t *testing.T) {
+	dir := t.TempDir()
+	configContent := `{
+		"provider": {"command": "amp"},
+		"verify": {"default": ["echo ok"], "timeout": 0}
+	}`
+	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Config.Verify.Timeout != 300 {
+		t.Errorf("expected default verify.timeout=300 for zero value, got %d", cfg.Config.Verify.Timeout)
+	}
+}
+
 func TestExtractBaseCommand(t *testing.T) {
 	tests := []struct {
 		input string

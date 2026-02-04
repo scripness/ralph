@@ -19,7 +19,7 @@ browser.go        Browser automation via rod (Chrome DevTools Protocol)
 prd.go            Interactive PRD state machine (create/refine/finalize)
 feature.go        Date-prefixed feature directory management (.ralph/YYYY-MM-DD-feature/)
 services.go       Dev server lifecycle, output capture, health checks
-git.go            Git operations (branch, commit, status)
+git.go            Git operations (branch, commit, status, working tree checks, test file detection)
 lock.go           Concurrency lock file (.ralph/ralph.lock)
 atomic.go         Atomic file writes (temp + rename)
 upgrade.go        Self-update via go-selfupdate (scripness/ralph)
@@ -163,7 +163,8 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
   ],
   "verify": {
     "default": ["bun run typecheck", "bun run lint", "bun run test:unit"],
-    "ui": ["bun run test:e2e"]
+    "ui": ["bun run test:e2e"],
+    "timeout": 300
   },
   "browser": {
     "enabled": true,
@@ -178,7 +179,7 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
 }
 ```
 
-`promptMode`, `promptFlag`, `args`, and `knowledgeFile` are auto-detected from `provider.command` if not set. Only `command` is required.
+`promptMode`, `promptFlag`, `args`, and `knowledgeFile` are auto-detected from `provider.command` if not set. Only `command` is required. `verify.timeout` sets the per-command timeout in seconds (default: 300).
 
 ## PRD Schema (v2)
 
@@ -220,6 +221,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Lock file**: JSON with pid/startedAt/feature/branch. Stale detection via `kill(pid, 0)`. Atomic creation via `O_CREATE|O_EXCL`.
 - **Feature directories**: `.ralph/YYYY-MM-DD-feature/` or `.ralph/YYYYMMDD-feature/` format. `FindFeatureDir` finds most recent match by suffix.
 - **Browser steps**: Defined in prd.json per story. Executed by rod in headless Chrome. Screenshots saved to `.ralph/screenshots/`.
+- **Console error capture**: BrowserRunner captures both `RuntimeExceptionThrown` (uncaught exceptions) and `RuntimeConsoleAPICalled` (`console.error()`) events. Access to `consoleErrors` is protected by `sync.Mutex` since event handlers run in goroutines.
 - **Console error enforcement**: Browser console errors are hard verification failures (not warnings). Checked in both per-story and final verification.
 - **Default branch detection**: `DefaultBranch()` tries `origin/HEAD` symbolic ref first, then falls back to checking if `main` or `master` branch exists locally.
 - **Process group killing**: Services are started with `Setpgid: true` so `syscall.Kill(-pid, SIGTERM)` kills the entire process group (including child processes).
@@ -236,6 +238,9 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Git diff in verify prompt**: `GetDiffSummary()` provides `git diff --stat` output from the default branch to HEAD, injected into the verify prompt as `diffSummary`.
 - **KnowledgeFile change detection**: `HasFileChanged()` in git.go checks if a file was modified on the current branch vs default branch using `git diff --name-only`. Used in final verification to report whether the knowledgeFile was updated.
 - **Criteria checklist**: `buildCriteriaChecklist()` in prompts.go generates a structured checkbox list of all non-blocked stories' acceptance criteria for the verify prompt.
+- **Commit-exists gate**: After provider signals DONE, CLI checks HEAD changed from pre-run snapshot (captured AFTER PRD commit to avoid false positives). No new commit = automatic retry counted toward maxRetries.
+- **Verify command timeout**: Each verify command has a configurable timeout (`verify.timeout`, default 300s). Prevents hanging test suites from blocking the loop indefinitely.
+- **Test file heuristic**: `HasTestFileChanges()` checks if any files matching test patterns (`*_test.*`, `*.test.*`, `*.spec.*`, `__tests__/`) were modified on the branch. Result is included as PASS/WARN in the verification summary.
 
 ## Prompt Template Variables
 
@@ -263,20 +268,24 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **Browser fallback in final verify**: Final verification runs browser checks for ALL UI stories, not just those with explicit `browserSteps`. Stories without steps get the `RunChecks` fallback (URL-based page load + console error detection).
 - **KnowledgeFile modification check**: Final verification checks whether the configured `knowledgeFile` (AGENTS.md/CLAUDE.md) was modified on the branch and reports WARN/PASS in the summary.
 - **Acceptance criteria checklist**: The verify prompt includes a structured checkbox checklist (`criteriaChecklist`) of every non-blocked story's acceptance criteria, making it harder for the verify agent to skip criteria checks.
+- **Browser init/restart failures fail verification**: Both per-story and final verification treat browser initialization errors and service restart failures as hard failures. Previously these were logged as warnings and silently continued.
+- **Provider must commit code to pass**: Signaling DONE without making a new git commit is treated as a failed attempt and counts toward maxRetries. The pre-run commit hash is captured AFTER the PRD state commit to avoid false positives.
+- **Working tree cleanliness is checked but not enforced**: Uncommitted files after provider finishes generate a warning but don't fail the story. This catches providers that left untracked or modified files.
+- **Test file heuristic in verify summary**: If no test files (`*_test.*`, `*.test.*`, `*.spec.*`, `__tests__/`) are modified on the branch, a WARN is included in the `verifySummary` for the verify agent to act on.
 
 ## Testing
 
 Tests are in `*_test.go` files alongside source. Key test files:
-- `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation, btca availability
+- `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation, btca availability, verify timeout defaults
 - `schema_test.go` - PRD validation, story state transitions, browser steps, learning deduplication, PRD quality
 - `services_test.go` - output capture, service manager, health checks
 - `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism
-- `loop_test.go` - marker detection, provider result parsing
+- `loop_test.go` - marker detection, provider result parsing, command timeout, runCommand
 - `feature_test.go` - directory parsing, timestamp formats
 - `lock_test.go` - lock acquisition, stale detection
-- `browser_test.go` - runner init, screenshot saving
+- `browser_test.go` - runner init, screenshot saving, console error mutex safety, formatConsoleArgs
 - `atomic_test.go` - atomic writes, JSON validation
-- `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, DefaultBranch, GetDiffSummary)
+- `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, DefaultBranch, GetDiffSummary, HasNewCommitSince, IsWorkingTreeClean, GetChangedFiles, HasTestFileChanges)
 - `update_check_test.go` - update check cache path
 
 Run with `go test ./...` or `go test -v ./...` for verbose output.

@@ -1,7 +1,11 @@
 package main
 
 import (
+	"sync"
 	"testing"
+
+	"github.com/go-rod/rod/lib/proto"
+	"github.com/ysmood/gson"
 )
 
 func TestExtractPath(t *testing.T) {
@@ -286,6 +290,106 @@ func TestFormatBrowserResults(t *testing.T) {
 	}
 	if !containsString(output, "TypeError: undefined") {
 		t.Error("expected output to contain console error")
+	}
+}
+
+func TestBrowserRunner_ConsoleErrorMutexSafety(t *testing.T) {
+	br := &BrowserRunner{
+		config: &BrowserConfig{Enabled: true},
+	}
+
+	var wg sync.WaitGroup
+
+	// 10 goroutines each writing 100 errors
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				br.mu.Lock()
+				br.consoleErrors = append(br.consoleErrors, "error")
+				br.mu.Unlock()
+			}
+		}(i)
+	}
+
+	// 10 goroutines each reading
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				br.mu.Lock()
+				_ = append([]string{}, br.consoleErrors...)
+				br.mu.Unlock()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	br.mu.Lock()
+	count := len(br.consoleErrors)
+	br.mu.Unlock()
+
+	if count != 1000 {
+		t.Errorf("expected 1000 errors, got %d", count)
+	}
+}
+
+func TestFormatConsoleArgs_Nil(t *testing.T) {
+	result := formatConsoleArgs(nil)
+	if result != "console.error()" {
+		t.Errorf("expected 'console.error()', got %q", result)
+	}
+}
+
+func TestFormatConsoleArgs_Empty(t *testing.T) {
+	result := formatConsoleArgs([]*proto.RuntimeRemoteObject{})
+	if result != "console.error()" {
+		t.Errorf("expected 'console.error()', got %q", result)
+	}
+}
+
+func TestFormatConsoleArgs_StringValue(t *testing.T) {
+	args := []*proto.RuntimeRemoteObject{
+		{Value: gson.NewFrom(`"hello world"`)},
+	}
+	result := formatConsoleArgs(args)
+	if result != "hello world" {
+		t.Errorf("expected 'hello world', got %q", result)
+	}
+}
+
+func TestFormatConsoleArgs_Description(t *testing.T) {
+	args := []*proto.RuntimeRemoteObject{
+		{Description: "Error: something broke"},
+	}
+	result := formatConsoleArgs(args)
+	if result != "Error: something broke" {
+		t.Errorf("expected 'Error: something broke', got %q", result)
+	}
+}
+
+func TestFormatConsoleArgs_Mixed(t *testing.T) {
+	args := []*proto.RuntimeRemoteObject{
+		{Value: gson.NewFrom(`"prefix"`)},
+		{Description: "Error object"},
+	}
+	result := formatConsoleArgs(args)
+	if result != "prefix Error object" {
+		t.Errorf("expected 'prefix Error object', got %q", result)
+	}
+}
+
+func TestFormatConsoleArgs_EmptyDescription(t *testing.T) {
+	// Arg with neither value nor description should be skipped
+	args := []*proto.RuntimeRemoteObject{
+		{},
+	}
+	result := formatConsoleArgs(args)
+	if result != "console.error()" {
+		t.Errorf("expected 'console.error()', got %q", result)
 	}
 }
 
