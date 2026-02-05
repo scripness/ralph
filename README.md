@@ -98,6 +98,9 @@ ralph status <feature>     # Show specific feature status
 ralph next <feature>       # Show next story to work on
 ralph validate <feature>   # Validate prd.json schema
 
+# Observability
+ralph logs <feature>       # View run logs (--list, --summary, --follow)
+
 # Utility
 ralph doctor               # Check environment + readiness
 ralph upgrade              # Update to latest version
@@ -111,10 +114,14 @@ project/
 └── .ralph/
     ├── 2024-01-15-auth/
     │   ├── prd.md             # Human-readable PRD
-    │   └── prd.json           # Finalized for execution
+    │   ├── prd.json           # Finalized for execution
+    │   └── logs/              # Run history (JSONL)
+    │       ├── run-001.jsonl
+    │       └── run-002.jsonl
     ├── 2024-01-20-billing/
     │   ├── prd.md
-    │   └── prd.json
+    │   ├── prd.json
+    │   └── logs/
     ├── screenshots/           # Browser verification evidence
     └── ralph.lock             # Prevents concurrent runs
 ```

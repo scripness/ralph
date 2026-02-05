@@ -264,6 +264,26 @@ func (l *RunLogger) IterationStart(storyID, title string, retries int) {
 	})
 }
 
+// StoryStart logs the start of a story (alias for more granular tracking)
+func (l *RunLogger) StoryStart(storyID, title string) {
+	l.logEvent(Event{
+		Type:    EventStoryStart,
+		StoryID: storyID,
+		Data: map[string]interface{}{
+			"title": title,
+		},
+	})
+}
+
+// StoryEnd logs the end of a story
+func (l *RunLogger) StoryEnd(storyID string, success bool) {
+	l.logEvent(Event{
+		Type:    EventStoryEnd,
+		StoryID: storyID,
+		Success: &success,
+	})
+}
+
 // IterationEnd logs the end of an iteration
 func (l *RunLogger) IterationEnd(success bool) {
 	duration := time.Since(l.iterationStart).Nanoseconds()
