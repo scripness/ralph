@@ -22,6 +22,7 @@ feature.go        Date-prefixed feature directory management (.ralph/YYYY-MM-DD-
 services.go       Dev server lifecycle, output capture, health checks
 git.go            Git operations (branch, commit, status, working tree checks, test file detection)
 lock.go           Concurrency lock file (.ralph/ralph.lock)
+cleanup.go        CleanupCoordinator for graceful signal handling and resource cleanup
 atomic.go         Atomic file writes (temp + rename)
 upgrade.go        Self-update via go-selfupdate (scripness/ralph)
 update_check.go   Background update check with 24h cache
@@ -237,11 +238,14 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Feature directories**: `.ralph/YYYY-MM-DD-feature/` or `.ralph/YYYYMMDD-feature/` format. `FindFeatureDir` finds most recent match by suffix.
 - **Browser steps**: Defined in prd.json per story. Executed by rod in headless Chrome. Screenshots saved to `.ralph/screenshots/`.
 - **Console error capture**: BrowserRunner captures both `RuntimeExceptionThrown` (uncaught exceptions) and `RuntimeConsoleAPICalled` (`console.error()`) events. Access to `consoleErrors` is protected by `sync.Mutex` since event handlers run in goroutines.
+- **Browser launcher cleanup**: BrowserRunner stores the `launcher.Launcher` reference and calls `launcher.Kill()` in `close()` to ensure the Chrome process is terminated. Error paths in `init()` also call `launcher.Kill()` to prevent orphaned processes.
 - **Console error enforcement**: Browser console errors are hard verification failures (not warnings). Checked in both per-story and final verification.
 - **Browser pre-download**: `EnsureBrowser()` pre-resolves the Chromium binary before the main loop. Uses `os.Stat` (not `Validate()`) for fast path (~1μs vs ~2s). Mutates `config.Browser.ExecutablePath` in-place on success; sets `Enabled=false` on download failure to prevent silent per-story retry. Gated on UI stories — skips entirely if no stories have the "ui" tag. `CheckBrowserStatus()` provides read-only status for `cmdDoctor`.
 - **Default branch detection**: `DefaultBranch()` tries `origin/HEAD` symbolic ref first, then falls back to checking if `main` or `master` branch exists locally.
-- **Process group killing**: Services are started with `Setpgid: true` so `syscall.Kill(-pid, SIGTERM)` kills the entire process group (including child processes).
-- **Service ready checks**: HTTP GET polling every 500ms until status < 500, with configurable timeout.
+- **Process group killing**: Services and provider subprocesses are started with `Setpgid: true` so `syscall.Kill(-pid, SIGTERM)` kills the entire process group (including child processes). This prevents orphaned processes on timeout or signal.
+- **CleanupCoordinator**: Signal handlers use a `CleanupCoordinator` that resources register with when created. On SIGINT/SIGTERM, the coordinator kills provider process groups, stops services, logs run end, and releases locks — all before calling `os.Exit(130)`. This ensures cleanup happens even when defer statements would be bypassed.
+- **Service ready checks**: HTTP GET polling every 500ms until status < 500, with configurable timeout. ServiceManager reuses a single `http.Client` instance to avoid repeated allocations.
+- **Idempotent StopAll**: `ServiceManager.StopAll()` sets `processes` to nil after stopping, making it safe to call multiple times (e.g., from both defer and signal handler).
 - **Service output capture**: `capturedOutput` trim buffer (keeps last ~50% on overflow) captures service stdout/stderr via `io.MultiWriter`. Available via `GetRecentOutput()` for diagnostics.
 - **Service health checks**: `CheckServiceHealth()` polls service ready URLs during verification to detect crashed/unresponsive services.
 - **Readiness gates**: `CheckReadiness()` in config.go validates QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`) before allowing `ralph run` or `ralph verify`. Covers `verify.default`, `verify.ui`, and service `start` commands. Placeholder echo commands are detected separately.
@@ -304,6 +308,7 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `feature_test.go` - directory parsing, timestamp formats
 - `lock_test.go` - lock acquisition, stale detection
 - `browser_test.go` - runner init, screenshot saving, console error mutex safety, formatConsoleArgs
+- `cleanup_test.go` - CleanupCoordinator idempotency, nil resource handling
 - `atomic_test.go` - atomic writes, JSON validation
 - `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, DefaultBranch, GetDiffSummary, HasNewCommitSince, IsWorkingTreeClean, GetChangedFiles, HasTestFileChanges)
 - `update_check_test.go` - update check cache path

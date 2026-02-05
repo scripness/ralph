@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
 // runPrdStateMachine runs the smart PRD workflow
@@ -236,6 +237,7 @@ func (c *Command) Run() error {
 	if c.dir != "" {
 		cmd.Dir = c.dir
 	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

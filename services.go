@@ -56,6 +56,7 @@ type ServiceManager struct {
 	services    []ServiceConfig
 	processes   map[string]*exec.Cmd
 	outputs     map[string]*capturedOutput
+	httpClient  *http.Client
 }
 
 // NewServiceManager creates a new service manager
@@ -65,6 +66,7 @@ func NewServiceManager(projectRoot string, services []ServiceConfig) *ServiceMan
 		services:    services,
 		processes:   make(map[string]*exec.Cmd),
 		outputs:     make(map[string]*capturedOutput),
+		httpClient:  &http.Client{Timeout: 2 * time.Second},
 	}
 }
 
@@ -91,8 +93,11 @@ func (sm *ServiceManager) RestartForVerify() error {
 	return nil
 }
 
-// StopAll stops all managed services
+// StopAll stops all managed services. Safe to call multiple times (idempotent).
 func (sm *ServiceManager) StopAll() {
+	if sm.processes == nil {
+		return // Already stopped
+	}
 	for name, cmd := range sm.processes {
 		if cmd.Process != nil {
 			fmt.Printf("Stopping service: %s\n", name)
@@ -111,7 +116,7 @@ func (sm *ServiceManager) StopAll() {
 			}
 		}
 	}
-	sm.processes = make(map[string]*exec.Cmd)
+	sm.processes = nil // Mark as stopped
 }
 
 // ensureServiceRunning ensures a single service is running
@@ -136,7 +141,9 @@ func (sm *ServiceManager) ensureServiceRunning(svc ServiceConfig) error {
 func (sm *ServiceManager) startService(svc ServiceConfig) error {
 	// Stop if already running
 	if cmd, exists := sm.processes[svc.Name]; exists && cmd.Process != nil {
-		cmd.Process.Kill()
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		time.Sleep(time.Second)
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		cmd.Wait()
 	}
 
@@ -215,8 +222,7 @@ func (sm *ServiceManager) waitForReady(svc ServiceConfig) error {
 
 // isReady checks if a URL is responding
 func (sm *ServiceManager) isReady(url string) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := sm.httpClient.Get(url)
 	if err != nil {
 		return false
 	}

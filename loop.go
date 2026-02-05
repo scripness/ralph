@@ -57,11 +57,15 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		return err
 	}
 
+	// Create cleanup coordinator early for signal handling
+	cleanup := NewCleanupCoordinator()
+
 	// Initialize logger
 	logger, err := NewRunLogger(featureDir.Path, cfg.Config.Logging)
 	if err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
+	cleanup.SetLogger(logger)
 	defer logger.Close()
 
 	// Acquire lock
@@ -69,6 +73,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	if err := lock.Acquire(featureDir.Feature, prd.BranchName); err != nil {
 		return err
 	}
+	cleanup.SetLock(lock)
 	defer lock.Release()
 
 	// Setup signal handling for graceful shutdown
@@ -76,10 +81,8 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\n\nInterrupted. Releasing lock and exiting...")
-		logger.RunEnd(false, "interrupted by signal")
-		logger.Close()
-		lock.Release()
+		fmt.Println("\n\nInterrupted. Cleaning up and exiting...")
+		cleanup.Cleanup()
 		os.Exit(130)
 	}()
 
@@ -113,6 +116,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	// Initialize service manager
 	svcMgr := NewServiceManager(cfg.ProjectRoot, cfg.Config.Services)
+	cleanup.SetServiceManager(svcMgr)
 	defer svcMgr.StopAll()
 
 	// Start services if configured
@@ -156,7 +160,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			fmt.Println(strings.Repeat("=", 60))
 
 			// Run final verification
-			verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr, logger)
+			verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr, logger, cleanup)
 			if err != nil {
 				logger.Error("final verification error", err)
 				logger.RunEnd(false, "final verification error")
@@ -238,7 +242,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		// Generate and send prompt
 		prompt := generateRunPrompt(cfg, featureDir, prd, story)
 		logger.ProviderStart()
-		result, err := runProvider(cfg, prompt, logger)
+		result, err := runProvider(cfg, prompt, logger, cleanup)
 
 		// Collect markers for logging
 		var detectedMarkers []string
@@ -438,7 +442,7 @@ func buildProviderArgs(baseArgs []string, promptMode, promptFlag, prompt string)
 }
 
 // runProvider runs the provider with the given prompt
-func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger) (*ProviderResult, error) {
+func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger, cleanup *CleanupCoordinator) (*ProviderResult, error) {
 	timeout := time.Duration(cfg.Config.Provider.Timeout) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -452,6 +456,7 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger) (*Provid
 	cmd := exec.CommandContext(ctx, cfg.Config.Provider.Command, args...)
 	cmd.Dir = cfg.ProjectRoot
 	cmd.Env = os.Environ()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	// Setup stdin pipe for stdin mode
 	var stdinPipe io.WriteCloser
@@ -487,6 +492,12 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger) (*Provid
 			os.Remove(promptFile)
 		}
 		return nil, fmt.Errorf("failed to start provider: %w", err)
+	}
+
+	// Register provider with cleanup coordinator for signal handling
+	if cleanup != nil {
+		cleanup.SetProvider(cmd)
+		defer cleanup.ClearProvider()
 	}
 
 	// Cleanup prompt file when done (for file mode)
@@ -544,7 +555,9 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger) (*Provid
 
 	// Check for timeout
 	if ctx.Err() == context.DeadlineExceeded {
-		cmd.Process.Kill()
+		if cmd.Process != nil {
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
 		result.TimedOut = true
 		result.Output = outputBuilder.String()
 		// Log provider output even on timeout
@@ -806,7 +819,7 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 }
 
 // runFinalVerification runs final verification and handles story resets
-func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svcMgr *ServiceManager, logger *RunLogger) (bool, error) {
+func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svcMgr *ServiceManager, logger *RunLogger, cleanup *CleanupCoordinator) (bool, error) {
 	prdPath := featureDir.PrdJsonPath()
 
 	logger.VerifyStart()
@@ -994,7 +1007,7 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	// Send verification prompt to provider
 	prompt := generateVerifyPrompt(cfg, featureDir, prd, verifySummary)
 	logger.ProviderStart()
-	result, err := runProvider(cfg, prompt, logger)
+	result, err := runProvider(cfg, prompt, logger, cleanup)
 
 	// Collect markers for logging
 	var detectedMarkers []string
@@ -1079,17 +1092,32 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		return err
 	}
 
+	// Create cleanup coordinator for signal handling
+	cleanup := NewCleanupCoordinator()
+
 	// Initialize logger
 	logger, err := NewRunLogger(featureDir.Path, cfg.Config.Logging)
 	if err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
+	cleanup.SetLogger(logger)
 	defer logger.Close()
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Println("\n\nInterrupted. Cleaning up and exiting...")
+		cleanup.Cleanup()
+		os.Exit(130)
+	}()
 
 	logger.RunStart(featureDir.Feature, prd.BranchName, len(prd.UserStories))
 
 	// Start services for browser verification
 	svcMgr := NewServiceManager(cfg.ProjectRoot, cfg.Config.Services)
+	cleanup.SetServiceManager(svcMgr)
 	defer svcMgr.StopAll()
 	if svcMgr.HasServices() {
 		logger.LogPrintln("Starting services...")
@@ -1110,7 +1138,7 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	// Pre-resolve browser binary (downloads Chromium if needed)
 	EnsureBrowser(cfg.Config.Browser, prd)
 
-	verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr, logger)
+	verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr, logger, cleanup)
 	if err != nil {
 		logger.RunEnd(false, "verification error")
 		return err

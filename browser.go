@@ -17,6 +17,7 @@ import (
 type BrowserRunner struct {
 	config        *BrowserConfig
 	projectRoot   string
+	launcher      *launcher.Launcher
 	browser       *rod.Browser
 	page          *rod.Page
 	mu            sync.Mutex // protects consoleErrors
@@ -255,13 +256,19 @@ func (br *BrowserRunner) init() error {
 		return fmt.Errorf("failed to launch browser: %w", err)
 	}
 
+	// Store launcher reference for cleanup
+	br.launcher = l
+
 	br.browser = rod.New().ControlURL(controlURL)
 	if err := br.browser.Connect(); err != nil {
+		l.Kill() // Cleanup on error
 		return fmt.Errorf("failed to connect to browser: %w", err)
 	}
 
 	page, err := br.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
 	if err != nil {
+		br.browser.Close() // Cleanup on error
+		l.Kill()
 		return fmt.Errorf("failed to create page: %w", err)
 	}
 	br.page = page
@@ -291,6 +298,9 @@ func (br *BrowserRunner) init() error {
 func (br *BrowserRunner) close() {
 	if br.browser != nil {
 		br.browser.Close()
+	}
+	if br.launcher != nil {
+		br.launcher.Kill()
 	}
 }
 
