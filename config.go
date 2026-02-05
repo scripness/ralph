@@ -80,6 +80,7 @@ type RalphConfig struct {
 	Verify     VerifyConfig     `json:"verify"`
 	Browser    *BrowserConfig   `json:"browser,omitempty"`
 	Commits    *CommitsConfig   `json:"commits,omitempty"`
+	Logging    *LoggingConfig   `json:"logging,omitempty"`
 }
 
 // ResolvedConfig is the fully resolved configuration
@@ -132,6 +133,9 @@ func LoadConfig(projectRoot string) (*ResolvedConfig, error) {
 			PrdChanges: true,
 			Message:    "chore: update prd.json",
 		}
+	}
+	if cfg.Logging == nil {
+		cfg.Logging = DefaultLoggingConfig()
 	}
 
 	// Apply service defaults

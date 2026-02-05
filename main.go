@@ -42,6 +42,8 @@ func main() {
 		cmdValidate(args)
 	case "doctor":
 		cmdDoctor(args)
+	case "logs":
+		cmdLogs(args)
 	case "upgrade":
 		cmdUpgrade(args)
 	default:
@@ -64,6 +66,7 @@ Commands:
   status [feature]     Show story status (all features or specific)
   next <feature>       Show the next story to work on
   validate <feature>   Validate prd.json schema
+  logs <feature>       View run logs (--list, --summary, --follow, etc.)
   doctor               Check Ralph environment
   upgrade              Upgrade Ralph to the latest version
 

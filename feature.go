@@ -189,3 +189,8 @@ func (fd *FeatureDir) PrdJsonPath() string {
 func (fd *FeatureDir) EnsureExists() error {
 	return os.MkdirAll(fd.Path, 0755)
 }
+
+// LogsDir returns the path to the logs directory
+func (fd *FeatureDir) LogsDir() string {
+	return filepath.Join(fd.Path, "logs")
+}

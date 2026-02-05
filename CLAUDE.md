@@ -10,11 +10,12 @@ The core idea ("the Ralph Pattern"): break work into small user stories, spawn f
 
 ```
 main.go           CLI entry point, command dispatch
-commands.go       Command handlers (init, run, verify, prd, status, next, validate, doctor); doctor checks lock status
+commands.go       Command handlers (init, run, verify, prd, status, next, validate, doctor, logs); doctor checks lock status
 config.go         Configuration loading, validation, provider defaults, readiness checks
 schema.go         PRD data structures, story state machine, validation, PRD quality checks
 prompts.go        Prompt template loading + variable substitution (//go:embed prompts/*)
 loop.go           Main agent loop, provider subprocess management, verification orchestration
+logger.go         JSONL event logging, run history, timestamped console output
 browser.go        Browser automation via rod (Chrome DevTools Protocol)
 prd.go            Interactive PRD state machine (create/refine/finalize)
 feature.go        Date-prefixed feature directory management (.ralph/YYYY-MM-DD-feature/)
@@ -57,6 +58,14 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
    - When all stories pass -> final verification (verify commands + browser verification for all UI stories + service health) -> provider reviews -> `VERIFIED` or `RESET`
    - Learnings are saved on every path (including timeout/error)
 4. `ralph verify <feature>` runs verification only (same readiness gates, starts services for browser verification)
+5. `ralph logs <feature>` views run history and logs:
+   - `--list` shows all runs with timestamps and outcomes
+   - `--summary` shows detailed summary of latest run (stories, durations, verification results)
+   - `--run N` views a specific run number
+   - `--follow` tails the log in real-time (like `tail -f`)
+   - `--type TYPE` filters by event type (e.g., `error`, `warning`, `marker_detected`)
+   - `--story ID` filters events for a specific story
+   - `--json` outputs raw JSONL for piping to other tools
 
 ## Responsibility Split: CLI vs AI Provider
 
@@ -175,11 +184,17 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
   "commits": {
     "prdChanges": true,
     "message": "chore: update prd.json"
+  },
+  "logging": {
+    "enabled": true,
+    "maxRuns": 10,
+    "consoleTimestamps": true,
+    "consoleDurations": true
   }
 }
 ```
 
-`promptMode`, `promptFlag`, `args`, and `knowledgeFile` are auto-detected from `provider.command` if not set. Only `command` is required. `verify.timeout` sets the per-command timeout in seconds (default: 300).
+`promptMode`, `promptFlag`, `args`, and `knowledgeFile` are auto-detected from `provider.command` if not set. Only `command` is required. `verify.timeout` sets the per-command timeout in seconds (default: 300). `logging` controls the observability system (all options default to shown values).
 
 ## PRD Schema (v2)
 
@@ -242,6 +257,9 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Commit-exists gate**: After provider signals DONE, CLI checks HEAD changed from pre-run snapshot (captured AFTER PRD commit to avoid false positives). No new commit = automatic retry counted toward maxRetries.
 - **Verify command timeout**: Each verify command has a configurable timeout (`verify.timeout`, default 300s). Prevents hanging test suites from blocking the loop indefinitely.
 - **Test file heuristic**: `HasTestFileChanges()` checks if any files matching test patterns (`*_test.*`, `*.test.*`, `*.spec.*`, `__tests__/`) were modified on the branch. Result is included as PASS/WARN in the verification summary.
+- **Run logging**: `RunLogger` in logger.go writes JSONL event logs to `.ralph/YYYY-MM-DD-feature/logs/run-NNN.jsonl`. Events include timestamps, durations, story context, and full provider/verification output. Logs are auto-rotated to keep only `maxRuns` most recent.
+- **Timestamped console output**: When `logging.consoleTimestamps` is true, status lines are prefixed with `[HH:MM:SS]`. Provider output passes through raw (no timestamps on AI output lines).
+- **Event types**: `run_start`, `run_end`, `iteration_start/end`, `provider_start/end`, `provider_output`, `marker_detected`, `verify_start/end`, `verify_cmd_start/end`, `browser_start/end`, `service_start/ready/restart/health`, `state_change`, `learning`, `warning`, `error`.
 
 ## Prompt Template Variables
 
@@ -289,6 +307,7 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `atomic_test.go` - atomic writes, JSON validation
 - `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, DefaultBranch, GetDiffSummary, HasNewCommitSince, IsWorkingTreeClean, GetChangedFiles, HasTestFileChanges)
 - `update_check_test.go` - update check cache path
+- `logger_test.go` - event logging, run numbering, log rotation, event filtering, run summaries
 
 Run with `go test ./...` or `go test -v ./...` for verbose output.
 

@@ -1,9 +1,15 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 func checkProviderAvailable(cfg *ResolvedConfig) {
@@ -59,6 +65,7 @@ func cmdInit(args []string) {
 ralph.lock
 *.tmp
 screenshots/
+*/logs/
 `
 	if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write .gitignore: %v\n", err)
@@ -576,5 +583,427 @@ func cmdDoctor(args []string) {
 		os.Exit(1)
 	} else {
 		fmt.Println("All checks passed.")
+	}
+}
+
+func cmdLogs(args []string) {
+	fs := flag.NewFlagSet("logs", flag.ExitOnError)
+	runNum := fs.Int("run", 0, "Show specific run number (default: latest)")
+	listRuns := fs.Bool("list", false, "List all runs with summary")
+	tail := fs.Int("tail", 50, "Show last N events")
+	follow := fs.Bool("follow", false, "Follow log in real-time")
+	eventType := fs.String("type", "", "Filter by event type")
+	storyID := fs.String("story", "", "Filter by story ID")
+	jsonOutput := fs.Bool("json", false, "Output raw JSONL")
+	summaryMode := fs.Bool("summary", false, "Show run summary only")
+
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: ralph logs <feature> [options]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Options:")
+		fs.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  ralph logs auth                    # Latest run, last 50 events")
+		fmt.Fprintln(os.Stderr, "  ralph logs auth --list             # List all runs")
+		fmt.Fprintln(os.Stderr, "  ralph logs auth --run 2            # Show run #2")
+		fmt.Fprintln(os.Stderr, "  ralph logs auth --follow           # Watch current run live")
+		fmt.Fprintln(os.Stderr, "  ralph logs auth --type error       # Show only errors")
+		fmt.Fprintln(os.Stderr, "  ralph logs auth --story US-001     # Events for specific story")
+		fmt.Fprintln(os.Stderr, "  ralph logs auth --summary          # Quick summary of latest run")
+	}
+
+	// Find feature argument before flags
+	var feature string
+	var flagArgs []string
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			flagArgs = args[i:]
+			break
+		}
+		if feature == "" {
+			feature = arg
+		}
+	}
+	if feature == "" && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		feature = args[0]
+		flagArgs = args[1:]
+	}
+
+	if feature == "" {
+		fmt.Fprintln(os.Stderr, "Usage: ralph logs <feature> [options]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Example: ralph logs auth")
+		os.Exit(1)
+	}
+
+	fs.Parse(flagArgs)
+
+	projectRoot := GetProjectRoot()
+	featureDir, err := FindFeatureDir(projectRoot, feature, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	runs, err := ListRuns(featureDir.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading logs: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(runs) == 0 {
+		fmt.Printf("No logs found for feature '%s'\n", feature)
+		fmt.Printf("Run 'ralph run %s' to create logs.\n", feature)
+		return
+	}
+
+	// --list mode: show all runs
+	if *listRuns {
+		fmt.Printf("Runs for feature '%s':\n\n", feature)
+		for _, run := range runs {
+			status := "○"
+			if run.Success != nil {
+				if *run.Success {
+					status = "✓"
+				} else {
+					status = "✗"
+				}
+			}
+
+			duration := ""
+			if run.EndTime != nil {
+				d := run.EndTime.Sub(run.StartTime)
+				duration = fmt.Sprintf(" (%s)", FormatDuration(d))
+			}
+
+			fmt.Printf("  %s Run #%d - %s%s\n", status, run.RunNumber,
+				run.StartTime.Format("2006-01-02 15:04:05"), duration)
+			if run.Summary != "" {
+				fmt.Printf("    └─ %s\n", run.Summary)
+			}
+		}
+		return
+	}
+
+	// Find the target run
+	var targetRun *RunSummary
+	if *runNum > 0 {
+		for i := range runs {
+			if runs[i].RunNumber == *runNum {
+				targetRun = &runs[i]
+				break
+			}
+		}
+		if targetRun == nil {
+			fmt.Fprintf(os.Stderr, "Run #%d not found\n", *runNum)
+			os.Exit(1)
+		}
+	} else {
+		// Default to latest run
+		targetRun = &runs[0]
+	}
+
+	// --summary mode: show detailed summary
+	if *summaryMode {
+		printRunSummary(targetRun.LogPath, feature)
+		return
+	}
+
+	// --follow mode: tail the log file
+	if *follow {
+		followLog(targetRun.LogPath, *eventType, *storyID, *jsonOutput)
+		return
+	}
+
+	// Default: show last N events
+	printEvents(targetRun.LogPath, *tail, *eventType, *storyID, *jsonOutput)
+}
+
+func printRunSummary(logPath, feature string) {
+	summary, err := GetRunSummary(logPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading log: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Run #%d - %s\n", summary.RunNumber, summary.StartTime.Format("2006-01-02 15:04:05"))
+	if summary.Duration != nil {
+		fmt.Printf("Duration: %s\n", FormatDuration(*summary.Duration))
+	}
+	if summary.Success != nil {
+		result := "FAILED"
+		if *summary.Success {
+			result = "VERIFIED"
+		}
+		fmt.Printf("Result: %s\n", result)
+	}
+	if summary.Result != "" {
+		fmt.Printf("Summary: %s\n", summary.Result)
+	}
+
+	fmt.Println()
+	fmt.Printf("Stories: %d total\n", len(summary.Stories))
+	for _, story := range summary.Stories {
+		status := "○"
+		if story.Success != nil {
+			if *story.Success {
+				status = "✓"
+			} else {
+				status = "✗"
+			}
+		}
+		duration := ""
+		if story.Duration != nil {
+			duration = fmt.Sprintf(" (%s", FormatDuration(*story.Duration))
+			if story.Retries > 0 {
+				duration += fmt.Sprintf(", %d retries", story.Retries)
+			}
+			duration += ")"
+		} else if story.Retries > 0 {
+			duration = fmt.Sprintf(" (%d retries)", story.Retries)
+		}
+		fmt.Printf("  %s %s: %s%s\n", status, story.ID, story.Title, duration)
+	}
+
+	if len(summary.VerifyResults) > 0 {
+		fmt.Println()
+		fmt.Println("Verification:")
+		for _, v := range summary.VerifyResults {
+			status := "✓"
+			if !v.Success {
+				status = "✗"
+			}
+			fmt.Printf("  %s %s (%s)\n", status, v.Command, FormatDuration(v.Duration))
+		}
+	}
+
+	fmt.Println()
+	if len(summary.Learnings) > 0 {
+		fmt.Printf("Learnings captured: %d\n", len(summary.Learnings))
+	}
+	fmt.Printf("Warnings: %d\n", summary.Warnings)
+	fmt.Printf("Errors: %d\n", summary.Errors)
+}
+
+func printEvents(logPath string, tailN int, eventTypeFilter, storyFilter string, jsonOutput bool) {
+	events, err := ReadEvents(logPath, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading log: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Apply filters
+	var filtered []Event
+	for _, e := range events {
+		if eventTypeFilter != "" && string(e.Type) != eventTypeFilter {
+			continue
+		}
+		if storyFilter != "" && e.StoryID != storyFilter {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+
+	// Take last N
+	if len(filtered) > tailN {
+		filtered = filtered[len(filtered)-tailN:]
+	}
+
+	for _, e := range filtered {
+		if jsonOutput {
+			data, _ := json.Marshal(e)
+			fmt.Println(string(data))
+		} else {
+			printEvent(&e)
+		}
+	}
+}
+
+func printEvent(e *Event) {
+	timestamp := e.Timestamp.Format("15:04:05")
+
+	// Format based on event type
+	switch e.Type {
+	case EventRunStart:
+		feature, _ := e.Data["feature"].(string)
+		fmt.Printf("[%s] === Run started: %s ===\n", timestamp, feature)
+
+	case EventRunEnd:
+		result := "failed"
+		if e.Success != nil && *e.Success {
+			result = "success"
+		}
+		fmt.Printf("[%s] === Run ended: %s ===\n", timestamp, result)
+		if e.Message != "" {
+			fmt.Printf("         %s\n", e.Message)
+		}
+
+	case EventIterationStart:
+		title, _ := e.Data["title"].(string)
+		fmt.Printf("[%s] ─── Iteration %d: %s - %s ───\n", timestamp, e.Iteration, e.StoryID, title)
+
+	case EventIterationEnd:
+		status := "✗"
+		if e.Success != nil && *e.Success {
+			status = "✓"
+		}
+		duration := ""
+		if e.Duration != nil {
+			duration = fmt.Sprintf(" (%s)", FormatDuration(time.Duration(*e.Duration)))
+		}
+		fmt.Printf("[%s] %s Iteration %d complete%s\n", timestamp, status, e.Iteration, duration)
+
+	case EventProviderStart:
+		fmt.Printf("[%s] → Provider started\n", timestamp)
+
+	case EventProviderEnd:
+		status := "✗"
+		if e.Success != nil && *e.Success {
+			status = "✓"
+		}
+		duration := ""
+		if e.Duration != nil {
+			duration = fmt.Sprintf(" (%s)", FormatDuration(time.Duration(*e.Duration)))
+		}
+		markers := ""
+		if m, ok := e.Data["markers"].([]interface{}); ok && len(m) > 0 {
+			var ms []string
+			for _, v := range m {
+				if s, ok := v.(string); ok {
+					ms = append(ms, s)
+				}
+			}
+			markers = fmt.Sprintf(" [%s]", strings.Join(ms, ", "))
+		}
+		fmt.Printf("[%s] %s Provider complete%s%s\n", timestamp, status, duration, markers)
+
+	case EventMarkerDetected:
+		marker, _ := e.Data["marker"].(string)
+		value, _ := e.Data["value"].(string)
+		if value != "" {
+			fmt.Printf("[%s]   ◆ %s: %s\n", timestamp, marker, value)
+		} else {
+			fmt.Printf("[%s]   ◆ %s\n", timestamp, marker)
+		}
+
+	case EventVerifyStart:
+		fmt.Printf("[%s] → Verification started\n", timestamp)
+
+	case EventVerifyEnd:
+		status := "✗"
+		if e.Success != nil && *e.Success {
+			status = "✓"
+		}
+		duration := ""
+		if e.Duration != nil {
+			duration = fmt.Sprintf(" (%s)", FormatDuration(time.Duration(*e.Duration)))
+		}
+		fmt.Printf("[%s] %s Verification complete%s\n", timestamp, status, duration)
+
+	case EventVerifyCmdStart:
+		cmd, _ := e.Data["cmd"].(string)
+		fmt.Printf("[%s]   → %s\n", timestamp, cmd)
+
+	case EventVerifyCmdEnd:
+		cmd, _ := e.Data["cmd"].(string)
+		status := "✗"
+		if e.Success != nil && *e.Success {
+			status = "✓"
+		}
+		duration := ""
+		if e.Duration != nil {
+			duration = fmt.Sprintf(" (%s)", FormatDuration(time.Duration(*e.Duration)))
+		}
+		fmt.Printf("[%s]   %s %s%s\n", timestamp, status, cmd, duration)
+
+	case EventServiceStart:
+		name, _ := e.Data["name"].(string)
+		fmt.Printf("[%s] → Service starting: %s\n", timestamp, name)
+
+	case EventServiceReady:
+		name, _ := e.Data["name"].(string)
+		duration := ""
+		if e.Duration != nil {
+			duration = fmt.Sprintf(" (%s)", FormatDuration(time.Duration(*e.Duration)))
+		}
+		fmt.Printf("[%s] ✓ Service ready: %s%s\n", timestamp, name, duration)
+
+	case EventStateChange:
+		from, _ := e.Data["from"].(string)
+		to, _ := e.Data["to"].(string)
+		fmt.Printf("[%s] ↔ State: %s → %s\n", timestamp, from, to)
+
+	case EventLearning:
+		fmt.Printf("[%s] 📝 Learning: %s\n", timestamp, e.Message)
+
+	case EventWarning:
+		fmt.Printf("[%s] ⚠ Warning: %s\n", timestamp, e.Message)
+
+	case EventError:
+		fmt.Printf("[%s] ✗ Error: %s\n", timestamp, e.Message)
+		if errMsg, ok := e.Data["error"].(string); ok {
+			fmt.Printf("         %s\n", errMsg)
+		}
+
+	default:
+		fmt.Printf("[%s] %s", timestamp, e.Type)
+		if e.StoryID != "" {
+			fmt.Printf(" [%s]", e.StoryID)
+		}
+		if e.Message != "" {
+			fmt.Printf(": %s", e.Message)
+		}
+		fmt.Println()
+	}
+}
+
+func followLog(logPath, eventTypeFilter, storyFilter string, jsonOutput bool) {
+	file, err := os.Open(logPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening log: %v\n", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	// Seek to end
+	file.Seek(0, io.SeekEnd)
+
+	fmt.Printf("Following %s (Ctrl+C to stop)\n\n", logPath)
+
+	reader := bufio.NewReader(file)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			return
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		var event Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		// Apply filters
+		if eventTypeFilter != "" && string(event.Type) != eventTypeFilter {
+			continue
+		}
+		if storyFilter != "" && event.StoryID != storyFilter {
+			continue
+		}
+
+		if jsonOutput {
+			fmt.Println(line)
+		} else {
+			printEvent(&event)
+		}
 	}
 }

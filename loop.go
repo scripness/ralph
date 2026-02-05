@@ -57,6 +57,13 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		return err
 	}
 
+	// Initialize logger
+	logger, err := NewRunLogger(featureDir.Path, cfg.Config.Logging)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	defer logger.Close()
+
 	// Acquire lock
 	lock := NewLockFile(cfg.ProjectRoot)
 	if err := lock.Acquire(featureDir.Feature, prd.BranchName); err != nil {
@@ -70,13 +77,20 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	go func() {
 		<-sigChan
 		fmt.Println("\n\nInterrupted. Releasing lock and exiting...")
+		logger.RunEnd(false, "interrupted by signal")
+		logger.Close()
 		lock.Release()
 		os.Exit(130)
 	}()
 
+	// Log run start
+	logger.RunStart(featureDir.Feature, prd.BranchName, len(prd.UserStories))
+
 	// Ensure we're on the correct branch
-	fmt.Printf("Ensuring branch: %s\n", prd.BranchName)
+	logger.LogPrintln("Ensuring branch:", prd.BranchName)
 	if err := git.EnsureBranch(prd.BranchName); err != nil {
+		logger.Error("failed to switch branch", err)
+		logger.RunEnd(false, "branch switch failed")
 		return fmt.Errorf("failed to switch to branch %s: %w", prd.BranchName, err)
 	}
 
@@ -87,6 +101,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	fmt.Printf(" Branch: %s\n", prd.BranchName)
 	fmt.Printf(" PRD: %s\n", prdPath)
 	fmt.Printf(" Project root: %s\n", cfg.ProjectRoot)
+	if logger.LogPath() != "" {
+		fmt.Printf(" Run: #%d (logs: %s)\n", logger.RunNumber(), logger.LogPath())
+	}
 	fmt.Println(strings.Repeat("=", 60))
 
 	// Check for crash recovery - if currentStoryId is set, we were interrupted
@@ -100,9 +117,18 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	// Start services if configured
 	if svcMgr.HasServices() {
-		fmt.Println("\nStarting services...")
+		logger.LogPrintln("\nStarting services...")
+		for _, svc := range cfg.Config.Services {
+			logger.ServiceStart(svc.Name, svc.Start)
+		}
+		startTime := time.Now()
 		if err := svcMgr.EnsureRunning(); err != nil {
+			logger.Error("failed to start services", err)
+			logger.RunEnd(false, "service start failed")
 			return fmt.Errorf("failed to start services: %w", err)
+		}
+		for _, svc := range cfg.Config.Services {
+			logger.ServiceReady(svc.Name, svc.Ready, time.Since(startTime).Nanoseconds())
 		}
 	}
 
@@ -112,58 +138,65 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	iteration := 0
 	for {
 		iteration++
+		logger.SetIteration(iteration)
 
 		// Reload PRD at start of each iteration
 		prd, err = LoadPRD(prdPath)
 		if err != nil {
+			logger.Error("failed to load PRD", err)
+			logger.RunEnd(false, "PRD load failed")
 			return err
 		}
 
 		// Check if all stories complete
 		if AllStoriesComplete(prd) {
-			fmt.Println()
+			logger.LogPrintln()
 			fmt.Println(strings.Repeat("=", 60))
-			fmt.Println(" All stories complete! Running final verification...")
+			logger.LogPrintln(" All stories complete! Running final verification...")
 			fmt.Println(strings.Repeat("=", 60))
 
 			// Run final verification
-			verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr)
+			verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr, logger)
 			if err != nil {
+				logger.Error("final verification error", err)
+				logger.RunEnd(false, "final verification error")
 				return err
 			}
 
 			if verified {
-				fmt.Println()
+				logger.LogPrintln()
 				fmt.Println(strings.Repeat("=", 60))
-				fmt.Println(" ✓ Ralph completed and verified!")
+				logger.LogPrintln(" ✓ Ralph completed and verified!")
 				fmt.Println(strings.Repeat("=", 60))
-				fmt.Println()
-				fmt.Println("Ready to merge. Review changes with:")
-				fmt.Printf("  git log --oneline %s..HEAD\n", git.DefaultBranch())
+				logger.LogPrintln()
+				logger.LogPrintln("Ready to merge. Review changes with:")
+				logger.LogPrint("  git log --oneline %s..HEAD\n", git.DefaultBranch())
+				logger.RunEnd(true, "all stories verified")
 				return nil
 			}
 
 			// Stories were reset, continue loop
-			fmt.Println("\nStories reset. Continuing implementation loop...")
+			logger.LogPrintln("\nStories reset. Continuing implementation loop...")
 			continue
 		}
 
 		// Check if all remaining stories are blocked
 		if HasBlockedStories(prd) && GetNextStory(prd) == nil {
-			fmt.Println()
+			logger.LogPrintln()
 			fmt.Println(strings.Repeat("=", 60))
-			fmt.Println(" ⚠ All remaining stories are blocked")
+			logger.LogPrintln(" ⚠ All remaining stories are blocked")
 			fmt.Println(strings.Repeat("=", 60))
-			fmt.Println()
-			fmt.Println("Blocked stories:")
+			logger.LogPrintln()
+			logger.LogPrintln("Blocked stories:")
 			for _, s := range GetBlockedStories(prd) {
-				fmt.Printf("  - %s: %s\n", s.ID, s.Title)
+				logger.LogPrint("  - %s: %s\n", s.ID, s.Title)
 				if s.Notes != "" {
-					fmt.Printf("    └─ %s\n", s.Notes)
+					logger.LogPrint("    └─ %s\n", s.Notes)
 				}
 			}
-			fmt.Println()
-			fmt.Println("Manual intervention required.")
+			logger.LogPrintln()
+			logger.LogPrintln("Manual intervention required.")
+			logger.RunEnd(false, "all remaining stories blocked")
 			return fmt.Errorf("all remaining stories blocked")
 		}
 
@@ -171,13 +204,19 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		story := GetNextStory(prd)
 		if story == nil {
 			// This shouldn't happen given checks above
+			logger.Error("unexpected: no next story but not all complete", nil)
+			logger.RunEnd(false, "unexpected state: no next story")
 			return fmt.Errorf("unexpected: no next story but not all complete")
 		}
 
-		fmt.Println()
+		logger.LogPrintln()
 		fmt.Println(strings.Repeat("=", 60))
-		fmt.Printf(" Iteration %d: %s - %s\n", iteration, story.ID, story.Title)
+		logger.LogPrint(" Iteration %d: %s - %s\n", iteration, story.ID, story.Title)
 		fmt.Println(strings.Repeat("=", 60))
+
+		// Log iteration and story start
+		logger.SetCurrentStory(story.ID)
+		logger.IterationStart(story.ID, story.Title, story.Retries)
 
 		// Set current story
 		prd.SetCurrentStory(story.ID)
@@ -198,20 +237,45 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 		// Generate and send prompt
 		prompt := generateRunPrompt(cfg, featureDir, prd, story)
-		result, err := runProvider(cfg, prompt)
+		logger.ProviderStart()
+		result, err := runProvider(cfg, prompt, logger)
+
+		// Collect markers for logging
+		var detectedMarkers []string
+		if result != nil {
+			if result.Done {
+				detectedMarkers = append(detectedMarkers, "DONE")
+			}
+			if result.Stuck {
+				detectedMarkers = append(detectedMarkers, "STUCK")
+			}
+			if result.Verified {
+				detectedMarkers = append(detectedMarkers, "VERIFIED")
+			}
+			if len(result.Learnings) > 0 {
+				detectedMarkers = append(detectedMarkers, "LEARNING")
+			}
+			if len(result.Blocks) > 0 {
+				detectedMarkers = append(detectedMarkers, "BLOCK")
+			}
+		}
+		logger.ProviderEnd(result.ExitCode, result.TimedOut, detectedMarkers)
 
 		// Process learnings and blocks even on error (result is non-nil even on timeout)
 		if result != nil {
 			for _, learning := range result.Learnings {
 				prd.AddLearning(learning)
+				logger.Learning(learning)
 			}
 			for _, storyID := range result.Blocks {
-				fmt.Printf("\n⚠ Provider blocked story: %s\n", storyID)
+				logger.LogPrint("\n⚠ Provider blocked story: %s\n", storyID)
 				prd.MarkStoryBlocked(storyID, result.Reason)
+				logger.StateChange(storyID, "pending", "blocked", map[string]interface{}{"reason": result.Reason})
 			}
 		}
 
 		if err != nil {
+			logger.Error("provider error", err)
 			prd.ClearCurrentStory()
 			if saveErr := SavePRD(prdPath, prd); saveErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save PRD: %v\n", saveErr)
@@ -219,6 +283,8 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			if cfg.Config.Commits.PrdChanges {
 				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s provider error", story.ID))
 			}
+			logger.IterationEnd(false)
+			logger.RunEnd(false, "provider error")
 			return fmt.Errorf("provider error: %w", err)
 		}
 
@@ -228,72 +294,92 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			if reason == "" {
 				reason = "Provider signaled STUCK"
 			}
-			fmt.Printf("\n⚠ Provider stuck on %s: %s\n", story.ID, reason)
+			logger.LogPrint("\n⚠ Provider stuck on %s: %s\n", story.ID, reason)
+			logger.StateChange(story.ID, "pending", "failed", map[string]interface{}{"reason": reason})
 			prd.MarkStoryFailed(story.ID, reason, cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
 			if err := SavePRD(prdPath, prd); err != nil {
+				logger.IterationEnd(false)
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 			if cfg.Config.Commits.PrdChanges {
 				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s stuck", story.ID))
 			}
+			logger.IterationEnd(false)
 			continue
 		}
 
 		// Check for DONE marker
 		if !result.Done {
-			fmt.Println("\nProvider did not signal completion. Retrying...")
+			logger.LogPrintln("\nProvider did not signal completion. Retrying...")
+			logger.Warning("provider did not signal completion")
 			prd.MarkStoryFailed(story.ID, "Provider did not signal completion", cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
 			if err := SavePRD(prdPath, prd); err != nil {
+				logger.IterationEnd(false)
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 			if cfg.Config.Commits.PrdChanges {
 				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no completion signal", story.ID))
 			}
+			logger.IterationEnd(false)
 			continue
 		}
 
 		// Check that provider actually committed something
 		if !git.HasNewCommitSince(preRunCommit) {
-			fmt.Println("\n⚠ Provider signaled DONE but made no new commit.")
+			logger.LogPrintln("\n⚠ Provider signaled DONE but made no new commit.")
+			logger.Warning("provider signaled DONE but made no new commit")
 			prd.MarkStoryFailed(story.ID, "No commit made — provider signaled DONE without committing code", cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
 			if err := SavePRD(prdPath, prd); err != nil {
+				logger.IterationEnd(false)
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 			if cfg.Config.Commits.PrdChanges {
 				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no commit", story.ID))
 			}
+			logger.IterationEnd(false)
 			continue
 		}
 
 		// Warn if working tree is dirty (provider left uncommitted files)
 		if !git.IsWorkingTreeClean() {
-			fmt.Println("\n⚠ Working tree has uncommitted changes after provider finished.")
-			fmt.Println("  Provider may have left untracked or modified files.")
+			logger.LogPrintln("\n⚠ Working tree has uncommitted changes after provider finished.")
+			logger.LogPrintln("  Provider may have left untracked or modified files.")
+			logger.Warning("working tree has uncommitted changes after provider finished")
 		}
 
 		// Run verification
-		fmt.Println("\nRunning verification...")
-		verifyResult, err := runStoryVerification(cfg, featureDir, story, svcMgr)
+		logger.LogPrintln("\nRunning verification...")
+		logger.VerifyStart()
+		verifyResult, err := runStoryVerification(cfg, featureDir, story, svcMgr, logger)
 		if err != nil {
+			logger.Error("verification error", err)
+			logger.VerifyEnd(false)
+			logger.IterationEnd(false)
+			logger.RunEnd(false, "verification error")
 			return fmt.Errorf("verification error: %w", err)
 		}
 
 		if !verifyResult.passed {
-			fmt.Printf("\nVerification failed: %s\n", verifyResult.reason)
+			logger.LogPrint("\nVerification failed: %s\n", verifyResult.reason)
+			logger.VerifyEnd(false)
+			logger.StateChange(story.ID, "pending", "failed", map[string]interface{}{"reason": verifyResult.reason})
 			prd.MarkStoryFailed(story.ID, verifyResult.reason, cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
 			if err := SavePRD(prdPath, prd); err != nil {
+				logger.IterationEnd(false)
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 
 			if cfg.Config.Commits.PrdChanges {
 				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s failed verification", story.ID))
 			}
+			logger.IterationEnd(false)
 			continue
 		}
+		logger.VerifyEnd(true)
 
 		// Story passed!
 		commit := getLastCommit(cfg.ProjectRoot)
@@ -301,7 +387,10 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		prd.MarkStoryPassed(story.ID, commit, summary)
 		prd.ClearCurrentStory()
 
+		logger.StateChange(story.ID, "pending", "passed", map[string]interface{}{"commit": commit})
+
 		if err := SavePRD(prdPath, prd); err != nil {
+			logger.IterationEnd(false)
 			return fmt.Errorf("failed to save PRD: %w", err)
 		}
 
@@ -309,7 +398,8 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s complete", story.ID))
 		}
 
-		fmt.Printf("\n✓ %s complete\n", story.ID)
+		logger.LogPrint("\n✓ %s complete\n", story.ID)
+		logger.IterationEnd(true)
 	}
 }
 
@@ -348,7 +438,7 @@ func buildProviderArgs(baseArgs []string, promptMode, promptFlag, prompt string)
 }
 
 // runProvider runs the provider with the given prompt
-func runProvider(cfg *ResolvedConfig, prompt string) (*ProviderResult, error) {
+func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger) (*ProviderResult, error) {
 	timeout := time.Duration(cfg.Config.Provider.Timeout) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -414,7 +504,7 @@ func runProvider(cfg *ResolvedConfig, prompt string) (*ProviderResult, error) {
 
 	// Collect output with marker detection
 	var mu sync.Mutex
-	var outputBuilder strings.Builder
+	var stdoutBuilder, stderrBuilder, outputBuilder strings.Builder
 	result := &ProviderResult{}
 
 	// Use WaitGroup for stderr goroutine
@@ -429,8 +519,9 @@ func runProvider(cfg *ResolvedConfig, prompt string) (*ProviderResult, error) {
 			line := scanner.Text()
 			fmt.Fprintln(os.Stderr, line)
 			mu.Lock()
+			stderrBuilder.WriteString(line + "\n")
 			outputBuilder.WriteString(line + "\n")
-			processLine(line, result)
+			processLine(line, result, logger)
 			mu.Unlock()
 		}
 	}()
@@ -442,8 +533,9 @@ func runProvider(cfg *ResolvedConfig, prompt string) (*ProviderResult, error) {
 		line := scanner.Text()
 		fmt.Println(line)
 		mu.Lock()
+		stdoutBuilder.WriteString(line + "\n")
 		outputBuilder.WriteString(line + "\n")
-		processLine(line, result)
+		processLine(line, result, logger)
 		mu.Unlock()
 	}
 
@@ -454,12 +546,22 @@ func runProvider(cfg *ResolvedConfig, prompt string) (*ProviderResult, error) {
 	if ctx.Err() == context.DeadlineExceeded {
 		cmd.Process.Kill()
 		result.TimedOut = true
+		result.Output = outputBuilder.String()
+		// Log provider output even on timeout
+		if logger != nil {
+			logger.ProviderOutput(stdoutBuilder.String(), stderrBuilder.String())
+		}
 		return result, fmt.Errorf("provider timed out after %v", timeout)
 	}
 
 	// Wait for process
 	err = cmd.Wait()
 	result.Output = outputBuilder.String()
+
+	// Log provider output
+	if logger != nil {
+		logger.ProviderOutput(stdoutBuilder.String(), stderrBuilder.String())
+	}
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -473,20 +575,33 @@ func runProvider(cfg *ResolvedConfig, prompt string) (*ProviderResult, error) {
 }
 
 // processLine processes a line of output for markers
-func processLine(line string, result *ProviderResult) {
+func processLine(line string, result *ProviderResult, logger *RunLogger) {
 	if strings.Contains(line, DoneMarker) {
 		result.Done = true
+		if logger != nil {
+			logger.MarkerDetected("DONE", "")
+		}
 	}
 	if strings.Contains(line, VerifiedMarker) {
 		result.Verified = true
+		if logger != nil {
+			logger.MarkerDetected("VERIFIED", "")
+		}
 	}
 	if strings.Contains(line, StuckMarker) {
 		result.Stuck = true
+		if logger != nil {
+			logger.MarkerDetected("STUCK", "")
+		}
 	}
 
 	// Extract learnings
 	if matches := LearningPattern.FindStringSubmatch(line); len(matches) > 1 {
-		result.Learnings = append(result.Learnings, strings.TrimSpace(matches[1]))
+		value := strings.TrimSpace(matches[1])
+		result.Learnings = append(result.Learnings, value)
+		if logger != nil {
+			logger.MarkerDetected("LEARNING", value)
+		}
 	}
 
 	// Extract resets
@@ -494,6 +609,9 @@ func processLine(line string, result *ProviderResult) {
 		ids := strings.Split(matches[1], ",")
 		for _, id := range ids {
 			result.Resets = append(result.Resets, strings.TrimSpace(id))
+		}
+		if logger != nil {
+			logger.MarkerDetected("RESET", matches[1])
 		}
 	}
 
@@ -503,16 +621,25 @@ func processLine(line string, result *ProviderResult) {
 		for _, id := range ids {
 			result.Blocks = append(result.Blocks, strings.TrimSpace(id))
 		}
+		if logger != nil {
+			logger.MarkerDetected("BLOCK", matches[1])
+		}
 	}
 
 	// Extract suggest next
 	if matches := SuggestNextPattern.FindStringSubmatch(line); len(matches) > 1 {
 		result.SuggestNext = strings.TrimSpace(matches[1])
+		if logger != nil {
+			logger.MarkerDetected("SUGGEST_NEXT", matches[1])
+		}
 	}
 
 	// Extract reason
 	if matches := ReasonPattern.FindStringSubmatch(line); len(matches) > 1 {
 		result.Reason = strings.TrimSpace(matches[1])
+		if logger != nil {
+			logger.MarkerDetected("REASON", matches[1])
+		}
 	}
 }
 
@@ -523,17 +650,25 @@ type StoryVerifyResult struct {
 }
 
 // runStoryVerification runs verification for a single story
-func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *UserStory, svcMgr *ServiceManager) (*StoryVerifyResult, error) {
+func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *UserStory, svcMgr *ServiceManager, logger *RunLogger) (*StoryVerifyResult, error) {
 	result := &StoryVerifyResult{passed: true}
 
 	// Run default verification commands
 	for _, cmd := range cfg.Config.Verify.Default {
-		fmt.Printf("  → %s\n", cmd)
+		logger.LogPrint("  → %s\n", cmd)
+		logger.VerifyCmdStart(cmd)
+		startTime := time.Now()
 		output, err := runCommand(cfg.ProjectRoot, cmd, cfg.Config.Verify.Timeout)
+		duration := time.Since(startTime)
 		if err != nil {
+			logger.VerifyCmdEnd(cmd, false, output, duration.Nanoseconds())
 			result.passed = false
 			result.reason = fmt.Sprintf("%s failed: %v\n\n--- Output (last 50 lines) ---\n%s", cmd, err, output)
 			return result, nil
+		}
+		logger.VerifyCmdEnd(cmd, true, output, duration.Nanoseconds())
+		if logger.config != nil && logger.config.ConsoleDurations {
+			logger.LogPrint("    ✓ (%s)\n", FormatDuration(duration))
 		}
 	}
 
@@ -541,12 +676,14 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 	if IsUIStory(story) {
 		// Restart services before UI verification (fresh state)
 		if svcMgr != nil && svcMgr.HasUIServices() {
-			fmt.Println("  → Restarting services for UI verification...")
+			logger.LogPrintln("  → Restarting services for UI verification...")
 			if err := svcMgr.RestartForVerify(); err != nil {
+				logger.ServiceRestart("all", false)
 				result.passed = false
 				result.reason = fmt.Sprintf("service restart failed: %v", err)
 				return result, nil
 			}
+			logger.ServiceRestart("all", true)
 		}
 
 		// Run built-in browser verification
@@ -554,12 +691,14 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 			baseURL := GetBaseURL(cfg.Config.Services)
 			if baseURL != "" {
 				browser := NewBrowserRunner(cfg.ProjectRoot, cfg.Config.Browser)
+				logger.BrowserStart()
 
 				// Use interactive steps if defined, otherwise fall back to URL checks
 				if len(story.BrowserSteps) > 0 {
-					fmt.Println("  → Running browser verification steps...")
+					logger.LogPrintln("  → Running browser verification steps...")
 					browserResult, err := browser.RunSteps(story, baseURL)
 					if err != nil {
+						logger.BrowserEnd(false, 0)
 						result.passed = false
 						result.reason = fmt.Sprintf("browser initialization failed: %v", err)
 						return result, nil
@@ -568,6 +707,7 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 
 						// Fail story if browser steps failed
 						if browserResult.Error != nil {
+							logger.BrowserEnd(false, len(browserResult.ConsoleErrors))
 							result.passed = false
 							result.reason = fmt.Sprintf("browser verification failed: %v", browserResult.Error)
 							return result, nil
@@ -575,20 +715,23 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 
 						// Fail on console errors
 						if len(browserResult.ConsoleErrors) > 0 {
-							fmt.Printf("  ✗ Console errors detected: %d\n", len(browserResult.ConsoleErrors))
+							logger.LogPrint("  ✗ Console errors detected: %d\n", len(browserResult.ConsoleErrors))
 							for _, ce := range browserResult.ConsoleErrors {
-								fmt.Printf("    - %s\n", ce)
+								logger.LogPrint("    - %s\n", ce)
 							}
+							logger.BrowserEnd(false, len(browserResult.ConsoleErrors))
 							result.passed = false
 							result.reason = fmt.Sprintf("browser console errors: %d error(s) detected", len(browserResult.ConsoleErrors))
 							return result, nil
 						}
+						logger.BrowserEnd(true, 0)
 					}
 				} else {
 					// Fallback: basic URL checks
-					fmt.Println("  → Running browser checks...")
+					logger.LogPrintln("  → Running browser checks...")
 					browserResults, err := browser.RunChecks(story, baseURL)
 					if err != nil {
+						logger.BrowserEnd(false, 0)
 						result.passed = false
 						result.reason = fmt.Sprintf("browser initialization failed: %v", err)
 						return result, nil
@@ -596,20 +739,23 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 						fmt.Print(FormatBrowserResults(browserResults))
 						for _, r := range browserResults {
 							if r.Error != nil {
+								logger.BrowserEnd(false, 0)
 								result.passed = false
 								result.reason = fmt.Sprintf("page load failed: %v", r.Error)
 								return result, nil
 							}
 							if len(r.ConsoleErrors) > 0 {
-								fmt.Printf("  ✗ Console errors detected: %d\n", len(r.ConsoleErrors))
+								logger.LogPrint("  ✗ Console errors detected: %d\n", len(r.ConsoleErrors))
 								for _, ce := range r.ConsoleErrors {
-									fmt.Printf("    - %s\n", ce)
+									logger.LogPrint("    - %s\n", ce)
 								}
+								logger.BrowserEnd(false, len(r.ConsoleErrors))
 								result.passed = false
 								result.reason = fmt.Sprintf("browser console errors: %d error(s) detected", len(r.ConsoleErrors))
 								return result, nil
 							}
 						}
+						logger.BrowserEnd(true, 0)
 					}
 				}
 			}
@@ -617,12 +763,20 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 
 		// Run UI verification commands
 		for _, cmd := range cfg.Config.Verify.UI {
-			fmt.Printf("  → %s\n", cmd)
+			logger.LogPrint("  → %s\n", cmd)
+			logger.VerifyCmdStart(cmd)
+			startTime := time.Now()
 			output, err := runCommand(cfg.ProjectRoot, cmd, cfg.Config.Verify.Timeout)
+			duration := time.Since(startTime)
 			if err != nil {
+				logger.VerifyCmdEnd(cmd, false, output, duration.Nanoseconds())
 				result.passed = false
 				result.reason = fmt.Sprintf("%s failed: %v\n\n--- Output (last 50 lines) ---\n%s", cmd, err, output)
 				return result, nil
+			}
+			logger.VerifyCmdEnd(cmd, true, output, duration.Nanoseconds())
+			if logger.config != nil && logger.config.ConsoleDurations {
+				logger.LogPrint("    ✓ (%s)\n", FormatDuration(duration))
 			}
 		}
 	}
@@ -633,6 +787,7 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 			// Include recent service output for diagnostics
 			reason := fmt.Sprintf("service health check failed: %s", strings.Join(healthIssues, "; "))
 			for _, svc := range cfg.Config.Services {
+				logger.ServiceHealth(svc.Name, false, healthIssues[0])
 				svcOutput := svcMgr.GetRecentOutput(svc.Name, 30)
 				if svcOutput != "" {
 					reason += fmt.Sprintf("\n\n--- %s output (last 30 lines) ---\n%s", svc.Name, svcOutput)
@@ -642,39 +797,60 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 			result.reason = reason
 			return result, nil
 		}
+		for _, svc := range cfg.Config.Services {
+			logger.ServiceHealth(svc.Name, true, "")
+		}
 	}
 
 	return result, nil
 }
 
 // runFinalVerification runs final verification and handles story resets
-func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svcMgr *ServiceManager) (bool, error) {
+func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svcMgr *ServiceManager, logger *RunLogger) (bool, error) {
 	prdPath := featureDir.PrdJsonPath()
 
+	logger.VerifyStart()
+
 	// Run all verification commands first
-	fmt.Println("\nRunning verification commands...")
+	logger.LogPrintln("\nRunning verification commands...")
 	verifyFailed := false
 	var summaryLines []string
 	for _, cmd := range cfg.Config.Verify.Default {
-		fmt.Printf("  → %s\n", cmd)
+		logger.LogPrint("  → %s\n", cmd)
+		logger.VerifyCmdStart(cmd)
+		startTime := time.Now()
 		output, err := runCommand(cfg.ProjectRoot, cmd, cfg.Config.Verify.Timeout)
+		duration := time.Since(startTime)
 		if err != nil {
-			fmt.Printf("  ✗ %s failed\n", cmd)
+			logger.LogPrint("  ✗ %s failed\n", cmd)
+			logger.VerifyCmdEnd(cmd, false, output, duration.Nanoseconds())
 			verifyFailed = true
 			summaryLines = append(summaryLines, "FAIL: "+cmd+"\n"+output)
 		} else {
+			logger.VerifyCmdEnd(cmd, true, output, duration.Nanoseconds())
 			summaryLines = append(summaryLines, "PASS: "+cmd)
+			if logger.config != nil && logger.config.ConsoleDurations {
+				logger.LogPrint("    ✓ (%s)\n", FormatDuration(duration))
+			}
 		}
 	}
 	for _, cmd := range cfg.Config.Verify.UI {
-		fmt.Printf("  → %s\n", cmd)
+		logger.LogPrint("  → %s\n", cmd)
+		logger.VerifyCmdStart(cmd)
+		startTime := time.Now()
 		output, err := runCommand(cfg.ProjectRoot, cmd, cfg.Config.Verify.Timeout)
+		duration := time.Since(startTime)
 		if err != nil {
-			fmt.Printf("  ✗ %s failed\n", cmd)
+			logger.LogPrint("  ✗ %s failed\n", cmd)
+			logger.VerifyCmdEnd(cmd, false, output, duration.Nanoseconds())
 			verifyFailed = true
 			summaryLines = append(summaryLines, "FAIL: "+cmd+"\n"+output)
 		} else {
+			logger.VerifyCmdEnd(cmd, true, output, duration.Nanoseconds())
 			summaryLines = append(summaryLines, "PASS: "+cmd)
+			if logger.config != nil && logger.config.ConsoleDurations {
+				logger.LogPrint("    ✓ (%s)\n", FormatDuration(duration))
+			}
 		}
 	}
 
@@ -688,15 +864,18 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 					continue
 				}
 
-				fmt.Printf("  → Browser: %s (%s)\n", story.ID, story.Title)
+				logger.LogPrint("  → Browser: %s (%s)\n", story.ID, story.Title)
+				logger.BrowserStart()
 
 				if svcMgr.HasUIServices() {
 					if err := svcMgr.RestartForVerify(); err != nil {
-						fmt.Printf("    ⚠ Service restart failed: %v\n", err)
+						logger.LogPrint("    ⚠ Service restart failed: %v\n", err)
+						logger.ServiceRestart("all", false)
 						verifyFailed = true
 						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: service restart for %s (%v)", story.ID, err))
 						continue
 					}
+					logger.ServiceRestart("all", true)
 				}
 
 				browser := NewBrowserRunner(cfg.ProjectRoot, cfg.Config.Browser)
@@ -705,34 +884,39 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 					// Interactive browser steps
 					browserResult, err := browser.RunSteps(story, baseURL)
 					if err != nil {
-						fmt.Printf("    ✗ Browser error: %v\n", err)
+						logger.LogPrint("    ✗ Browser error: %v\n", err)
+						logger.BrowserEnd(false, 0)
 						verifyFailed = true
 						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (init: %v)", story.ID, err))
 					} else if browserResult != nil {
 						fmt.Print(FormatStepResult(browserResult))
 						if browserResult.Error != nil {
-							fmt.Printf("    ✗ Failed: %v\n", browserResult.Error)
+							logger.LogPrint("    ✗ Failed: %v\n", browserResult.Error)
+							logger.BrowserEnd(false, len(browserResult.ConsoleErrors))
 							verifyFailed = true
 							summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (error: %v)", story.ID, browserResult.Error))
 						}
 						if len(browserResult.ConsoleErrors) > 0 {
-							fmt.Printf("    ✗ Console errors: %d\n", len(browserResult.ConsoleErrors))
+							logger.LogPrint("    ✗ Console errors: %d\n", len(browserResult.ConsoleErrors))
 							for _, ce := range browserResult.ConsoleErrors {
-								fmt.Printf("      - %s\n", ce)
+								logger.LogPrint("      - %s\n", ce)
 							}
+							logger.BrowserEnd(false, len(browserResult.ConsoleErrors))
 							verifyFailed = true
 							summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (console errors: %d)", story.ID, len(browserResult.ConsoleErrors)))
 						}
 						if browserResult.Error == nil && len(browserResult.ConsoleErrors) == 0 {
+							logger.BrowserEnd(true, 0)
 							summaryLines = append(summaryLines, fmt.Sprintf("PASS: browser %s", story.ID))
 						}
 					}
 				} else {
 					// Fallback: basic URL checks for UI stories without explicit browserSteps
-					fmt.Println("    → Running browser checks (fallback)...")
+					logger.LogPrintln("    → Running browser checks (fallback)...")
 					browserResults, err := browser.RunChecks(story, baseURL)
 					if err != nil {
-						fmt.Printf("    ✗ Browser check error: %v\n", err)
+						logger.LogPrint("    ✗ Browser check error: %v\n", err)
+						logger.BrowserEnd(false, 0)
 						verifyFailed = true
 						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (init: %v)", story.ID, err))
 					} else if len(browserResults) > 0 {
@@ -740,16 +924,18 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 						hasFailed := false
 						for _, r := range browserResults {
 							if r.Error != nil {
+								logger.BrowserEnd(false, 0)
 								verifyFailed = true
 								hasFailed = true
 								summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (page load: %v)", story.ID, r.Error))
 								break
 							}
 							if len(r.ConsoleErrors) > 0 {
-								fmt.Printf("    ✗ Console errors: %d\n", len(r.ConsoleErrors))
+								logger.LogPrint("    ✗ Console errors: %d\n", len(r.ConsoleErrors))
 								for _, ce := range r.ConsoleErrors {
-									fmt.Printf("      - %s\n", ce)
+									logger.LogPrint("      - %s\n", ce)
 								}
+								logger.BrowserEnd(false, len(r.ConsoleErrors))
 								verifyFailed = true
 								hasFailed = true
 								summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (console errors: %d)", story.ID, len(r.ConsoleErrors)))
@@ -757,6 +943,7 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 							}
 						}
 						if !hasFailed {
+							logger.BrowserEnd(true, 0)
 							summaryLines = append(summaryLines, fmt.Sprintf("PASS: browser %s", story.ID))
 						}
 					}
@@ -769,11 +956,17 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	if svcMgr != nil && svcMgr.HasServices() {
 		if healthIssues := svcMgr.CheckServiceHealth(); len(healthIssues) > 0 {
 			for _, issue := range healthIssues {
-				fmt.Printf("  ✗ %s\n", issue)
+				logger.LogPrint("  ✗ %s\n", issue)
+			}
+			for _, svc := range cfg.Config.Services {
+				logger.ServiceHealth(svc.Name, false, strings.Join(healthIssues, "; "))
 			}
 			verifyFailed = true
 			summaryLines = append(summaryLines, "FAIL: service health: "+strings.Join(healthIssues, "; "))
 		} else {
+			for _, svc := range cfg.Config.Services {
+				logger.ServiceHealth(svc.Name, true, "")
+			}
 			summaryLines = append(summaryLines, "PASS: service health")
 		}
 	}
@@ -800,12 +993,29 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 
 	// Send verification prompt to provider
 	prompt := generateVerifyPrompt(cfg, featureDir, prd, verifySummary)
-	result, err := runProvider(cfg, prompt)
+	logger.ProviderStart()
+	result, err := runProvider(cfg, prompt, logger)
+
+	// Collect markers for logging
+	var detectedMarkers []string
+	if result != nil {
+		if result.Verified {
+			detectedMarkers = append(detectedMarkers, "VERIFIED")
+		}
+		if len(result.Resets) > 0 {
+			detectedMarkers = append(detectedMarkers, "RESET")
+		}
+		if len(result.Learnings) > 0 {
+			detectedMarkers = append(detectedMarkers, "LEARNING")
+		}
+	}
+	logger.ProviderEnd(result.ExitCode, result.TimedOut, detectedMarkers)
 
 	// Save learnings from verification
 	if result != nil && len(result.Learnings) > 0 {
 		for _, learning := range result.Learnings {
 			prd.AddLearning(learning)
+			logger.Learning(learning)
 		}
 		if saveErr := SavePRD(prdPath, prd); saveErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to save verification learnings: %v\n", saveErr)
@@ -816,28 +1026,34 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	}
 
 	if err != nil {
+		logger.VerifyEnd(false)
 		return false, err
 	}
 
 	// Check for VERIFIED marker
 	if result.Verified {
 		if verifyFailed {
-			fmt.Println("\nProvider signaled VERIFIED but verification failed.")
-			fmt.Println("Overriding to not-verified — fix failing checks before verification can pass.")
+			logger.LogPrintln("\nProvider signaled VERIFIED but verification failed.")
+			logger.LogPrintln("Overriding to not-verified — fix failing checks before verification can pass.")
+			logger.Warning("provider signaled VERIFIED but verification failed")
+			logger.VerifyEnd(false)
 			return false, nil
 		}
+		logger.VerifyEnd(true)
 		return true, nil
 	}
 
 	// Check for RESET markers
 	if len(result.Resets) > 0 {
-		fmt.Println("\nResetting stories:")
+		logger.LogPrintln("\nResetting stories:")
 		for _, storyID := range result.Resets {
-			fmt.Printf("  - %s\n", storyID)
+			logger.LogPrint("  - %s\n", storyID)
 			prd.ResetStory(storyID, result.Reason, cfg.Config.MaxRetries)
+			logger.StateChange(storyID, "passed", "reset", map[string]interface{}{"reason": result.Reason})
 		}
 
 		if err := SavePRD(prdPath, prd); err != nil {
+			logger.VerifyEnd(false)
 			return false, fmt.Errorf("failed to save PRD: %w", err)
 		}
 
@@ -845,11 +1061,14 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 			commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: reset stories after verification")
 		}
 
+		logger.VerifyEnd(false)
 		return false, nil
 	}
 
 	// No markers found - treat as not verified
-	fmt.Println("\nProvider did not output VERIFIED or RESET markers.")
+	logger.LogPrintln("\nProvider did not output VERIFIED or RESET markers.")
+	logger.Warning("provider did not output VERIFIED or RESET markers")
+	logger.VerifyEnd(false)
 	return false, nil
 }
 
@@ -860,29 +1079,50 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		return err
 	}
 
+	// Initialize logger
+	logger, err := NewRunLogger(featureDir.Path, cfg.Config.Logging)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	defer logger.Close()
+
+	logger.RunStart(featureDir.Feature, prd.BranchName, len(prd.UserStories))
+
 	// Start services for browser verification
 	svcMgr := NewServiceManager(cfg.ProjectRoot, cfg.Config.Services)
 	defer svcMgr.StopAll()
 	if svcMgr.HasServices() {
-		fmt.Println("Starting services...")
+		logger.LogPrintln("Starting services...")
+		for _, svc := range cfg.Config.Services {
+			logger.ServiceStart(svc.Name, svc.Start)
+		}
+		startTime := time.Now()
 		if err := svcMgr.EnsureRunning(); err != nil {
+			logger.Error("failed to start services", err)
+			logger.RunEnd(false, "service start failed")
 			return fmt.Errorf("failed to start services: %w", err)
+		}
+		for _, svc := range cfg.Config.Services {
+			logger.ServiceReady(svc.Name, svc.Ready, time.Since(startTime).Nanoseconds())
 		}
 	}
 
 	// Pre-resolve browser binary (downloads Chromium if needed)
 	EnsureBrowser(cfg.Config.Browser, prd)
 
-	verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr)
+	verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr, logger)
 	if err != nil {
+		logger.RunEnd(false, "verification error")
 		return err
 	}
 
 	if verified {
-		fmt.Println("\n✓ All verification passed")
+		logger.LogPrintln("\n✓ All verification passed")
+		logger.RunEnd(true, "verification passed")
 	} else {
-		fmt.Println("\n✗ Verification found issues")
-		fmt.Printf("\nRun 'ralph run %s' to continue implementation.\n", featureDir.Feature)
+		logger.LogPrintln("\n✗ Verification found issues")
+		logger.LogPrint("\nRun 'ralph run %s' to continue implementation.\n", featureDir.Feature)
+		logger.RunEnd(false, "verification found issues")
 	}
 
 	return nil

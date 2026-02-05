@@ -10,7 +10,7 @@ import (
 
 func TestProcessLine_DoneMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("Some output <ralph>DONE</ralph> more text", result)
+	processLine("Some output <ralph>DONE</ralph> more text", result, nil)
 
 	if !result.Done {
 		t.Error("expected Done=true")
@@ -19,7 +19,7 @@ func TestProcessLine_DoneMarker(t *testing.T) {
 
 func TestProcessLine_VerifiedMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("Review complete <ralph>VERIFIED</ralph>", result)
+	processLine("Review complete <ralph>VERIFIED</ralph>", result, nil)
 
 	if !result.Verified {
 		t.Error("expected Verified=true")
@@ -28,7 +28,7 @@ func TestProcessLine_VerifiedMarker(t *testing.T) {
 
 func TestProcessLine_LearningMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>LEARNING:Always use escapeHtml for user data</ralph>", result)
+	processLine("<ralph>LEARNING:Always use escapeHtml for user data</ralph>", result, nil)
 
 	if len(result.Learnings) != 1 {
 		t.Fatalf("expected 1 learning, got %d", len(result.Learnings))
@@ -40,8 +40,8 @@ func TestProcessLine_LearningMarker(t *testing.T) {
 
 func TestProcessLine_MultipleLearnings(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>LEARNING:First learning</ralph>", result)
-	processLine("<ralph>LEARNING:Second learning</ralph>", result)
+	processLine("<ralph>LEARNING:First learning</ralph>", result, nil)
+	processLine("<ralph>LEARNING:Second learning</ralph>", result, nil)
 
 	if len(result.Learnings) != 2 {
 		t.Fatalf("expected 2 learnings, got %d", len(result.Learnings))
@@ -50,7 +50,7 @@ func TestProcessLine_MultipleLearnings(t *testing.T) {
 
 func TestProcessLine_ResetMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>RESET:US-001,US-003</ralph>", result)
+	processLine("<ralph>RESET:US-001,US-003</ralph>", result, nil)
 
 	if len(result.Resets) != 2 {
 		t.Fatalf("expected 2 resets, got %d", len(result.Resets))
@@ -65,7 +65,7 @@ func TestProcessLine_ResetMarker(t *testing.T) {
 
 func TestProcessLine_ReasonMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>REASON:Missing test coverage for auth module</ralph>", result)
+	processLine("<ralph>REASON:Missing test coverage for auth module</ralph>", result, nil)
 
 	if result.Reason != "Missing test coverage for auth module" {
 		t.Errorf("unexpected reason: %s", result.Reason)
@@ -74,7 +74,7 @@ func TestProcessLine_ReasonMarker(t *testing.T) {
 
 func TestProcessLine_NoMarkers(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("Regular output without any markers", result)
+	processLine("Regular output without any markers", result, nil)
 
 	if result.Done || result.Verified || len(result.Learnings) > 0 || len(result.Resets) > 0 {
 		t.Error("expected no markers to be detected")
@@ -83,7 +83,7 @@ func TestProcessLine_NoMarkers(t *testing.T) {
 
 func TestProcessLine_MarkerWithWhitespace(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>LEARNING:  Trimmed learning  </ralph>", result)
+	processLine("<ralph>LEARNING:  Trimmed learning  </ralph>", result, nil)
 
 	if len(result.Learnings) != 1 {
 		t.Fatalf("expected 1 learning, got %d", len(result.Learnings))
@@ -140,7 +140,7 @@ func TestResetPattern(t *testing.T) {
 
 func TestProcessLine_StuckMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("I can't figure this out <ralph>STUCK</ralph>", result)
+	processLine("I can't figure this out <ralph>STUCK</ralph>", result, nil)
 
 	if !result.Stuck {
 		t.Error("expected Stuck=true")
@@ -149,7 +149,7 @@ func TestProcessLine_StuckMarker(t *testing.T) {
 
 func TestProcessLine_BlockMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>BLOCK:US-007</ralph>", result)
+	processLine("<ralph>BLOCK:US-007</ralph>", result, nil)
 
 	if len(result.Blocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(result.Blocks))
@@ -161,7 +161,7 @@ func TestProcessLine_BlockMarker(t *testing.T) {
 
 func TestProcessLine_BlockMarkerMultiple(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>BLOCK:US-007,US-008</ralph>", result)
+	processLine("<ralph>BLOCK:US-007,US-008</ralph>", result, nil)
 
 	if len(result.Blocks) != 2 {
 		t.Fatalf("expected 2 blocks, got %d", len(result.Blocks))
@@ -173,7 +173,7 @@ func TestProcessLine_BlockMarkerMultiple(t *testing.T) {
 
 func TestProcessLine_SuggestNextMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>SUGGEST_NEXT:US-012</ralph>", result)
+	processLine("<ralph>SUGGEST_NEXT:US-012</ralph>", result, nil)
 
 	if result.SuggestNext != "US-012" {
 		t.Errorf("expected SuggestNext='US-012', got '%s'", result.SuggestNext)
@@ -182,8 +182,8 @@ func TestProcessLine_SuggestNextMarker(t *testing.T) {
 
 func TestProcessLine_CombinedMarkers(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>BLOCK:US-007</ralph>", result)
-	processLine("<ralph>REASON:Depends on US-003 which isn't complete</ralph>", result)
+	processLine("<ralph>BLOCK:US-007</ralph>", result, nil)
+	processLine("<ralph>REASON:Depends on US-003 which isn't complete</ralph>", result, nil)
 
 	if len(result.Blocks) != 1 || result.Blocks[0] != "US-007" {
 		t.Errorf("expected block US-007, got %v", result.Blocks)
