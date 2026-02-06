@@ -8,15 +8,23 @@ import (
 	"strings"
 )
 
+// Dependency represents an external package dependency
+type Dependency struct {
+	Name    string // package name (e.g., "next", "@sveltejs/kit")
+	Version string // version spec (e.g., "^14.0.0", "1.0.0")
+	IsDev   bool   // true if devDependency
+}
+
 // CodebaseContext contains discovered information about the codebase
 // Used to provide context to PRD creation prompts
 type CodebaseContext struct {
-	TechStack      string   // "typescript", "go", "python", "rust", etc.
-	PackageManager string   // "bun", "npm", "yarn", "pnpm", "go", "cargo", "pip"
-	Frameworks     []string // detected frameworks like ["nextjs", "react"] or ["gin", "gorm"]
-	TestCommand    string   // detected or configured test command
-	Services       []string // service names from ralph.config.json
-	VerifyCommands []string // verify commands from ralph.config.json
+	TechStack      string       // "typescript", "go", "python", "rust", etc.
+	PackageManager string       // "bun", "npm", "yarn", "pnpm", "go", "cargo", "pip"
+	Frameworks     []string     // detected frameworks like ["nextjs", "react"] or ["gin", "gorm"]
+	Dependencies   []Dependency // full dependency list
+	TestCommand    string       // detected or configured test command
+	Services       []string     // service names from ralph.config.json
+	VerifyCommands []string     // verify commands from ralph.config.json
 }
 
 // DiscoverCodebase analyzes the project to detect tech stack and context
@@ -29,6 +37,9 @@ func DiscoverCodebase(projectRoot string, cfg *RalphConfig) *CodebaseContext {
 
 	// Detect frameworks
 	ctx.Frameworks = detectFrameworks(projectRoot, ctx.TechStack)
+
+	// Extract full dependency list
+	ctx.Dependencies = ExtractDependencies(projectRoot, ctx.TechStack)
 
 	// Extract from ralph.config.json
 	if cfg != nil {
@@ -351,4 +362,224 @@ func FormatCodebaseContext(ctx *CodebaseContext) string {
 
 	lines = append(lines, "")
 	return strings.Join(lines, "\n")
+}
+
+// ExtractDependencies returns all dependencies from the project
+func ExtractDependencies(projectRoot string, techStack string) []Dependency {
+	switch techStack {
+	case "typescript", "javascript":
+		return extractJSDependencies(projectRoot)
+	case "go":
+		return extractGoDependencies(projectRoot)
+	case "python":
+		return extractPythonDependencies(projectRoot)
+	case "rust":
+		return extractRustDependencies(projectRoot)
+	}
+	return nil
+}
+
+// extractJSDependencies parses package.json
+func extractJSDependencies(projectRoot string) []Dependency {
+	var deps []Dependency
+
+	pkgPath := filepath.Join(projectRoot, "package.json")
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return deps
+	}
+
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return deps
+	}
+
+	for name, version := range pkg.Dependencies {
+		deps = append(deps, Dependency{Name: name, Version: version, IsDev: false})
+	}
+	for name, version := range pkg.DevDependencies {
+		deps = append(deps, Dependency{Name: name, Version: version, IsDev: true})
+	}
+
+	return deps
+}
+
+// extractGoDependencies parses go.mod
+func extractGoDependencies(projectRoot string) []Dependency {
+	var deps []Dependency
+
+	modPath := filepath.Join(projectRoot, "go.mod")
+	data, err := os.ReadFile(modPath)
+	if err != nil {
+		return deps
+	}
+
+	// Parse go.mod line by line
+	lines := strings.Split(string(data), "\n")
+	inRequire := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "require (" {
+			inRequire = true
+			continue
+		}
+		if line == ")" {
+			inRequire = false
+			continue
+		}
+		if inRequire && line != "" && !strings.HasPrefix(line, "//") {
+			// Format: "module/path v1.2.3" or "module/path v1.2.3 // indirect"
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				deps = append(deps, Dependency{
+					Name:    parts[0],
+					Version: parts[1],
+					IsDev:   strings.Contains(line, "// indirect"),
+				})
+			}
+		}
+		// Handle single-line require
+		if strings.HasPrefix(line, "require ") && !strings.HasSuffix(line, "(") {
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				deps = append(deps, Dependency{
+					Name:    parts[1],
+					Version: parts[2],
+					IsDev:   false,
+				})
+			}
+		}
+	}
+
+	return deps
+}
+
+// extractPythonDependencies parses pyproject.toml or requirements.txt
+func extractPythonDependencies(projectRoot string) []Dependency {
+	var deps []Dependency
+
+	// Try pyproject.toml first
+	pyprojectPath := filepath.Join(projectRoot, "pyproject.toml")
+	if data, err := os.ReadFile(pyprojectPath); err == nil {
+		// Basic parsing - extract package names from dependencies
+		content := string(data)
+		lines := strings.Split(content, "\n")
+		inDeps := false
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "[project.dependencies]" || line == "[tool.poetry.dependencies]" {
+				inDeps = true
+				continue
+			}
+			if strings.HasPrefix(line, "[") && inDeps {
+				inDeps = false
+				continue
+			}
+			if inDeps && line != "" && !strings.HasPrefix(line, "#") {
+				// Format varies, try to extract package name
+				if idx := strings.Index(line, "="); idx > 0 {
+					name := strings.TrimSpace(line[:idx])
+					name = strings.Trim(name, "\"'")
+					if name != "" && name != "python" {
+						deps = append(deps, Dependency{Name: name, IsDev: false})
+					}
+				} else if strings.HasPrefix(line, "\"") {
+					// TOML array format
+					name := strings.Trim(line, "\",")
+					if name != "" {
+						deps = append(deps, Dependency{Name: name, IsDev: false})
+					}
+				}
+			}
+		}
+	}
+
+	// Try requirements.txt
+	reqPath := filepath.Join(projectRoot, "requirements.txt")
+	if data, err := os.ReadFile(reqPath); err == nil {
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-") {
+				continue
+			}
+			// Format: "package==1.2.3" or "package>=1.2.3" or just "package"
+			for _, sep := range []string{"==", ">=", "<=", "~=", "!="} {
+				if idx := strings.Index(line, sep); idx > 0 {
+					deps = append(deps, Dependency{
+						Name:    line[:idx],
+						Version: line[idx+len(sep):],
+						IsDev:   false,
+					})
+					break
+				}
+			}
+		}
+	}
+
+	return deps
+}
+
+// extractRustDependencies parses Cargo.toml
+func extractRustDependencies(projectRoot string) []Dependency {
+	var deps []Dependency
+
+	cargoPath := filepath.Join(projectRoot, "Cargo.toml")
+	data, err := os.ReadFile(cargoPath)
+	if err != nil {
+		return deps
+	}
+
+	// Basic TOML parsing for dependencies section
+	lines := strings.Split(string(data), "\n")
+	inDeps := false
+	inDevDeps := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "[dependencies]" {
+			inDeps = true
+			inDevDeps = false
+			continue
+		}
+		if line == "[dev-dependencies]" {
+			inDeps = false
+			inDevDeps = true
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			inDeps = false
+			inDevDeps = false
+			continue
+		}
+		if (inDeps || inDevDeps) && line != "" && !strings.HasPrefix(line, "#") {
+			// Format: "name = "version"" or "name = { version = "1.0" }"
+			if idx := strings.Index(line, "="); idx > 0 {
+				name := strings.TrimSpace(line[:idx])
+				rest := strings.TrimSpace(line[idx+1:])
+				version := ""
+				if strings.HasPrefix(rest, "\"") {
+					version = strings.Trim(rest, "\"")
+				}
+				deps = append(deps, Dependency{
+					Name:    name,
+					Version: version,
+					IsDev:   inDevDeps,
+				})
+			}
+		}
+	}
+
+	return deps
+}
+
+// GetDependencyNames returns just the names of dependencies
+func GetDependencyNames(deps []Dependency) []string {
+	var names []string
+	for _, d := range deps {
+		names = append(names, d.Name)
+	}
+	return names
 }

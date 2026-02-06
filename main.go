@@ -44,6 +44,8 @@ func main() {
 		cmdDoctor(args)
 	case "logs":
 		cmdLogs(args)
+	case "resources":
+		cmdResources(args)
 	case "upgrade":
 		cmdUpgrade(args)
 	default:
@@ -67,6 +69,7 @@ Commands:
   next <feature>       Show the next story to work on
   validate <feature>   Validate prd.json schema
   logs <feature>       View run logs (--list, --summary, --follow, etc.)
+  resources            Manage cached framework source code (list, sync, clear)
   doctor               Check Ralph environment
   upgrade              Upgrade Ralph to the latest version
 

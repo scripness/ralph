@@ -559,11 +559,27 @@ func cmdDoctor(args []string) {
 		fmt.Println("Features: none")
 	}
 
-	// Check btca
-	if CheckBtcaAvailable() {
-		fmt.Println("✓ btca available (documentation verification)")
-	} else {
-		fmt.Println("○ btca not found (install for doc verification: https://github.com/nicobailon/btca-tool)")
+	// Check resources cache
+	if err == nil {
+		if cfg.Config.Resources == nil || cfg.Config.Resources.IsEnabled() {
+			codebaseCtx := DiscoverCodebase(projectRoot, &cfg.Config)
+			depNames := GetDependencyNames(codebaseCtx.Dependencies)
+			rm := NewResourceManager(cfg.Config.Resources, depNames)
+			cached, _ := rm.ListCached()
+			if len(cached) > 0 {
+				size, _ := rm.GetCacheSize()
+				fmt.Printf("✓ Resources: %d frameworks cached (%s)\n", len(cached), FormatSize(size))
+			} else {
+				detected := rm.ListDetected()
+				if len(detected) > 0 {
+					fmt.Printf("○ Resources: cache empty, %d detected (will sync on first run)\n", len(detected))
+				} else {
+					fmt.Println("○ Resources: cache empty (no matching frameworks detected)")
+				}
+			}
+		} else {
+			fmt.Println("○ Resources: disabled")
+		}
 	}
 
 	// Check lock status
@@ -1005,5 +1021,152 @@ func followLog(logPath, eventTypeFilter, storyFilter string, jsonOutput bool) {
 		} else {
 			printEvent(&event)
 		}
+	}
+}
+
+func cmdResources(args []string) {
+	projectRoot := GetProjectRoot()
+
+	cfg, err := LoadConfig(projectRoot)
+	if err != nil {
+		// Config not required for resources command
+		cfg = &ResolvedConfig{
+			ProjectRoot: projectRoot,
+			Config:      RalphConfig{},
+		}
+	}
+
+	// Check if resources are disabled
+	if cfg.Config.Resources != nil && !cfg.Config.Resources.IsEnabled() {
+		fmt.Fprintln(os.Stderr, "Resources are disabled in ralph.config.json")
+		os.Exit(1)
+	}
+
+	// Detect dependencies
+	codebaseCtx := DiscoverCodebase(projectRoot, &cfg.Config)
+	depNames := GetDependencyNames(codebaseCtx.Dependencies)
+	rm := NewResourceManager(cfg.Config.Resources, depNames)
+
+	if len(args) == 0 {
+		// Default: show status
+		showResourcesStatus(rm)
+		return
+	}
+
+	subCmd := args[0]
+	subArgs := args[1:]
+
+	switch subCmd {
+	case "list":
+		showResourcesStatus(rm)
+
+	case "sync":
+		if len(subArgs) > 0 {
+			// Sync specific resource
+			name := subArgs[0]
+			fmt.Printf("Syncing %s...\n", name)
+			if err := rm.SyncResource(name); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Done.")
+		} else {
+			// Sync all detected
+			detected := rm.ListDetected()
+			if len(detected) == 0 {
+				fmt.Println("No matching resources detected for this project's dependencies.")
+				return
+			}
+			fmt.Printf("Syncing %d detected resources...\n", len(detected))
+			if err := rm.EnsureResources(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println("Done.")
+		}
+
+	case "clear":
+		fmt.Print("Clear all cached resources? (y/N): ")
+		var confirm string
+		fmt.Scanln(&confirm)
+		if confirm != "y" && confirm != "Y" {
+			fmt.Println("Cancelled.")
+			return
+		}
+		if err := rm.ClearCache(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Cache cleared.")
+
+	case "path":
+		if len(subArgs) == 0 {
+			fmt.Println(rm.GetCacheDir())
+		} else {
+			name := subArgs[0]
+			fmt.Println(rm.GetResourcePath(name))
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown resources subcommand: %s\n", subCmd)
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Usage: ralph resources [subcommand]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Subcommands:")
+		fmt.Fprintln(os.Stderr, "  list              Show cached and detected resources")
+		fmt.Fprintln(os.Stderr, "  sync              Sync all detected resources")
+		fmt.Fprintln(os.Stderr, "  sync <name>       Sync a specific resource")
+		fmt.Fprintln(os.Stderr, "  clear             Clear the resources cache")
+		fmt.Fprintln(os.Stderr, "  path              Print cache directory path")
+		fmt.Fprintln(os.Stderr, "  path <name>       Print path to specific cached resource")
+		os.Exit(1)
+	}
+}
+
+func showResourcesStatus(rm *ResourceManager) {
+	cached, _ := rm.ListCached()
+	detected := rm.ListDetected()
+
+	fmt.Printf("Cache directory: %s\n", rm.GetCacheDir())
+	fmt.Println()
+
+	if len(cached) > 0 {
+		fmt.Printf("Cached resources (%d):\n", len(cached))
+		for _, name := range cached {
+			info := rm.GetCachedRepoInfo(name)
+			if info != nil {
+				fmt.Printf("  - %s (%s, %s)\n", name, info.Commit, FormatSize(info.Size))
+			} else {
+				fmt.Printf("  - %s\n", name)
+			}
+		}
+		size, _ := rm.GetCacheSize()
+		fmt.Printf("\nTotal size: %s\n", FormatSize(size))
+	} else {
+		fmt.Println("No cached resources.")
+	}
+
+	// Show detected but not cached
+	var notCached []string
+	cachedSet := make(map[string]bool)
+	for _, c := range cached {
+		cachedSet[c] = true
+	}
+	for _, d := range detected {
+		if !cachedSet[d] {
+			notCached = append(notCached, d)
+		}
+	}
+	if len(notCached) > 0 {
+		fmt.Printf("\nDetected but not cached (%d):\n", len(notCached))
+		for _, name := range notCached {
+			fmt.Printf("  - %s\n", name)
+		}
+		fmt.Println("\nRun 'ralph resources sync' to clone detected resources.")
+	}
+
+	if len(cached) == 0 && len(detected) == 0 {
+		fmt.Println("\nNo matching frameworks detected for this project's dependencies.")
+		fmt.Println("Resources are cloned automatically on 'ralph run' for detected frameworks.")
 	}
 }

@@ -81,6 +81,7 @@ type RalphConfig struct {
 	Browser    *BrowserConfig   `json:"browser,omitempty"`
 	Commits    *CommitsConfig   `json:"commits,omitempty"`
 	Logging    *LoggingConfig   `json:"logging,omitempty"`
+	Resources  *ResourcesConfig `json:"resources,omitempty"`
 }
 
 // ResolvedConfig is the fully resolved configuration
@@ -296,18 +297,10 @@ func isPlaceholderCommand(cmd string) bool {
 	return strings.HasPrefix(cmd, "echo '") || strings.HasPrefix(cmd, "echo \"")
 }
 
-// CheckBtcaAvailable returns true if btca is in PATH.
-func CheckBtcaAvailable() bool {
-	return isCommandAvailable("btca")
-}
-
 // CheckReadinessWarnings returns non-blocking warnings about the environment.
+// Currently returns no warnings as resources module handles documentation verification.
 func CheckReadinessWarnings() []string {
-	var warnings []string
-	if !CheckBtcaAvailable() {
-		warnings = append(warnings, "btca not found in PATH \u2014 agents cannot verify against latest docs. Install: https://github.com/nicobailon/btca-tool")
-	}
-	return warnings
+	return nil
 }
 
 // CheckReadiness validates that the project is ready for Ralph.

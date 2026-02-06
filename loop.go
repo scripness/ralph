@@ -139,6 +139,20 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	// Pre-resolve browser binary (downloads Chromium if needed)
 	EnsureBrowser(cfg.Config.Browser, prd)
 
+	// Sync source code resources for detected frameworks
+	if cfg.Config.Resources == nil || cfg.Config.Resources.IsEnabled() {
+		codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
+		depNames := GetDependencyNames(codebaseCtx.Dependencies)
+		rm := NewResourceManager(cfg.Config.Resources, depNames)
+		if rm.HasDetectedResources() {
+			logger.LogPrintln("\nSyncing framework resources...")
+			if err := rm.EnsureResources(); err != nil {
+				logger.Warning("resource sync failed: " + err.Error())
+				// Continue anyway - resources are optional enhancement
+			}
+		}
+	}
+
 	// Pre-verify all stories before implementation loop
 	// This catches: already implemented stories, PRD changes that invalidate previous work
 	if err := preVerifyStories(cfg, featureDir, prd, svcMgr, logger); err != nil {

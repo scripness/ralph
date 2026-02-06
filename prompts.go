@@ -197,26 +197,8 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		}
 	}
 
-	// Build btca instructions (conditional on availability)
-	btcaStr := ""
-	if CheckBtcaAvailable() {
-		btcaStr = "## Documentation Verification\n\n" +
-			"Before committing, verify your implementation against current documentation using `btca`:\n\n" +
-			"```\nbtca ask --resource <library> --question \"Is this the correct pattern for <what you built>?\"\n```\n\n" +
-			"Check:\n" +
-			"- APIs you used (current? deprecated?)\n" +
-			"- Configuration patterns (best practices?)\n" +
-			"- Security patterns (input validation, auth, etc.)\n\n" +
-			"If btca has no relevant resource, use web search against official docs instead.\n"
-	} else {
-		btcaStr = "## Documentation Verification\n\n" +
-			"Before committing, verify your implementation against current official documentation using web search:\n\n" +
-			"- Search for the official docs of any library or framework you used\n" +
-			"- Confirm APIs you used are current and not deprecated\n" +
-			"- Verify configuration patterns follow current best practices\n" +
-			"- Check security patterns (input validation, auth, etc.) are up to date\n\n" +
-			"Do not rely on memory alone — docs change between versions. Verify against the latest.\n"
-	}
+	// Build resource verification instructions
+	resourceStr := buildResourceVerificationInstructions(cfg)
 
 	return getPrompt("run", map[string]string{
 		"storyId":            story.ID,
@@ -234,9 +216,9 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		"progress":           buildProgress(prd),
 		"storyMap":           buildStoryMap(prd, story),
 		"browserSteps":       buildBrowserSteps(story),
-		"serviceURLs":        serviceURLsStr,
-		"timeout":            fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
-		"btcaInstructions":   btcaStr,
+		"serviceURLs":                      serviceURLsStr,
+		"timeout":                          fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
+		"resourceVerificationInstructions": resourceStr,
 	})
 }
 
@@ -336,37 +318,23 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 		diffStr = "## Changes Summary\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n\nFor full diff: `git diff " + git.DefaultBranch() + "...HEAD`\n"
 	}
 
-	// Build btca instructions for verify context
-	btcaStr := ""
-	if CheckBtcaAvailable() {
-		btcaStr = "### Documentation Compliance\n\n" +
-			"Use `btca` to verify implementations follow current best practices:\n\n" +
-			"```\nbtca ask --resource <library> --question \"Does this follow current best practices for <pattern>?\"\n```\n\n" +
-			"Check: API patterns are current, no deprecated usage, security practices are up to date.\n" +
-			"If btca has no relevant resource, use web search. Deprecated patterns = RESET.\n"
-	} else {
-		btcaStr = "### Documentation Compliance\n\n" +
-			"Use web search to verify implementations follow current best practices:\n\n" +
-			"- Search official docs for each library/framework used in the implementation\n" +
-			"- Confirm API patterns are current and not deprecated\n" +
-			"- Verify security practices (auth, validation, etc.) are up to date\n\n" +
-			"Deprecated patterns or outdated API usage = RESET.\n"
-	}
+	// Build resource verification instructions for verify context
+	resourceStr := buildResourceVerificationInstructionsForVerify(cfg)
 
 	return getPrompt("verify", map[string]string{
-		"project":            prd.Project,
-		"description":        prd.Description,
-		"storySummaries":     summariesStr,
-		"verifyCommands":     verifyStr,
-		"learnings":          learningsStr,
-		"knowledgeFile":      cfg.Config.Provider.KnowledgeFile,
-		"prdPath":            featureDir.PrdJsonPath(),
-		"branchName":         prd.BranchName,
-		"serviceURLs":        verifyServiceURLs,
-		"diffSummary":        diffStr,
-		"btcaInstructions":   btcaStr,
-		"verifySummary":      verifySummary,
-		"criteriaChecklist":  buildCriteriaChecklist(prd),
+		"project":                           prd.Project,
+		"description":                       prd.Description,
+		"storySummaries":                    summariesStr,
+		"verifyCommands":                    verifyStr,
+		"learnings":                         learningsStr,
+		"knowledgeFile":                     cfg.Config.Provider.KnowledgeFile,
+		"prdPath":                           featureDir.PrdJsonPath(),
+		"branchName":                        prd.BranchName,
+		"serviceURLs":                       verifyServiceURLs,
+		"diffSummary":                       diffStr,
+		"resourceVerificationInstructions":  resourceStr,
+		"verifySummary":                     verifySummary,
+		"criteriaChecklist":                 buildCriteriaChecklist(prd),
 	})
 }
 
@@ -395,4 +363,110 @@ func generatePrdFinalizePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, cont
 		"prdContent": content,
 		"outputPath": featureDir.PrdJsonPath(),
 	})
+}
+
+// buildResourceVerificationInstructions returns instructions for verifying
+// implementations against cached source code resources.
+func buildResourceVerificationInstructions(cfg *ResolvedConfig) string {
+	if cfg.Config.Resources != nil && !cfg.Config.Resources.IsEnabled() {
+		return buildFallbackVerificationInstructions()
+	}
+
+	// Detect dependencies from codebase
+	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
+	depNames := GetDependencyNames(codebaseCtx.Dependencies)
+	rm := NewResourceManager(cfg.Config.Resources, depNames)
+
+	cached, _ := rm.ListCached()
+	if len(cached) == 0 {
+		// Resources enabled but none cached yet - show detected
+		detected := rm.ListDetected()
+		if len(detected) > 0 {
+			return fmt.Sprintf(`## Documentation Verification
+
+Framework source code will be available after first sync. Detected frameworks:
+%s
+
+For now, use web search to verify your implementation against official documentation.
+`, strings.Join(detected, ", "))
+		}
+		return buildFallbackVerificationInstructions()
+	}
+
+	resourceList := strings.Join(cached, ", ")
+	return fmt.Sprintf(`## Documentation Verification
+
+The following framework source code is cached locally:
+%s
+
+**Available at:** %s/<framework>/
+
+To verify your implementation:
+1. Check how the framework implements similar patterns in its source
+2. Look at tests for usage examples
+3. Read inline comments for API intentions
+4. Compare your patterns against framework conventions
+
+For frameworks not cached, use web search against official repos.
+`, resourceList, rm.GetCacheDir())
+}
+
+// buildResourceVerificationInstructionsForVerify returns verify-context instructions.
+func buildResourceVerificationInstructionsForVerify(cfg *ResolvedConfig) string {
+	if cfg.Config.Resources != nil && !cfg.Config.Resources.IsEnabled() {
+		return buildFallbackVerificationInstructionsForVerify()
+	}
+
+	// Detect dependencies from codebase
+	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
+	depNames := GetDependencyNames(codebaseCtx.Dependencies)
+	rm := NewResourceManager(cfg.Config.Resources, depNames)
+
+	cached, _ := rm.ListCached()
+	if len(cached) == 0 {
+		return buildFallbackVerificationInstructionsForVerify()
+	}
+
+	resourceList := strings.Join(cached, ", ")
+	return fmt.Sprintf(`### Documentation Compliance
+
+Framework source code is cached locally for: %s
+
+To verify implementations follow best practices:
+1. Check actual framework source code at %s/<framework>/
+2. Compare implementation patterns against framework tests and examples
+3. Verify API usage matches current framework conventions
+4. Check for deprecated patterns by reading framework source comments
+
+Deprecated patterns or incorrect API usage = RESET.
+`, resourceList, rm.GetCacheDir())
+}
+
+// buildFallbackVerificationInstructions returns web search instructions.
+func buildFallbackVerificationInstructions() string {
+	return `## Documentation Verification
+
+Before committing, verify your implementation against current official documentation using web search:
+
+- Search for the official docs of any library or framework you used
+- Confirm APIs you used are current and not deprecated
+- Verify configuration patterns follow current best practices
+- Check security patterns (input validation, auth, etc.) are up to date
+
+Do not rely on memory alone — docs change between versions. Verify against the latest.
+`
+}
+
+// buildFallbackVerificationInstructionsForVerify returns web search instructions for verify.
+func buildFallbackVerificationInstructionsForVerify() string {
+	return `### Documentation Compliance
+
+Use web search to verify implementations follow current best practices:
+
+- Search official docs for each library/framework used in the implementation
+- Confirm API patterns are current and not deprecated
+- Verify security practices (auth, validation, etc.) are up to date
+
+Deprecated patterns or outdated API usage = RESET.
+`
 }

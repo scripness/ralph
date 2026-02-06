@@ -51,7 +51,7 @@ Every item below must pass. If ANY item fails, you MUST RESET the affected stori
 6. **Documentation**: Has `{{knowledgeFile}}` been updated with patterns discovered during implementation? New conventions or gotchas left undocumented is a RESET.
 7. **Missing Pieces**: Is anything incomplete or skipped?
 
-{{btcaInstructions}}
+{{resourceVerificationInstructions}}
 
 ### Review Verification Output
 

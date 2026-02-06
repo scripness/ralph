@@ -702,65 +702,62 @@ func TestGetPrompt_VerifyWithSummary(t *testing.T) {
 	}
 }
 
-func TestGetPrompt_RunWithBtca(t *testing.T) {
-	btcaInstr := "## Documentation Verification\n\nBefore committing, verify your implementation..."
+func TestGetPrompt_RunWithResourcesCache(t *testing.T) {
+	resourceInstr := "## Documentation Verification\n\nThe following framework source code is cached locally:\nnext, react\n\n**Available at:** ~/.ralph/resources/<framework>/\n"
 	prompt := getPrompt("run", map[string]string{
-		"storyId":            "US-001",
-		"storyTitle":         "Test Story",
-		"storyDescription":   "As a user...",
-		"acceptanceCriteria": "- Criterion 1",
-		"tags":               "",
-		"retryInfo":          "",
-		"verifyCommands":     "- bun run test",
-		"learnings":          "",
-		"knowledgeFile":      "AGENTS.md",
-		"project":            "TestProject",
-		"description":        "Test feature",
-		"branchName":         "ralph/test",
-		"progress":           "0/1",
-		"storyMap":           "→ US-001: Test [CURRENT]",
-		"browserSteps":       "",
-		"btcaInstructions":   btcaInstr,
+		"storyId":                           "US-001",
+		"storyTitle":                        "Test Story",
+		"storyDescription":                  "As a user...",
+		"acceptanceCriteria":                "- Criterion 1",
+		"tags":                              "",
+		"retryInfo":                         "",
+		"verifyCommands":                    "- bun run test",
+		"learnings":                         "",
+		"knowledgeFile":                     "AGENTS.md",
+		"project":                           "TestProject",
+		"description":                       "Test feature",
+		"branchName":                        "ralph/test",
+		"progress":                          "0/1",
+		"storyMap":                          "→ US-001: Test [CURRENT]",
+		"browserSteps":                      "",
+		"resourceVerificationInstructions":  resourceInstr,
 	})
 
 	if !strings.Contains(prompt, "Documentation Verification") {
-		t.Error("prompt should contain btca documentation verification section")
+		t.Error("prompt should contain documentation verification section")
 	}
-	if !strings.Contains(prompt, "verify your implementation") {
-		t.Error("prompt should contain btca instructions content")
+	if !strings.Contains(prompt, "source code is cached") {
+		t.Error("prompt should contain resource cache instructions")
 	}
 }
 
-func TestGetPrompt_RunWithoutBtca(t *testing.T) {
-	// When btca is not available, the web search fallback instructions are used
-	webSearchInstr := "## Documentation Verification\n\nBefore committing, verify your implementation against current official documentation using web search:"
+func TestGetPrompt_RunWithoutResourcesCache(t *testing.T) {
+	// When no resources cached, use web search fallback
+	webSearchInstr := "## Documentation Verification\n\nBefore committing, verify your implementation against current official documentation using web search:\n"
 	prompt := getPrompt("run", map[string]string{
-		"storyId":            "US-001",
-		"storyTitle":         "Test Story",
-		"storyDescription":   "As a user...",
-		"acceptanceCriteria": "- Criterion 1",
-		"tags":               "",
-		"retryInfo":          "",
-		"verifyCommands":     "- bun run test",
-		"learnings":          "",
-		"knowledgeFile":      "AGENTS.md",
-		"project":            "TestProject",
-		"description":        "Test feature",
-		"branchName":         "ralph/test",
-		"progress":           "0/1",
-		"storyMap":           "→ US-001: Test [CURRENT]",
-		"browserSteps":       "",
-		"btcaInstructions":   webSearchInstr,
+		"storyId":                           "US-001",
+		"storyTitle":                        "Test Story",
+		"storyDescription":                  "As a user...",
+		"acceptanceCriteria":                "- Criterion 1",
+		"tags":                              "",
+		"retryInfo":                         "",
+		"verifyCommands":                    "- bun run test",
+		"learnings":                         "",
+		"knowledgeFile":                     "AGENTS.md",
+		"project":                           "TestProject",
+		"description":                       "Test feature",
+		"branchName":                        "ralph/test",
+		"progress":                          "0/1",
+		"storyMap":                          "→ US-001: Test [CURRENT]",
+		"browserSteps":                      "",
+		"resourceVerificationInstructions":  webSearchInstr,
 	})
 
 	if !strings.Contains(prompt, "Documentation Verification") {
-		t.Error("prompt should contain documentation verification section even without btca")
+		t.Error("prompt should contain documentation verification section")
 	}
 	if !strings.Contains(prompt, "web search") {
 		t.Error("prompt should contain web search fallback instructions")
-	}
-	if strings.Contains(prompt, "btca") {
-		t.Error("prompt should NOT mention btca when using web search fallback")
 	}
 }
 

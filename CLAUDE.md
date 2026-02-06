@@ -10,7 +10,7 @@ The core idea ("the Ralph Pattern"): break work into small user stories, spawn f
 
 ```
 main.go           CLI entry point, command dispatch
-commands.go       Command handlers (init, run, verify, prd, status, next, validate, doctor, logs); doctor checks lock status
+commands.go       Command handlers (init, run, verify, prd, status, next, validate, doctor, logs, resources)
 config.go         Configuration loading, validation, provider defaults, readiness checks
 schema.go         PRD data structures, story state machine, validation, PRD quality checks
 prompts.go        Prompt template loading + variable substitution (//go:embed prompts/*)
@@ -26,7 +26,11 @@ cleanup.go        CleanupCoordinator for graceful signal handling and resource c
 atomic.go         Atomic file writes (temp + rename)
 upgrade.go        Self-update via go-selfupdate (scripness/ralph)
 update_check.go   Background update check with 24h cache
-discovery.go      Codebase context discovery (tech stack, frameworks, package manager)
+discovery.go      Codebase context discovery (tech stack, frameworks, package manager, dependencies)
+resources.go      Framework source code caching and management (ResourceManager)
+resourcereg.go    Default resource registry mapping dependencies to source repos
+resourceregistry.go  Cache metadata (registry.json) management
+external_git.go   Git operations for external repos (clone, fetch, pull)
 utils.go          fileExists helper
 ```
 
@@ -98,7 +102,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Signal markers**: Output `<ralph>DONE</ralph>`, `<ralph>STUCK</ralph>`, etc.
 - **Knowledge updates**: Update AGENTS.md/CLAUDE.md with discovered patterns
 - **Learnings**: Output `<ralph>LEARNING:...</ralph>` for cross-iteration memory
-- **Documentation verification**: Use btca to check implementations against current docs (when available)
+- **Documentation verification**: Check implementations against cached framework source code or web search
 
 ### Provider communication protocol (markers in stdout or stderr):
 | Marker | Meaning |
@@ -196,11 +200,16 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
     "maxRuns": 10,
     "consoleTimestamps": true,
     "consoleDurations": true
+  },
+  "resources": {
+    "enabled": true,
+    "cacheDir": "~/.ralph/resources",
+    "custom": []
   }
 }
 ```
 
-`promptMode`, `promptFlag`, `args`, and `knowledgeFile` are auto-detected from `provider.command` if not set. Only `command` is required. `verify.timeout` sets the per-command timeout in seconds (default: 300). `logging` controls the observability system (all options default to shown values).
+`promptMode`, `promptFlag`, `args`, and `knowledgeFile` are auto-detected from `provider.command` if not set. Only `command` is required. `verify.timeout` sets the per-command timeout in seconds (default: 300). `logging` controls the observability system (all options default to shown values). `resources` configures framework source code caching (enabled by default).
 
 ## PRD Schema (v2)
 
@@ -258,7 +267,8 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **PRD quality warnings**: `WarnPRDQuality()` checks stories for missing "Typecheck passes" acceptance criteria (soft warning, does not block).
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
 - **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h. Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`.
-- **btca detection**: `CheckBtcaAvailable()` checks if btca is in PATH. Prompts always include a documentation verification section: btca instructions when available, web search fallback when not. `CheckReadinessWarnings()` returns soft warnings (btca missing) that don't block execution.
+- **Resources module**: `ResourceManager` auto-detects project dependencies via `ExtractDependencies()`, maps them to source repos via `MapDependencyToResource()`, and caches full repos in `~/.ralph/resources/`. Shallow clones (`--depth 1 --single-branch`) minimize disk usage. `EnsureResources()` is called before the story loop to sync detected frameworks. Cache metadata is stored in `registry.json`. Use `ralph resources list/sync/clear` for manual management. `ralph doctor` shows cache status.
+- **Resource verification instructions**: Prompts include `{{resourceVerificationInstructions}}` which tells the agent about cached framework source code. When resources are cached, agents can read actual source to verify implementations. Falls back to web search instructions when no resources are cached.
 - **Verification summary**: `runFinalVerification` accumulates structured PASS/FAIL/WARN lines for each verification step (including truncated command output for failures) and passes them to the verify prompt as `verifySummary`.
 - **Git diff in verify prompt**: `GetDiffSummary()` provides `git diff --stat` output from the default branch to HEAD, injected into the verify prompt as `diffSummary`.
 - **KnowledgeFile change detection**: `HasFileChanged()` in git.go checks if a file was modified on the current branch vs default branch using `git diff --name-only`. Used in final verification to report whether the knowledgeFile was updated.
@@ -270,7 +280,8 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Timestamped console output**: When `logging.consoleTimestamps` is true, status lines are prefixed with `[HH:MM:SS]`. Provider output passes through raw (no timestamps on AI output lines).
 - **Event types**: `run_start`, `run_end`, `iteration_start/end`, `story_start/end`, `provider_start/end`, `provider_output`, `marker_detected`, `verify_start/end`, `verify_cmd_start/end`, `browser_start/end`, `browser_step`, `service_start/ready/restart/health`, `state_change`, `learning`, `warning`, `error`.
 - **Pre-verify phase**: `preVerifyStories()` runs verification on ALL non-blocked stories before the implementation loop. Stories that pass are marked as passed (catches already-implemented work). Stories that fail but were previously marked passed are reset to pending using `ResetStoryForPreVerify()`, which does NOT increment retry count. This enables the "infinite loop" pattern: modify PRD → run → pre-verify detects invalid stories → re-implement.
-- **Codebase discovery**: `DiscoverCodebase()` in discovery.go detects tech stack (go, typescript, python, rust), package manager (bun, npm, yarn, pnpm, go, cargo), and frameworks from config files. Used in PRD creation to provide codebase context to the agent. Detection is lightweight (reads config files, doesn't run commands).
+- **Codebase discovery**: `DiscoverCodebase()` in discovery.go detects tech stack (go, typescript, python, rust), package manager (bun, npm, yarn, pnpm, go, cargo), frameworks, and full dependency list from config files. Used in PRD creation and resource syncing. Detection is lightweight (reads config files, doesn't run commands). `ExtractDependencies()` returns `[]Dependency` with name, version, and isDev flag.
+- **Dependency extraction**: `extractJSDependencies()` parses package.json, `extractGoDependencies()` parses go.mod, `extractPythonDependencies()` parses pyproject.toml/requirements.txt, `extractRustDependencies()` parses Cargo.toml. The `Dependency` struct includes Name, Version, and IsDev fields.
 - **ResetStoryForPreVerify vs ResetStory**: `ResetStory` (called from verify phase RESET marker) increments retries and can block the story. `ResetStoryForPreVerify` (called during pre-verify) resets without incrementing retries — the story wasn't re-attempted, it just became invalid due to PRD changes.
 
 ## Prompt Template Variables
@@ -279,8 +290,8 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 
 | Template | Variables |
 |----------|-----------|
-| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `btcaInstructions` |
-| `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs`, `diffSummary`, `btcaInstructions`, `verifySummary`, `criteriaChecklist` |
+| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `resourceVerificationInstructions` |
+| `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs`, `diffSummary`, `resourceVerificationInstructions`, `verifySummary`, `criteriaChecklist` |
 | `prd-create.md` | `feature`, `outputPath`, `codebaseContext` |
 | `prd-refine.md` | `feature`, `prdContent`, `outputPath` |
 | `prd-finalize.md` | `feature`, `prdContent`, `outputPath` |
@@ -308,7 +319,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 ## Testing
 
 Tests are in `*_test.go` files alongside source. Key test files:
-- `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation, btca availability, verify timeout defaults
+- `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation, verify timeout defaults
 - `schema_test.go` - PRD validation, story state transitions, browser steps, learning deduplication, PRD quality, ResetStoryForPreVerify
 - `discovery_test.go` - tech stack detection, framework detection, codebase context formatting
 - `services_test.go` - output capture, service manager, health checks
@@ -322,6 +333,9 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, DefaultBranch, GetDiffSummary, HasNewCommitSince, IsWorkingTreeClean, GetChangedFiles, HasTestFileChanges)
 - `update_check_test.go` - update check cache path
 - `logger_test.go` - event logging, run numbering, log rotation, event filtering, run summaries
+- `resources_test.go` - ResourceManager, ResourcesConfig, cache operations, FormatSize
+- `resourcereg_test.go` - MapDependencyToResource, MergeWithCustom, DefaultResources validation
+- `external_git_test.go` - ExternalGitOps, Exists, GetRepoSize
 
 Run with `go test ./...` or `go test -v ./...` for verbose output.
 

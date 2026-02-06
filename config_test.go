@@ -590,30 +590,11 @@ func TestGetProjectRoot_WithGitDir(t *testing.T) {
 	}
 }
 
-func TestCheckBtcaAvailable(t *testing.T) {
-	if CheckBtcaAvailable() {
-		t.Skip("btca is installed, cannot test false return")
-	}
-	if CheckBtcaAvailable() {
-		t.Error("expected false when btca is not in PATH")
-	}
-}
-
-func TestCheckReadinessWarnings_NoBtca(t *testing.T) {
-	// btca is unlikely to be in PATH during tests
-	if CheckBtcaAvailable() {
-		t.Skip("btca is installed, cannot test missing-btca warning")
-	}
-
+func TestCheckReadinessWarnings_Empty(t *testing.T) {
+	// Resources module handles documentation verification now, no warnings expected
 	warnings := CheckReadinessWarnings()
-	if len(warnings) != 1 {
-		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
-	}
-	if !strings.Contains(warnings[0], "btca not found") {
-		t.Errorf("expected btca warning, got: %s", warnings[0])
-	}
-	if !strings.Contains(warnings[0], "nicobailon/btca-tool") {
-		t.Errorf("expected install URL in warning, got: %s", warnings[0])
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %d: %v", len(warnings), warnings)
 	}
 }
 
