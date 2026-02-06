@@ -16,10 +16,6 @@ curl -fsSL https://raw.githubusercontent.com/scripness/ralph/main/install.sh | b
 go install github.com/scripness/ralph@latest
 ```
 
-## Recommended Tools
-
-- **[btca](https://github.com/nicobailon/btca-tool)** — Documentation verification tool. When installed, Ralph agents can verify implementations against latest library docs and best practices. Install is optional; `ralph doctor` will show its status.
-
 ## Quick Start
 
 ```bash
@@ -148,6 +144,18 @@ ralph next <feature>           # Show next story to work on
 ralph validate <feature>       # Validate prd.json schema
 ```
 
+### Resource Commands
+
+```bash
+ralph resources list           # Show cached framework source code
+ralph resources sync           # Sync all detected dependencies
+ralph resources sync <name>    # Sync specific resource (e.g., "next")
+ralph resources clear          # Clear all cached resources
+ralph resources path <name>    # Print path to cached resource
+```
+
+Ralph auto-detects project dependencies and caches their source code repositories locally. This allows AI agents to verify implementations against actual framework source code, tests, and examples.
+
 ### Observability Commands
 
 ```bash
@@ -213,6 +221,11 @@ ralph upgrade                  # Update to latest version
     "maxRuns": 10,
     "consoleTimestamps": true,
     "consoleDurations": true
+  },
+  "resources": {
+    "enabled": true,
+    "cacheDir": "~/.ralph/resources",
+    "custom": []
   }
 }
 ```
@@ -246,6 +259,9 @@ ralph upgrade                  # Update to latest version
 | logging | `maxRuns` | int | `10` | Max log files to keep per feature |
 | logging | `consoleTimestamps` | bool | `true` | Show timestamps in console output |
 | logging | `consoleDurations` | bool | `true` | Show durations in console output |
+| resources | `enabled` | bool | `true` | Enable framework source caching |
+| resources | `cacheDir` | string | `~/.ralph/resources` | Where to cache framework repos |
+| resources | `custom` | Resource[] | `[]` | Custom framework mappings |
 
 ### Provider Auto-Detection
 
@@ -429,6 +445,61 @@ Ralph auto-detects these via `ralph prd` discovery:
 | **Rust** | `Cargo.toml` | cargo |
 
 Frameworks detected: React, Next.js, Vue, Svelte, Express, FastAPI, Gin, etc.
+
+## Framework Source Caching
+
+Ralph automatically detects project dependencies and caches their source code repositories locally in `~/.ralph/resources/`. This enables AI agents to verify implementations against actual framework source code, tests, and examples.
+
+### How It Works
+
+1. **Detection**: When you run `ralph run`, Ralph extracts dependencies from package.json, go.mod, pyproject.toml, or Cargo.toml
+2. **Mapping**: Dependencies are mapped to their source repositories (e.g., "next" → github.com/vercel/next.js)
+3. **Caching**: Repos are cloned as shallow clones (`--depth 1`) to minimize disk usage
+4. **Sync**: Before each run, repos are synced to latest if out of date
+5. **Verification**: AI agents receive paths to cached source code for implementation verification
+
+### Built-in Resources
+
+~30 popular frameworks are mapped by default:
+
+| Category | Frameworks |
+|----------|------------|
+| **Frontend** | React, Next.js, Vue, Nuxt, Svelte, SvelteKit, Angular |
+| **Styling** | Tailwind CSS |
+| **Backend** | Express, Fastify, Hono, Koa, Gin, Echo, Fiber, Chi |
+| **ORM** | Prisma, Drizzle |
+| **Testing** | Vitest, Jest, Playwright |
+| **Validation** | Zod |
+| **Build Tools** | Vite, esbuild, Webpack |
+| **State** | Zustand, Jotai |
+
+### Custom Resources
+
+Add custom framework mappings in `ralph.config.json`:
+
+```json
+{
+  "resources": {
+    "custom": [
+      {
+        "name": "internal-ui",
+        "url": "https://github.com/company/ui-library",
+        "branch": "main",
+        "notes": "Internal component library. Check src/components for patterns."
+      }
+    ]
+  }
+}
+```
+
+### Disk Usage
+
+Typical shallow clones:
+- Next.js: ~450MB
+- React: ~280MB
+- Smaller libs (Zod, Hono): ~10-30MB
+
+Use `ralph resources clear` to free space when needed.
 
 ## Use Cases
 
