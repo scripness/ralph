@@ -23,7 +23,7 @@ func TestGetPrompt_Run(t *testing.T) {
 		"progress":           "1/3 stories complete",
 		"storyMap":           "✓ US-000: Setup\n→ US-001: Test Story [CURRENT]",
 		"browserSteps":       "",
-		"btcaInstructions":   "",
+		"resourceVerificationInstructions": "",
 	})
 
 	if !strings.Contains(prompt, "US-001") {
@@ -70,7 +70,7 @@ func TestGetPrompt_Verify(t *testing.T) {
 		"branchName":         "ralph/test",
 		"serviceURLs":        "",
 		"diffSummary":        "",
-		"btcaInstructions":   "",
+		"resourceVerificationInstructions": "",
 		"verifySummary":      "",
 		"criteriaChecklist":  "",
 	})
@@ -201,7 +201,7 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"outputPath":         "/test",
 			"prdPath":            "/test/prd.json",
 			"serviceURLs":        "",
-			"btcaInstructions":   "",
+			"resourceVerificationInstructions": "",
 			"diffSummary":        "",
 			"verifySummary":      "",
 			"criteriaChecklist":  "",
@@ -674,7 +674,7 @@ func TestGetPrompt_VerifyWithSummary(t *testing.T) {
 		"branchName":         "ralph/test",
 		"serviceURLs":        "",
 		"diffSummary":        "## Changes Summary\n\n```\n 3 files changed, 50 insertions(+)\n```\n",
-		"btcaInstructions":   "",
+		"resourceVerificationInstructions": "",
 		"verifySummary":      summary,
 		"criteriaChecklist":  "### US-001: Login\n- [ ] Form validates\n- [ ] Token returned\n",
 	})
@@ -834,7 +834,7 @@ func TestGetPrompt_VerifyWithCriteriaChecklist(t *testing.T) {
 		"branchName":         "ralph/test",
 		"serviceURLs":        "",
 		"diffSummary":        "",
-		"btcaInstructions":   "",
+		"resourceVerificationInstructions": "",
 		"verifySummary":      "",
 		"criteriaChecklist":  checklist,
 	})
