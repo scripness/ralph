@@ -276,6 +276,20 @@ func (prd *PRD) MarkStoryBlocked(storyID, notes string) {
 	}
 }
 
+// ResetStoryForPreVerify resets a story to pending without incrementing retries.
+// Used during pre-verification when a story no longer passes its checks.
+// Unlike ResetStory (called from verify phase), this doesn't count as a failed attempt.
+func (prd *PRD) ResetStoryForPreVerify(storyID, notes string) {
+	for i := range prd.UserStories {
+		if prd.UserStories[i].ID == storyID {
+			prd.UserStories[i].Passes = false
+			prd.UserStories[i].LastResult = nil
+			prd.UserStories[i].Notes = notes
+			break
+		}
+	}
+}
+
 // CountComplete returns the number of completed stories
 func CountComplete(prd *PRD) int {
 	count := 0

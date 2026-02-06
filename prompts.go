@@ -371,10 +371,11 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 }
 
 // generatePrdCreatePrompt generates the prompt for creating a new PRD
-func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir) string {
+func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, codebaseCtx *CodebaseContext) string {
 	return getPrompt("prd-create", map[string]string{
-		"feature":    featureDir.Feature,
-		"outputPath": featureDir.PrdMdPath(),
+		"feature":         featureDir.Feature,
+		"outputPath":      featureDir.PrdMdPath(),
+		"codebaseContext": FormatCodebaseContext(codebaseCtx),
 	})
 }
 

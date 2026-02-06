@@ -14,7 +14,7 @@ commands.go       Command handlers (init, run, verify, prd, status, next, valida
 config.go         Configuration loading, validation, provider defaults, readiness checks
 schema.go         PRD data structures, story state machine, validation, PRD quality checks
 prompts.go        Prompt template loading + variable substitution (//go:embed prompts/*)
-loop.go           Main agent loop, provider subprocess management, verification orchestration
+loop.go           Main agent loop, provider subprocess management, verification orchestration, pre-verify phase
 logger.go         JSONL event logging, run history, timestamped console output
 browser.go        Browser automation via rod (Chrome DevTools Protocol)
 prd.go            Interactive PRD state machine (create/refine/finalize)
@@ -26,6 +26,7 @@ cleanup.go        CleanupCoordinator for graceful signal handling and resource c
 atomic.go         Atomic file writes (temp + rename)
 upgrade.go        Self-update via go-selfupdate (scripness/ralph)
 update_check.go   Background update check with 24h cache
+discovery.go      Codebase context discovery (tech stack, frameworks, package manager)
 utils.go          fileExists helper
 ```
 
@@ -48,11 +49,15 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
 ## How the CLI Works (End-to-End)
 
 1. `ralph init` creates `ralph.config.json` and `.ralph/` directory (with `.ralph/.gitignore`). Use `--force` to overwrite existing config.
-2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> refine (edit/regenerate) -> finalize to prd.json. Each phase presents lettered options (a/b/c/q) via stdin.
+2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> refine (edit/regenerate) -> finalize to prd.json. Each phase presents lettered options (a/b/c/q) via stdin. When creating a new PRD, discovery runs first to detect the codebase context (tech stack, frameworks, verify commands) and includes it in the prompt.
 3. `ralph run <feature>` enters the main loop:
    - Readiness gate: refuses to run if QA commands are missing/placeholder or command binaries aren't in PATH
    - Signal handling: SIGINT/SIGTERM releases the lock and exits with code 130
    - Loads config + PRD, acquires lock, ensures git branch, starts services
+   - **Pre-verify phase**: runs verification on ALL non-blocked stories before implementation
+     - Stories that pass are marked as passed (catches already-implemented work)
+     - Stories that fail but were previously marked passed are reset to pending (catches PRD changes that invalidate previous work)
+     - This uses `ResetStoryForPreVerify` which does NOT increment retry count
    - Each iteration: picks next story (highest priority, not passed/blocked), generates prompt, spawns provider subprocess, captures output with marker detection
    - After provider signals `<ralph>DONE</ralph>`, CLI runs verification commands + browser checks (console errors are hard failures) + service health checks
    - Pass -> mark story complete; Fail -> retry (up to maxRetries, then block)
@@ -264,6 +269,9 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Run logging**: `RunLogger` in logger.go writes JSONL event logs to `.ralph/YYYY-MM-DD-feature/logs/run-NNN.jsonl`. Events include timestamps, durations, story context, and full provider/verification output. Logs are auto-rotated to keep only `maxRuns` most recent.
 - **Timestamped console output**: When `logging.consoleTimestamps` is true, status lines are prefixed with `[HH:MM:SS]`. Provider output passes through raw (no timestamps on AI output lines).
 - **Event types**: `run_start`, `run_end`, `iteration_start/end`, `provider_start/end`, `provider_output`, `marker_detected`, `verify_start/end`, `verify_cmd_start/end`, `browser_start/end`, `service_start/ready/restart/health`, `state_change`, `learning`, `warning`, `error`.
+- **Pre-verify phase**: `preVerifyStories()` runs verification on ALL non-blocked stories before the implementation loop. Stories that pass are marked as passed (catches already-implemented work). Stories that fail but were previously marked passed are reset to pending using `ResetStoryForPreVerify()`, which does NOT increment retry count. This enables the "infinite loop" pattern: modify PRD → run → pre-verify detects invalid stories → re-implement.
+- **Codebase discovery**: `DiscoverCodebase()` in discovery.go detects tech stack (go, typescript, python, rust), package manager (bun, npm, yarn, pnpm, go, cargo), and frameworks from config files. Used in PRD creation to provide codebase context to the agent. Detection is lightweight (reads config files, doesn't run commands).
+- **ResetStoryForPreVerify vs ResetStory**: `ResetStory` (called from verify phase RESET marker) increments retries and can block the story. `ResetStoryForPreVerify` (called during pre-verify) resets without incrementing retries — the story wasn't re-attempted, it just became invalid due to PRD changes.
 
 ## Prompt Template Variables
 
@@ -273,7 +281,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 |----------|-----------|
 | `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `btcaInstructions` |
 | `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs`, `diffSummary`, `btcaInstructions`, `verifySummary`, `criteriaChecklist` |
-| `prd-create.md` | `feature`, `outputPath` |
+| `prd-create.md` | `feature`, `outputPath`, `codebaseContext` |
 | `prd-refine.md` | `feature`, `prdContent`, `outputPath` |
 | `prd-finalize.md` | `feature`, `prdContent`, `outputPath` |
 
@@ -301,7 +309,8 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 
 Tests are in `*_test.go` files alongside source. Key test files:
 - `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation, btca availability, verify timeout defaults
-- `schema_test.go` - PRD validation, story state transitions, browser steps, learning deduplication, PRD quality
+- `schema_test.go` - PRD validation, story state transitions, browser steps, learning deduplication, PRD quality, ResetStoryForPreVerify
+- `discovery_test.go` - tech stack detection, framework detection, codebase context formatting
 - `services_test.go` - output capture, service manager, health checks
 - `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism
 - `loop_test.go` - marker detection, provider result parsing, command timeout, runCommand

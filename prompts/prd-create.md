@@ -2,6 +2,8 @@
 
 Help create a Product Requirements Document for this feature. Your job is to gather requirements and produce a structured PRD — do NOT start implementing.
 
+{{codebaseContext}}
+
 ## Step 1: Clarifying Questions
 
 First, ask 3-5 critical questions to understand the requirements:

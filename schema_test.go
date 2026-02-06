@@ -391,6 +391,50 @@ func TestMarkStoryBlocked(t *testing.T) {
 	}
 }
 
+func TestResetStoryForPreVerify(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: true, Retries: 2, LastResult: &LastResult{Commit: "abc123"}},
+		},
+	}
+
+	prd.ResetStoryForPreVerify("US-001", "pre-verify: acceptance criteria changed")
+
+	story := GetStoryByID(prd, "US-001")
+	if story.Passes {
+		t.Error("expected passes=false after pre-verify reset")
+	}
+	if story.LastResult != nil {
+		t.Error("expected lastResult=nil after pre-verify reset")
+	}
+	// Key difference from ResetStory: retries should NOT be incremented
+	if story.Retries != 2 {
+		t.Errorf("expected retries=2 (unchanged), got %d", story.Retries)
+	}
+	if story.Notes != "pre-verify: acceptance criteria changed" {
+		t.Errorf("expected notes set, got '%s'", story.Notes)
+	}
+	if story.Blocked {
+		t.Error("expected not blocked (pre-verify reset doesn't block)")
+	}
+}
+
+func TestResetStoryForPreVerify_NotFound(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: true},
+		},
+	}
+
+	// Should not panic
+	prd.ResetStoryForPreVerify("US-999", "reason")
+
+	story := GetStoryByID(prd, "US-001")
+	if !story.Passes {
+		t.Error("expected US-001 to remain passed")
+	}
+}
+
 func TestMarkStoryBlocked_NonExistent(t *testing.T) {
 	prd := &PRD{
 		UserStories: []UserStory{

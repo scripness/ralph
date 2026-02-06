@@ -38,8 +38,11 @@ func runPrdStateMachine(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 func prdStateNew(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	fmt.Printf("Starting PRD for '%s'...\n\n", featureDir.Feature)
 
+	// Discover codebase context
+	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
+
 	// Generate and run brainstorming prompt
-	prompt := generatePrdCreatePrompt(cfg, featureDir)
+	prompt := generatePrdCreatePrompt(cfg, featureDir, codebaseCtx)
 	if err := runProviderInteractive(cfg, prompt); err != nil {
 		return err
 	}

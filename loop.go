@@ -139,6 +139,22 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	// Pre-resolve browser binary (downloads Chromium if needed)
 	EnsureBrowser(cfg.Config.Browser, prd)
 
+	// Pre-verify all stories before implementation loop
+	// This catches: already implemented stories, PRD changes that invalidate previous work
+	if err := preVerifyStories(cfg, featureDir, prd, svcMgr, logger); err != nil {
+		logger.Error("pre-verification failed", err)
+		logger.RunEnd(false, "pre-verification failed")
+		return err
+	}
+
+	// Reload PRD after pre-verification may have changed state
+	prd, err = LoadPRD(prdPath)
+	if err != nil {
+		logger.Error("failed to reload PRD after pre-verify", err)
+		logger.RunEnd(false, "PRD reload failed")
+		return err
+	}
+
 	iteration := 0
 	for {
 		iteration++
@@ -816,6 +832,85 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 	}
 
 	return result, nil
+}
+
+// preVerifyStories runs verification on all stories before the implementation loop.
+// This catches: already implemented stories, PRD changes that invalidate previous work.
+// Stories that pass are marked as passed (if not already). Stories that fail are reset to pending.
+func preVerifyStories(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svcMgr *ServiceManager, logger *RunLogger) error {
+	prdPath := featureDir.PrdJsonPath()
+	git := NewGitOps(cfg.ProjectRoot)
+
+	logger.LogPrintln("\nPre-verifying stories...")
+	fmt.Println(strings.Repeat("-", 60))
+
+	stateChanged := false
+	for i := range prd.UserStories {
+		story := &prd.UserStories[i]
+		if story.Blocked {
+			logger.LogPrint("  %s: skipped (blocked)\n", story.ID)
+			continue
+		}
+
+		// Run verification for this story
+		result, err := runStoryVerification(cfg, featureDir, story, svcMgr, logger)
+		if err != nil {
+			return fmt.Errorf("pre-verify %s: %w", story.ID, err)
+		}
+
+		if result.passed {
+			if !story.Passes {
+				// Story wasn't marked as passed but verification succeeds
+				// This means it was already implemented (e.g., manually or from previous run)
+				logger.LogPrint("  %s: ✓ already implemented, marking passed\n", story.ID)
+				commit := git.GetLastCommitShort()
+				prd.MarkStoryPassed(story.ID, commit, "pre-verify: already implemented")
+				logger.StateChange(story.ID, "pending", "passed", map[string]interface{}{"source": "pre-verify"})
+				stateChanged = true
+			} else {
+				logger.LogPrint("  %s: ✓ still passes\n", story.ID)
+			}
+		} else {
+			if story.Passes {
+				// Story was marked as passed but no longer passes verification
+				// Reset it for re-implementation (without counting as a retry)
+				logger.LogPrint("  %s: ✗ no longer passes, resetting for re-implementation\n", story.ID)
+				logger.LogPrint("    └─ %s\n", result.reason)
+				prd.ResetStoryForPreVerify(story.ID, fmt.Sprintf("pre-verify failed: %s", result.reason))
+				logger.StateChange(story.ID, "passed", "pending", map[string]interface{}{"source": "pre-verify", "reason": result.reason})
+				stateChanged = true
+			} else {
+				logger.LogPrint("  %s: ○ pending implementation\n", story.ID)
+			}
+		}
+	}
+
+	fmt.Println(strings.Repeat("-", 60))
+
+	// Save PRD if state changed
+	if stateChanged {
+		if err := SavePRD(prdPath, prd); err != nil {
+			return fmt.Errorf("failed to save PRD after pre-verify: %w", err)
+		}
+		if cfg.Config.Commits.PrdChanges {
+			if err := commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: pre-verify state update"); err != nil {
+				fmt.Printf("Warning: failed to commit PRD: %v\n", err)
+			}
+		}
+	}
+
+	// Log summary
+	passed := CountComplete(prd)
+	pending := 0
+	blocked := CountBlocked(prd)
+	for _, s := range prd.UserStories {
+		if !s.Passes && !s.Blocked {
+			pending++
+		}
+	}
+	logger.LogPrint("\nPre-verify summary: %d passed, %d pending, %d blocked\n", passed, pending, blocked)
+
+	return nil
 }
 
 // runFinalVerification runs final verification and handles story resets
