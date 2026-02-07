@@ -170,7 +170,7 @@ func TestIsCommandAvailable(t *testing.T) {
 func TestWriteDefaultConfig(t *testing.T) {
 	dir := t.TempDir()
 
-	err := WriteDefaultConfig(dir, "claude")
+	err := WriteDefaultConfig(dir, "claude", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestWriteDefaultConfig_AutoDetection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 
-			err := WriteDefaultConfig(dir, tt.command)
+			err := WriteDefaultConfig(dir, tt.command, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -456,6 +456,13 @@ func TestHasPlaceholderVerifyCommands(t *testing.T) {
 }
 
 func TestCheckReadiness_PlaceholderCommands(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
 	cfg := &RalphConfig{
 		Verify: VerifyConfig{
 			Default: []string{"echo 'Add your test command'"},
@@ -477,6 +484,13 @@ func TestCheckReadiness_PlaceholderCommands(t *testing.T) {
 }
 
 func TestCheckReadiness_UIStoriesNoVerifyUI(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
 	cfg := &RalphConfig{
 		Verify: VerifyConfig{
 			Default: []string{"go version"},
@@ -498,6 +512,13 @@ func TestCheckReadiness_UIStoriesNoVerifyUI(t *testing.T) {
 }
 
 func TestCheckReadiness_AllGood(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
 	cfg := &RalphConfig{
 		Verify: VerifyConfig{
 			Default: []string{"go vet ./..."},
@@ -517,6 +538,13 @@ func TestCheckReadiness_AllGood(t *testing.T) {
 }
 
 func TestCheckReadiness_NoUIStories(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
 	cfg := &RalphConfig{
 		Verify: VerifyConfig{
 			Default: []string{"go version"},
@@ -616,11 +644,22 @@ func TestGetProjectRoot_WithGitDir(t *testing.T) {
 	}
 }
 
-func TestCheckReadinessWarnings_Empty(t *testing.T) {
-	// Resources module handles documentation verification now, no warnings expected
-	warnings := CheckReadinessWarnings()
+func TestCheckReadinessWarnings_KnownProvider(t *testing.T) {
+	cfg := &RalphConfig{Provider: ProviderConfig{Command: "claude"}}
+	warnings := CheckReadinessWarnings(cfg)
 	if len(warnings) != 0 {
-		t.Errorf("expected no warnings, got %d: %v", len(warnings), warnings)
+		t.Errorf("expected no warnings for known provider, got %d: %v", len(warnings), warnings)
+	}
+}
+
+func TestCheckReadinessWarnings_UnknownProvider(t *testing.T) {
+	cfg := &RalphConfig{Provider: ProviderConfig{Command: "my-custom-ai"}}
+	warnings := CheckReadinessWarnings(cfg)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning for unknown provider, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "my-custom-ai") || !strings.Contains(warnings[0], "not a known provider") {
+		t.Errorf("unexpected warning: %s", warnings[0])
 	}
 }
 
@@ -769,5 +808,196 @@ func TestCheckReadiness_RalphDirWritability(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected '.ralph/ directory is not writable' issue, got %v", issues)
+	}
+}
+
+func TestWriteDefaultConfig_WithVerifyCommands(t *testing.T) {
+	dir := t.TempDir()
+
+	commands := []string{"go vet ./...", "golangci-lint run", "go test ./..."}
+	err := WriteDefaultConfig(dir, "claude", commands)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("failed to load written config: %v", err)
+	}
+
+	if len(cfg.Config.Verify.Default) != 3 {
+		t.Fatalf("expected 3 verify commands, got %d", len(cfg.Config.Verify.Default))
+	}
+	for i, cmd := range commands {
+		if cfg.Config.Verify.Default[i] != cmd {
+			t.Errorf("verify.default[%d]: got %q, want %q", i, cfg.Config.Verify.Default[i], cmd)
+		}
+	}
+	// Should not have placeholder commands
+	if HasPlaceholderVerifyCommands(&cfg.Config) {
+		t.Error("expected no placeholder commands when real commands provided")
+	}
+}
+
+func TestWriteDefaultConfig_EmptyVerifyCommands(t *testing.T) {
+	dir := t.TempDir()
+
+	err := WriteDefaultConfig(dir, "claude", []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("failed to load written config: %v", err)
+	}
+
+	// Empty slice should fall back to placeholders
+	if !HasPlaceholderVerifyCommands(&cfg.Config) {
+		t.Error("expected placeholder commands when empty slice provided")
+	}
+}
+
+func TestWriteDefaultConfig_NoCommitsMessage(t *testing.T) {
+	dir := t.TempDir()
+
+	err := WriteDefaultConfig(dir, "claude", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "ralph.config.json"))
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+
+	if strings.Contains(string(data), "message") {
+		t.Error("expected no 'message' field in written config (commits.message was removed)")
+	}
+}
+
+func TestValidateConfig_ServiceReadyURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		ready   string
+		wantErr bool
+	}{
+		{"http URL", "http://localhost:3000", false},
+		{"https URL", "https://localhost:3000", false},
+		{"missing scheme", "localhost:3000", true},
+		{"bare port", ":3000", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &RalphConfig{
+				Provider: ProviderConfig{Command: "claude"},
+				Verify:   VerifyConfig{Default: []string{"go test ./..."}},
+				Services: []ServiceConfig{
+					{Name: "dev", Ready: tt.ready},
+				},
+			}
+			err := validateConfig(cfg)
+			if tt.wantErr && err == nil {
+				t.Error("expected error for invalid service ready URL")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if tt.wantErr && err != nil && !strings.Contains(err.Error(), "must be an HTTP URL") {
+				t.Errorf("expected 'must be an HTTP URL' error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckReadiness_RalphDirMissing(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	// Deliberately NOT creating .ralph directory
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, ".ralph/ directory not found") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected '.ralph/ directory not found' issue, got %v", issues)
+	}
+}
+
+func TestCheckReadiness_BrowserExecutablePath(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+		},
+		Browser: &BrowserConfig{
+			Enabled:        true,
+			ExecutablePath: "/nonexistent/path/to/chromium",
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "browser.executablePath not found") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'browser.executablePath not found' issue, got %v", issues)
+	}
+}
+
+func TestCheckReadiness_BrowserExecutablePathValid(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
+
+	// Create a fake browser binary
+	fakeBin := filepath.Join(dir, "fake-chromium")
+	os.WriteFile(fakeBin, []byte("#!/bin/sh"), 0755)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+		},
+		Browser: &BrowserConfig{
+			Enabled:        true,
+			ExecutablePath: fakeBin,
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	for _, issue := range issues {
+		if strings.Contains(issue, "browser.executablePath") {
+			t.Errorf("unexpected browser issue for valid path: %s", issue)
+		}
 	}
 }

@@ -19,7 +19,7 @@ go install github.com/scripness/ralph@latest
 ## Quick Start
 
 ```bash
-# Initialize Ralph in your project
+# Initialize Ralph (prompts for provider + verify commands)
 ralph init
 
 # Create a PRD for a feature
@@ -106,7 +106,7 @@ stateDiagram-v2
 ## How It Works
 
 1. Ralph loads `.ralph/*-[feature]/prd.json`
-2. **Readiness check**: refuses to run if verify commands are placeholder, binaries missing from PATH, not inside a git repo, or `.ralph/` is not writable
+2. **Readiness check**: refuses to run if `.ralph/` is missing, verify commands are placeholder, binaries missing from PATH, not inside a git repo, or `.ralph/` is not writable
 3. **Pre-verify phase**: runs verification on ALL non-blocked stories before implementation
    - Stories that pass are marked as passed (catches already-implemented work)
    - Stories that fail but were previously marked passed are reset to pending (catches PRD changes)
@@ -210,8 +210,7 @@ ralph upgrade                  # Update to latest version
     "screenshotDir": ".ralph/screenshots"
   },
   "commits": {
-    "prdChanges": true,
-    "message": "chore: update prd.json"
+    "prdChanges": true
   },
   "logging": {
     "enabled": true,
@@ -251,7 +250,6 @@ ralph upgrade                  # Update to latest version
 | browser | `executablePath` | string | auto-detected | Path to Chrome/Chromium binary |
 | browser | `screenshotDir` | string | `.ralph/screenshots` | Where to save screenshots |
 | commits | `prdChanges` | bool | `true` | Auto-commit prd.json changes |
-| commits | `message` | string | `chore: update prd.json` | Commit message for PRD changes |
 | logging | `enabled` | bool | `true` | Enable JSONL logging |
 | logging | `maxRuns` | int | `10` | Max log files to keep per feature |
 | logging | `consoleTimestamps` | bool | `true` | Show timestamps in console output |
@@ -562,6 +560,14 @@ Add e2e test commands to `ralph.config.json`:
   "verify": {
     "ui": ["bun run test:e2e"]
   }
+}
+```
+
+### "services[N].ready must be an HTTP URL"
+Service ready URLs must include the protocol scheme:
+```json
+{
+  "services": [{ "name": "dev", "ready": "http://localhost:3000" }]
 }
 ```
 

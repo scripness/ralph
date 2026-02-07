@@ -608,12 +608,13 @@ func EnsureBrowser(config *BrowserConfig, prd *PRD) {
 	}
 
 	// Slow path: download needed
-	fmt.Println("Downloading Chromium for browser verification...")
+	fmt.Println("Browser verification requires Chromium. Downloading (~150MB)...")
 	b.Logger = browserLogger{}
 	binPath, err := b.Get()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  ✗ Failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "  Set browser.executablePath in ralph.config.json to use an existing browser.")
+		fmt.Fprintf(os.Stderr, "  ✗ Chromium download failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  Browser verification disabled (Chromium not available).")
+		fmt.Fprintln(os.Stderr, "  Set browser.executablePath or browser.enabled=false in config.")
 		config.Enabled = false
 		return
 	}

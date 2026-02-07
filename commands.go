@@ -72,6 +72,36 @@ func promptProviderSelection(reader *bufio.Reader) string {
 	}
 }
 
+// promptVerifyCommands prompts the user for typecheck, lint, and test commands.
+// Returns only the non-empty commands. reader is accepted as a parameter so tests can inject controlled input.
+func promptVerifyCommands(reader *bufio.Reader) []string {
+	fmt.Println()
+	fmt.Println("Verify commands (press Enter to skip any):")
+	fmt.Println()
+
+	prompts := []struct {
+		label   string
+		example string
+	}{
+		{"Typecheck", "e.g. bun run typecheck, go vet ./..., npx tsc --noEmit"},
+		{"Lint", "e.g. bun run lint, golangci-lint run, npx eslint ."},
+		{"Test", "e.g. bun run test:unit, go test ./..., pytest"},
+	}
+
+	var commands []string
+	for _, p := range prompts {
+		fmt.Printf("  %s (%s)\n", p.label, p.example)
+		fmt.Print("  > ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input != "" {
+			commands = append(commands, input)
+		}
+	}
+
+	return commands
+}
+
 func cmdInit(args []string) {
 	force := false
 	for _, arg := range args {
@@ -95,8 +125,11 @@ func cmdInit(args []string) {
 	reader := bufio.NewReader(os.Stdin)
 	providerCommand := promptProviderSelection(reader)
 
+	// Prompt for verify commands
+	verifyCommands := promptVerifyCommands(reader)
+
 	// Create ralph.config.json
-	if err := WriteDefaultConfig(projectRoot, providerCommand); err != nil {
+	if err := WriteDefaultConfig(projectRoot, providerCommand, verifyCommands); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write config: %v\n", err)
 		os.Exit(1)
 	}
@@ -119,14 +152,26 @@ screenshots/
 		fmt.Fprintf(os.Stderr, "Warning: failed to write .gitignore: %v\n", err)
 	}
 
+	fmt.Println()
 	fmt.Println("Initialized Ralph:")
-	fmt.Printf("  - Created %s\n", configPath)
-	fmt.Printf("  - Created %s\n", ralphDir)
+	fmt.Printf("  Provider: %s\n", providerCommand)
+	if len(verifyCommands) > 0 {
+		fmt.Printf("  Verify commands: %s\n", strings.Join(verifyCommands, ", "))
+	} else {
+		fmt.Println("  Verify commands: (placeholders — edit ralph.config.json)")
+	}
+	fmt.Printf("  Config: %s\n", configPath)
+	fmt.Printf("  Data dir: %s\n", ralphDir)
 	fmt.Println()
 	fmt.Println("Next steps:")
-	fmt.Println("  1. Edit ralph.config.json with your provider and verify commands")
-	fmt.Println("  2. Run 'ralph prd <feature>' to create a PRD")
-	fmt.Println("  3. Run 'ralph run <feature>' to start the agent loop")
+	if len(verifyCommands) == 0 {
+		fmt.Println("  1. Edit ralph.config.json with your verify commands")
+		fmt.Println("  2. Run 'ralph prd <feature>' to create a PRD")
+		fmt.Println("  3. Run 'ralph run <feature>' to start the agent loop")
+	} else {
+		fmt.Println("  1. Run 'ralph prd <feature>' to create a PRD")
+		fmt.Println("  2. Run 'ralph run <feature>' to start the agent loop")
+	}
 }
 
 func cmdRun(args []string) {
@@ -181,7 +226,7 @@ func cmdRun(args []string) {
 	}
 
 	// Environment warnings (soft — warn but don't block)
-	if warnings := CheckReadinessWarnings(); len(warnings) > 0 {
+	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
 		for _, w := range warnings {
 			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
 		}
@@ -253,7 +298,7 @@ func cmdVerify(args []string) {
 	}
 
 	// Environment warnings (soft — warn but don't block)
-	if warnings := CheckReadinessWarnings(); len(warnings) > 0 {
+	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
 		for _, w := range warnings {
 			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
 		}
@@ -297,6 +342,14 @@ func cmdPrd(args []string) {
 	}
 
 	checkProviderAvailable(cfg)
+	checkGitAvailable()
+
+	// Warn about placeholder verify commands (soft — don't block PRD creation)
+	if HasPlaceholderVerifyCommands(&cfg.Config) {
+		fmt.Fprintln(os.Stderr, "Warning: verify.default contains placeholder commands.")
+		fmt.Fprintln(os.Stderr, "Edit ralph.config.json before running 'ralph run'.")
+		fmt.Fprintln(os.Stderr, "")
+	}
 
 	// Find or create feature directory
 	featureDir, err := FindFeatureDir(projectRoot, feature, true)

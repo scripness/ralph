@@ -145,7 +145,8 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		depNames := GetDependencyNames(codebaseCtx.Dependencies)
 		rm := NewResourceManager(cfg.Config.Resources, depNames)
 		if rm.HasDetectedResources() {
-			logger.LogPrintln("\nSyncing framework resources...")
+			detected := rm.ListDetected()
+			logger.LogPrint("\nSyncing %d framework resources (%s)...\n", len(detected), strings.Join(detected, ", "))
 			if err := rm.EnsureResources(); err != nil {
 				logger.Warning("resource sync failed: " + err.Error())
 				// Continue anyway - resources are optional enhancement

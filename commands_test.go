@@ -50,6 +50,54 @@ func TestPromptProviderSelection_InvalidThenValid(t *testing.T) {
 	}
 }
 
+func TestPromptVerifyCommands_AllProvided(t *testing.T) {
+	input := "go vet ./...\ngolangci-lint run\ngo test ./...\n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	got := promptVerifyCommands(reader)
+	want := []string{"go vet ./...", "golangci-lint run", "go test ./..."}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d commands, got %d: %v", len(want), len(got), got)
+	}
+	for i, cmd := range want {
+		if got[i] != cmd {
+			t.Errorf("command[%d]: got %q, want %q", i, got[i], cmd)
+		}
+	}
+}
+
+func TestPromptVerifyCommands_AllSkipped(t *testing.T) {
+	input := "\n\n\n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	got := promptVerifyCommands(reader)
+	if len(got) != 0 {
+		t.Errorf("expected empty slice when all skipped, got %v", got)
+	}
+}
+
+func TestPromptVerifyCommands_PartialSkip(t *testing.T) {
+	input := "bun run typecheck\n\nbun run test\n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	got := promptVerifyCommands(reader)
+	want := []string{"bun run typecheck", "bun run test"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d commands, got %d: %v", len(want), len(got), got)
+	}
+	for i, cmd := range want {
+		if got[i] != cmd {
+			t.Errorf("command[%d]: got %q, want %q", i, got[i], cmd)
+		}
+	}
+}
+
+func TestPromptVerifyCommands_WhitespaceOnly(t *testing.T) {
+	input := "   \n\t\n  \t  \n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	got := promptVerifyCommands(reader)
+	if len(got) != 0 {
+		t.Errorf("expected empty slice for whitespace-only input, got %v", got)
+	}
+}
+
 func TestProviderChoices_Sorted(t *testing.T) {
 	// Verify provider choices are in alphabetical order
 	for i := 1; i < len(providerChoices); i++ {

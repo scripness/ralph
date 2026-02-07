@@ -68,8 +68,7 @@ type BrowserConfig struct {
 
 // CommitsConfig configures git commit behavior
 type CommitsConfig struct {
-	PrdChanges bool   `json:"prdChanges,omitempty"`
-	Message    string `json:"message,omitempty"`
+	PrdChanges bool `json:"prdChanges,omitempty"`
 }
 
 // RalphConfig is the main configuration loaded from ralph.config.json
@@ -132,7 +131,6 @@ func LoadConfig(projectRoot string) (*ResolvedConfig, error) {
 	if cfg.Commits == nil {
 		cfg.Commits = &CommitsConfig{
 			PrdChanges: true,
-			Message:    "chore: update prd.json",
 		}
 	}
 	if cfg.Logging == nil {
@@ -176,6 +174,9 @@ func validateConfig(cfg *RalphConfig) error {
 		}
 		if svc.Ready == "" {
 			return fmt.Errorf("services[%d].ready is required", i)
+		}
+		if !strings.HasPrefix(svc.Ready, "http://") && !strings.HasPrefix(svc.Ready, "https://") {
+			return fmt.Errorf("services[%d].ready must be an HTTP URL (got: %s)", i, svc.Ready)
 		}
 	}
 	return nil
@@ -242,8 +243,18 @@ func applyProviderDefaults(p *ProviderConfig) {
 	}
 }
 
-// WriteDefaultConfig writes a default ralph.config.json with the given provider command
-func WriteDefaultConfig(projectRoot, providerCommand string) error {
+// WriteDefaultConfig writes a default ralph.config.json with the given provider command.
+// If verifyCommands is non-empty, they are used as verify.default; otherwise placeholders are written.
+func WriteDefaultConfig(projectRoot, providerCommand string, verifyCommands []string) error {
+	defaultVerify := []string{
+		"echo 'Add your typecheck command'",
+		"echo 'Add your lint command'",
+		"echo 'Add your test command'",
+	}
+	if len(verifyCommands) > 0 {
+		defaultVerify = verifyCommands
+	}
+
 	cfg := RalphConfig{
 		MaxRetries: 3,
 		Provider: ProviderConfig{
@@ -251,11 +262,7 @@ func WriteDefaultConfig(projectRoot, providerCommand string) error {
 			Timeout: 1800,
 		},
 		Verify: VerifyConfig{
-			Default: []string{
-				"echo 'Add your typecheck command'",
-				"echo 'Add your lint command'",
-				"echo 'Add your test command'",
-			},
+			Default: defaultVerify,
 		},
 		Services: []ServiceConfig{},
 		Browser: &BrowserConfig{
@@ -265,7 +272,6 @@ func WriteDefaultConfig(projectRoot, providerCommand string) error {
 		},
 		Commits: &CommitsConfig{
 			PrdChanges: true,
-			Message:    "chore: update prd.json",
 		},
 	}
 
@@ -298,9 +304,18 @@ func isPlaceholderCommand(cmd string) bool {
 }
 
 // CheckReadinessWarnings returns non-blocking warnings about the environment.
-// Currently returns no warnings as resources module handles documentation verification.
-func CheckReadinessWarnings() []string {
-	return nil
+func CheckReadinessWarnings(cfg *RalphConfig) []string {
+	var warnings []string
+
+	// Warn about unknown providers using default fallback settings
+	if _, ok := knownProviders[cfg.Provider.Command]; !ok {
+		warnings = append(warnings, fmt.Sprintf(
+			"Provider '%s' is not a known provider. Using defaults: promptMode=stdin, knowledgeFile=AGENTS.md. Set these explicitly in ralph.config.json if needed.",
+			cfg.Provider.Command,
+		))
+	}
+
+	return warnings
 }
 
 // CheckReadiness validates that the project is ready for Ralph.
@@ -320,9 +335,12 @@ func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
 		issues = append(issues, "Not inside a git repository. Run 'git init' first.")
 	}
 
-	// .ralph directory must be writable (if it exists)
+	// .ralph directory must exist
 	ralphDir := filepath.Join(GetProjectRoot(), ".ralph")
-	if fi, err := os.Stat(ralphDir); err == nil && fi.IsDir() {
+	if _, err := os.Stat(ralphDir); os.IsNotExist(err) {
+		issues = append(issues, ".ralph/ directory not found. Run 'ralph init' first.")
+	} else if fi, err := os.Stat(ralphDir); err == nil && fi.IsDir() {
+		// .ralph directory must be writable
 		testFile := filepath.Join(ralphDir, ".write-test")
 		if f, err := os.Create(testFile); err != nil {
 			issues = append(issues, fmt.Sprintf(".ralph/ directory is not writable: %v", err))
@@ -363,6 +381,13 @@ func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
 			if base != "" && !isCommandAvailable(base) {
 				issues = append(issues, fmt.Sprintf("service '%s': '%s' not found in PATH (from: %s)", svc.Name, base, svc.Start))
 			}
+		}
+	}
+
+	// Validate browser.executablePath if explicitly set
+	if cfg.Browser != nil && cfg.Browser.Enabled && cfg.Browser.ExecutablePath != "" {
+		if _, err := os.Stat(cfg.Browser.ExecutablePath); err != nil {
+			issues = append(issues, fmt.Sprintf("browser.executablePath not found: %s", cfg.Browser.ExecutablePath))
 		}
 	}
 

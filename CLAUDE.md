@@ -52,7 +52,7 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
 
 ## How the CLI Works (End-to-End)
 
-1. `ralph init` prompts the user to select a provider (aider, amp, claude, codex, opencode, or a custom command), then creates `ralph.config.json` and `.ralph/` directory (with `.ralph/.gitignore`). Use `--force` to overwrite existing config.
+1. `ralph init` prompts the user to select a provider and enter verify commands (typecheck, lint, test) interactively, then creates `ralph.config.json` and `.ralph/` directory (with `.ralph/.gitignore`). Use `--force` to overwrite existing config.
 2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> refine (edit/regenerate) -> finalize to prd.json. Each phase presents lettered options (a/b/c/q) via stdin. When creating a new PRD, discovery runs first to detect the codebase context (tech stack, frameworks, verify commands) and includes it in the prompt.
 3. `ralph run <feature>` enters the main loop:
    - Readiness gate: refuses to run if not inside a git repo, `sh` is missing, `.ralph/` is not writable, QA commands are missing/placeholder, or command binaries aren't in PATH
@@ -103,6 +103,24 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Knowledge updates**: Update AGENTS.md/CLAUDE.md with discovered patterns
 - **Learnings**: Output `<ralph>LEARNING:...</ralph>` for cross-iteration memory
 - **Documentation verification**: Check implementations against cached framework source code or web search
+
+### User Contract
+
+**User must provide (prompted during `ralph init`):**
+- `provider.command` — which AI CLI to use
+- `verify.default` — typecheck/lint/test commands
+
+**User must provide (manual config, only if needed):**
+- `verify.ui` — e2e test commands (only if UI stories)
+- `services` — dev server config (only if UI stories)
+- `browser.executablePath` — if auto-download won't work
+
+**Ralph handles automatically:**
+- Provider args, promptMode, knowledgeFile (auto-detected from known providers)
+- Browser binary (auto-downloaded if needed for UI stories)
+- Resource caching (auto-detected from dependencies)
+- Git branch management, story selection, verification orchestration
+- All PRD state management
 
 ### Provider communication protocol (markers in stdout or stderr):
 | Marker | Meaning |
@@ -192,8 +210,7 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
     "screenshotDir": ".ralph/screenshots"
   },
   "commits": {
-    "prdChanges": true,
-    "message": "chore: update prd.json"
+    "prdChanges": true
   },
   "logging": {
     "enabled": true,
@@ -262,7 +279,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Idempotent StopAll**: `ServiceManager.StopAll()` sets `processes` to nil after stopping, making it safe to call multiple times (e.g., from both defer and signal handler).
 - **Service output capture**: `capturedOutput` trim buffer (keeps last ~50% on overflow) captures service stdout/stderr via `io.MultiWriter`. Available via `GetRecentOutput()` for diagnostics.
 - **Service health checks**: `CheckServiceHealth()` polls service ready URLs during verification to detect crashed/unresponsive services.
-- **Readiness gates**: `CheckReadiness()` in config.go validates: `sh` is in PATH, project is inside a git repository, `.ralph/` directory is writable, QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`), and service `start` commands are available. Placeholder echo commands are detected separately. Called before `ralph run` and `ralph verify`.
+- **Readiness gates**: `CheckReadiness()` in config.go validates: `sh` is in PATH, project is inside a git repository, `.ralph/` directory exists and is writable, `browser.executablePath` exists if explicitly set, QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`), and service `start` commands are available. Placeholder echo commands are detected separately. Called before `ralph run` and `ralph verify`. `CheckReadinessWarnings(cfg)` returns soft warnings (e.g., unknown provider defaults).
 - **Learning deduplication**: `AddLearning()` normalizes (case-insensitive, trimmed) before checking for duplicates. Learnings are saved on all code paths: success, timeout, error, STUCK, and no-DONE. Prompt delivery caps at 50 most recent learnings to prevent context overflow.
 - **PRD quality warnings**: `WarnPRDQuality()` checks stories for missing "Typecheck passes" acceptance criteria (soft warning, does not block).
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
@@ -283,6 +300,12 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Codebase discovery**: `DiscoverCodebase()` in discovery.go detects tech stack (go, typescript, python, rust), package manager (bun, npm, yarn, pnpm, go, cargo), frameworks, and full dependency list from config files. Used in PRD creation and resource syncing. Detection is lightweight (reads config files, doesn't run commands). `ExtractDependencies()` returns `[]Dependency` with name, version, and isDev flag.
 - **Dependency extraction**: `extractJSDependencies()` parses package.json, `extractGoDependencies()` parses go.mod, `extractPythonDependencies()` parses pyproject.toml/requirements.txt, `extractRustDependencies()` parses Cargo.toml. The `Dependency` struct includes Name, Version, and IsDev fields.
 - **Provider selection prompt**: `ralph init` prompts the user to select from `providerChoices` (alphabetically sorted known providers) or enter a custom command. `promptProviderSelection()` accepts a `*bufio.Reader` so tests can inject controlled input. `providerChoices` must stay in sync with `knownProviders` map (enforced by `TestProviderChoices_MatchKnownProviders`).
+- **Verify command prompts**: `promptVerifyCommands()` in commands.go prompts for 3 commands (typecheck, lint, test) during `ralph init`. Accepts `*bufio.Reader` for testability. Non-empty inputs go into `verify.default`; all skipped falls back to placeholder echo commands.
+- **`.ralph/` existence check in CheckReadiness**: `CheckReadiness` verifies `.ralph/` exists before checking writability. Missing directory produces "Run 'ralph init' first" message.
+- **Service URL format validation**: `validateConfig()` validates that `services[].ready` starts with `http://` or `https://`. Catches typos like `localhost:3000` (missing scheme) at config load time.
+- **Browser executable path validation**: `CheckReadiness` validates `browser.executablePath` exists on disk if explicitly set and browser is enabled.
+- **Unknown provider warning**: `CheckReadinessWarnings()` warns when `provider.command` is not in `knownProviders` map. Non-blocking warning printed before every run/verify.
+- **`ralph prd` validates git + warns about placeholder commands**: `cmdPrd()` calls `checkGitAvailable()` and warns (without blocking) if verify.default contains placeholder commands.
 - **ResetStoryForPreVerify vs ResetStory**: `ResetStory` (called from verify phase RESET marker) increments retries and can block the story. `ResetStoryForPreVerify` (called during pre-verify) resets without incrementing retries — the story wasn't re-attempted, it just became invalid due to PRD changes.
 
 ## Prompt Template Variables
@@ -316,12 +339,13 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **Working tree cleanliness is checked but not enforced**: Uncommitted files after provider finishes generate a warning but don't fail the story. This catches providers that left untracked or modified files.
 - **Test file heuristic in verify summary**: If no test files (`*_test.*`, `*.test.*`, `*.spec.*`, `__tests__/`) are modified on the branch, a WARN is included in the `verifySummary` for the verify agent to act on.
 - **`$EDITOR` validation in PRD editing**: `prdEditManual()` validates the editor binary exists before spawning. Falls back from `$EDITOR` to `nano`, but checks either is available. Returns a clear error with instructions to set `$EDITOR`.
+- **`ralph prd` warns about placeholder verify commands but does not block**: During `cmdPrd()`, if verify.default contains placeholder commands, a warning is printed to stderr. PRD creation proceeds normally — the user can still create PRDs but needs to fix config before `ralph run`.
 - **EnsureBrowser skips without UI stories**: If no story in the PRD has a "ui" tag, `EnsureBrowser` returns immediately — no `os.Stat`, no download attempt. Failed browser download disables browser for the entire run (`Enabled=false`), preventing repeated download retries on each story.
 
 ## Testing
 
 Tests are in `*_test.go` files alongside source. Key test files:
-- `commands_test.go` - provider selection prompt, provider choices validation
+- `commands_test.go` - provider selection prompt, verify command prompts, provider choices validation
 - `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation, verify timeout defaults
 - `schema_test.go` - PRD validation, story state transitions, browser steps, learning deduplication, PRD quality, ResetStoryForPreVerify
 - `discovery_test.go` - tech stack detection, framework detection, codebase context formatting
