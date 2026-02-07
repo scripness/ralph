@@ -52,7 +52,7 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
 
 ## How the CLI Works (End-to-End)
 
-1. `ralph init` creates `ralph.config.json` and `.ralph/` directory (with `.ralph/.gitignore`). Use `--force` to overwrite existing config.
+1. `ralph init` prompts the user to select a provider (aider, amp, claude, codex, opencode, or a custom command), then creates `ralph.config.json` and `.ralph/` directory (with `.ralph/.gitignore`). Use `--force` to overwrite existing config.
 2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> refine (edit/regenerate) -> finalize to prd.json. Each phase presents lettered options (a/b/c/q) via stdin. When creating a new PRD, discovery runs first to detect the codebase context (tech stack, frameworks, verify commands) and includes it in the prompt.
 3. `ralph run <feature>` enters the main loop:
    - Readiness gate: refuses to run if QA commands are missing/placeholder or command binaries aren't in PATH
@@ -169,7 +169,7 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
 {
   "maxRetries": 3,
   "provider": {
-    "command": "amp"
+    "command": "claude"
   },
   "services": [
     {
@@ -282,6 +282,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Pre-verify phase**: `preVerifyStories()` runs verification on ALL non-blocked stories before the implementation loop. Stories that pass are marked as passed (catches already-implemented work). Stories that fail but were previously marked passed are reset to pending using `ResetStoryForPreVerify()`, which does NOT increment retry count. This enables the "infinite loop" pattern: modify PRD → run → pre-verify detects invalid stories → re-implement.
 - **Codebase discovery**: `DiscoverCodebase()` in discovery.go detects tech stack (go, typescript, python, rust), package manager (bun, npm, yarn, pnpm, go, cargo), frameworks, and full dependency list from config files. Used in PRD creation and resource syncing. Detection is lightweight (reads config files, doesn't run commands). `ExtractDependencies()` returns `[]Dependency` with name, version, and isDev flag.
 - **Dependency extraction**: `extractJSDependencies()` parses package.json, `extractGoDependencies()` parses go.mod, `extractPythonDependencies()` parses pyproject.toml/requirements.txt, `extractRustDependencies()` parses Cargo.toml. The `Dependency` struct includes Name, Version, and IsDev fields.
+- **Provider selection prompt**: `ralph init` prompts the user to select from `providerChoices` (alphabetically sorted known providers) or enter a custom command. `promptProviderSelection()` accepts a `*bufio.Reader` so tests can inject controlled input. `providerChoices` must stay in sync with `knownProviders` map (enforced by `TestProviderChoices_MatchKnownProviders`).
 - **ResetStoryForPreVerify vs ResetStory**: `ResetStory` (called from verify phase RESET marker) increments retries and can block the story. `ResetStoryForPreVerify` (called during pre-verify) resets without incrementing retries — the story wasn't re-attempted, it just became invalid due to PRD changes.
 
 ## Prompt Template Variables
@@ -319,6 +320,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 ## Testing
 
 Tests are in `*_test.go` files alongside source. Key test files:
+- `commands_test.go` - provider selection prompt, provider choices validation
 - `config_test.go` - config loading, validation, provider defaults, readiness checks, command validation, verify timeout defaults
 - `schema_test.go` - PRD validation, story state transitions, browser steps, learning deduplication, PRD quality, ResetStoryForPreVerify
 - `discovery_test.go` - tech stack detection, framework detection, codebase context formatting
@@ -385,7 +387,7 @@ After your code changes are done, re-read the sections of CLAUDE.md, README.md, 
 
 ## Common Development Tasks
 
-- **Add a new provider**: Add entry to `knownProviders` map in config.go, no other changes needed
+- **Add a new provider**: Add entry to `knownProviders` map in config.go and add to `providerChoices` slice in commands.go (keep alphabetical)
 - **Add a new browser action**: Add case to `executeStep()` switch in browser.go
 - **Add a new marker**: Add regex pattern and field to `ProviderResult` in loop.go, handle in `processLine()`
 - **Add a new command**: Add case to `main()` switch in main.go, implement handler in commands.go

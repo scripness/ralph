@@ -242,12 +242,12 @@ func applyProviderDefaults(p *ProviderConfig) {
 	}
 }
 
-// WriteDefaultConfig writes a default ralph.config.json
-func WriteDefaultConfig(projectRoot string) error {
+// WriteDefaultConfig writes a default ralph.config.json with the given provider command
+func WriteDefaultConfig(projectRoot, providerCommand string) error {
 	cfg := RalphConfig{
 		MaxRetries: 3,
 		Provider: ProviderConfig{
-			Command: "amp",
+			Command: providerCommand,
 			Timeout: 1800,
 		},
 		Verify: VerifyConfig{

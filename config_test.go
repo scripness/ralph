@@ -169,7 +169,7 @@ func TestIsCommandAvailable(t *testing.T) {
 func TestWriteDefaultConfig(t *testing.T) {
 	dir := t.TempDir()
 
-	err := WriteDefaultConfig(dir)
+	err := WriteDefaultConfig(dir, "claude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -179,8 +179,8 @@ func TestWriteDefaultConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to load written config: %v", err)
 	}
-	if cfg.Config.Provider.Command != "amp" {
-		t.Errorf("expected provider.command='amp', got '%s'", cfg.Config.Provider.Command)
+	if cfg.Config.Provider.Command != "claude" {
+		t.Errorf("expected provider.command='claude', got '%s'", cfg.Config.Provider.Command)
 	}
 }
 
@@ -376,31 +376,56 @@ func TestLoadConfig_ProviderExplicitEmptyArgs(t *testing.T) {
 }
 
 func TestWriteDefaultConfig_AutoDetection(t *testing.T) {
-	dir := t.TempDir()
-
-	err := WriteDefaultConfig(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name          string
+		command       string
+		wantMode      string
+		wantKnowledge string
+		wantArgs      []string
+	}{
+		{"amp", "amp", "stdin", "AGENTS.md", []string{"--dangerously-allow-all"}},
+		{"claude", "claude", "stdin", "CLAUDE.md", []string{"--print", "--dangerously-skip-permissions"}},
+		{"custom", "my-ai", "stdin", "AGENTS.md", nil},
 	}
 
-	cfg, err := LoadConfig(dir)
-	if err != nil {
-		t.Fatalf("failed to load written config: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
 
-	// WriteDefaultConfig sets command=amp with no args in JSON,
-	// so LoadConfig should auto-detect all amp defaults
-	if cfg.Config.Provider.Command != "amp" {
-		t.Errorf("expected command='amp', got '%s'", cfg.Config.Provider.Command)
-	}
-	if cfg.Config.Provider.PromptMode != "stdin" {
-		t.Errorf("expected auto-detected promptMode='stdin', got '%s'", cfg.Config.Provider.PromptMode)
-	}
-	if cfg.Config.Provider.KnowledgeFile != "AGENTS.md" {
-		t.Errorf("expected auto-detected knowledgeFile='AGENTS.md', got '%s'", cfg.Config.Provider.KnowledgeFile)
-	}
-	if len(cfg.Config.Provider.Args) != 1 || cfg.Config.Provider.Args[0] != "--dangerously-allow-all" {
-		t.Errorf("expected auto-detected args [--dangerously-allow-all], got %v", cfg.Config.Provider.Args)
+			err := WriteDefaultConfig(dir, tt.command)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			cfg, err := LoadConfig(dir)
+			if err != nil {
+				t.Fatalf("failed to load written config: %v", err)
+			}
+
+			if cfg.Config.Provider.Command != tt.command {
+				t.Errorf("expected command=%q, got %q", tt.command, cfg.Config.Provider.Command)
+			}
+			if cfg.Config.Provider.PromptMode != tt.wantMode {
+				t.Errorf("expected auto-detected promptMode=%q, got %q", tt.wantMode, cfg.Config.Provider.PromptMode)
+			}
+			if cfg.Config.Provider.KnowledgeFile != tt.wantKnowledge {
+				t.Errorf("expected auto-detected knowledgeFile=%q, got %q", tt.wantKnowledge, cfg.Config.Provider.KnowledgeFile)
+			}
+			if tt.wantArgs == nil {
+				if cfg.Config.Provider.Args != nil {
+					t.Errorf("expected nil args, got %v", cfg.Config.Provider.Args)
+				}
+			} else {
+				if len(cfg.Config.Provider.Args) != len(tt.wantArgs) {
+					t.Fatalf("args length: got %d (%v), want %d (%v)", len(cfg.Config.Provider.Args), cfg.Config.Provider.Args, len(tt.wantArgs), tt.wantArgs)
+				}
+				for i, a := range tt.wantArgs {
+					if cfg.Config.Provider.Args[i] != a {
+						t.Errorf("args[%d]: got %q, want %q", i, cfg.Config.Provider.Args[i], a)
+					}
+				}
+			}
+		})
 	}
 }
 

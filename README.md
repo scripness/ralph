@@ -186,12 +186,8 @@ ralph upgrade                  # Update to latest version
 {
   "maxRetries": 3,
   "provider": {
-    "command": "amp",
-    "args": ["--dangerously-allow-all"],
-    "timeout": 1800,
-    "promptMode": "stdin",
-    "promptFlag": "",
-    "knowledgeFile": "AGENTS.md"
+    "command": "claude",
+    "timeout": 1800
   },
   "services": [
     {

@@ -28,6 +28,50 @@ func checkGitAvailable() {
 	}
 }
 
+// providerChoices is the ordered list of known providers shown during init
+var providerChoices = []string{"aider", "amp", "claude", "codex", "opencode"}
+
+// promptProviderSelection prompts the user to select a provider from the known list or enter a custom command.
+// reader is accepted as a parameter so tests can inject a bufio.Reader over a controlled input.
+func promptProviderSelection(reader *bufio.Reader) string {
+	fmt.Println("Select your AI provider:")
+	fmt.Println()
+	for i, name := range providerChoices {
+		fmt.Printf("  %d) %s\n", i+1, name)
+	}
+	fmt.Printf("  %d) other\n", len(providerChoices)+1)
+	fmt.Println()
+
+	for {
+		fmt.Printf("Enter choice (1-%d): ", len(providerChoices)+1)
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+
+		// Parse numeric choice
+		var choice int
+		if _, err := fmt.Sscanf(input, "%d", &choice); err != nil || choice < 1 || choice > len(providerChoices)+1 {
+			fmt.Printf("Please enter a number between 1 and %d\n", len(providerChoices)+1)
+			continue
+		}
+
+		// Known provider selected
+		if choice <= len(providerChoices) {
+			return providerChoices[choice-1]
+		}
+
+		// "other" selected — prompt for custom command
+		for {
+			fmt.Print("Enter provider command: ")
+			custom, _ := reader.ReadString('\n')
+			custom = strings.TrimSpace(custom)
+			if custom != "" {
+				return custom
+			}
+			fmt.Println("Command cannot be empty")
+		}
+	}
+}
+
 func cmdInit(args []string) {
 	force := false
 	for _, arg := range args {
@@ -47,8 +91,12 @@ func cmdInit(args []string) {
 		os.Exit(1)
 	}
 
+	// Prompt user to select a provider
+	reader := bufio.NewReader(os.Stdin)
+	providerCommand := promptProviderSelection(reader)
+
 	// Create ralph.config.json
-	if err := WriteDefaultConfig(projectRoot); err != nil {
+	if err := WriteDefaultConfig(projectRoot, providerCommand); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write config: %v\n", err)
 		os.Exit(1)
 	}
