@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -691,5 +692,82 @@ func TestExtractBaseCommand(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("extractBaseCommand(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestCheckReadiness_ShAvailable(t *testing.T) {
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	for _, issue := range issues {
+		if strings.Contains(issue, "'sh' not found") {
+			t.Error("sh should be available in test environments")
+		}
+	}
+}
+
+func TestCheckReadiness_GitRepoRequired(t *testing.T) {
+	dir := t.TempDir()
+	// No .git directory — should fail
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "Not inside a git repository") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'not inside a git repository' issue, got %v", issues)
+	}
+}
+
+func TestCheckReadiness_RalphDirWritability(t *testing.T) {
+	// Skip if running as root — chmod 0555 has no effect for root
+	if u, err := user.Current(); err == nil && u.Uid == "0" {
+		t.Skip("skipping writability test as root")
+	}
+
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	ralphDir := filepath.Join(dir, ".ralph")
+	os.Mkdir(ralphDir, 0555) // read-only
+	t.Cleanup(func() { os.Chmod(ralphDir, 0755) })
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, ".ralph/ directory is not writable") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected '.ralph/ directory is not writable' issue, got %v", issues)
 	}
 }

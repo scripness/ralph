@@ -186,6 +186,9 @@ func prdEditManual(path string) error {
 	if editor == "" {
 		editor = "nano"
 	}
+	if !isCommandAvailable(editor) {
+		return fmt.Errorf("editor '%s' not found in PATH. Set $EDITOR to your preferred editor", editor)
+	}
 
 	cmd := runCommandInteractive(editor, path)
 	return cmd.Run()

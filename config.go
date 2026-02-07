@@ -308,6 +308,30 @@ func CheckReadinessWarnings() []string {
 func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
 	var issues []string
 
+	// sh is required to execute verify/service commands
+	if !isCommandAvailable("sh") {
+		issues = append(issues, "'sh' not found in PATH. Required to run verify and service commands.")
+	}
+
+	// Must be inside a git repository
+	cwd, _ := os.Getwd()
+	gitRoot := findGitRoot(cwd)
+	if _, err := os.Stat(filepath.Join(gitRoot, ".git")); err != nil {
+		issues = append(issues, "Not inside a git repository. Run 'git init' first.")
+	}
+
+	// .ralph directory must be writable (if it exists)
+	ralphDir := filepath.Join(GetProjectRoot(), ".ralph")
+	if fi, err := os.Stat(ralphDir); err == nil && fi.IsDir() {
+		testFile := filepath.Join(ralphDir, ".write-test")
+		if f, err := os.Create(testFile); err != nil {
+			issues = append(issues, fmt.Sprintf(".ralph/ directory is not writable: %v", err))
+		} else {
+			f.Close()
+			os.Remove(testFile)
+		}
+	}
+
 	// verify.default must have real commands (not placeholders)
 	if HasPlaceholderVerifyCommands(cfg) {
 		issues = append(issues, "verify.default contains placeholder commands (echo '...'). Add real typecheck/lint/test commands.")

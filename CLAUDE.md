@@ -55,7 +55,7 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
 1. `ralph init` prompts the user to select a provider (aider, amp, claude, codex, opencode, or a custom command), then creates `ralph.config.json` and `.ralph/` directory (with `.ralph/.gitignore`). Use `--force` to overwrite existing config.
 2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> refine (edit/regenerate) -> finalize to prd.json. Each phase presents lettered options (a/b/c/q) via stdin. When creating a new PRD, discovery runs first to detect the codebase context (tech stack, frameworks, verify commands) and includes it in the prompt.
 3. `ralph run <feature>` enters the main loop:
-   - Readiness gate: refuses to run if QA commands are missing/placeholder or command binaries aren't in PATH
+   - Readiness gate: refuses to run if not inside a git repo, `sh` is missing, `.ralph/` is not writable, QA commands are missing/placeholder, or command binaries aren't in PATH
    - Signal handling: SIGINT/SIGTERM releases the lock and exits with code 130
    - Loads config + PRD, acquires lock, ensures git branch, starts services
    - **Pre-verify phase**: runs verification on ALL non-blocked stories before implementation
@@ -82,7 +82,7 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
 This is the most important architectural decision. In the original v1, the AI agent did almost everything (picked stories, ran tests, updated prd.json, committed). In v2, the CLI is the orchestrator and the AI is a pure implementer.
 
 ### CLI handles (the provider must NOT do these):
-- **Readiness enforcement**: Hard-fails before run/verify if QA commands are missing, placeholder, or not in PATH
+- **Readiness enforcement**: Hard-fails before run/verify if not in a git repo, `sh` is missing, `.ralph/` is not writable, QA commands are missing/placeholder, or not in PATH
 - **Story selection**: CLI picks the next story by priority, skipping passed/blocked
 - **Branch management**: CLI creates/switches to the `ralph/<feature>` branch
 - **State updates**: CLI marks stories passed/failed/blocked based on verification results
@@ -262,7 +262,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Idempotent StopAll**: `ServiceManager.StopAll()` sets `processes` to nil after stopping, making it safe to call multiple times (e.g., from both defer and signal handler).
 - **Service output capture**: `capturedOutput` trim buffer (keeps last ~50% on overflow) captures service stdout/stderr via `io.MultiWriter`. Available via `GetRecentOutput()` for diagnostics.
 - **Service health checks**: `CheckServiceHealth()` polls service ready URLs during verification to detect crashed/unresponsive services.
-- **Readiness gates**: `CheckReadiness()` in config.go validates QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`) before allowing `ralph run` or `ralph verify`. Covers `verify.default`, `verify.ui`, and service `start` commands. Placeholder echo commands are detected separately.
+- **Readiness gates**: `CheckReadiness()` in config.go validates: `sh` is in PATH, project is inside a git repository, `.ralph/` directory is writable, QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`), and service `start` commands are available. Placeholder echo commands are detected separately. Called before `ralph run` and `ralph verify`.
 - **Learning deduplication**: `AddLearning()` normalizes (case-insensitive, trimmed) before checking for duplicates. Learnings are saved on all code paths: success, timeout, error, STUCK, and no-DONE. Prompt delivery caps at 50 most recent learnings to prevent context overflow.
 - **PRD quality warnings**: `WarnPRDQuality()` checks stories for missing "Typecheck passes" acceptance criteria (soft warning, does not block).
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
@@ -315,6 +315,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **Provider must commit code to pass**: Signaling DONE without making a new git commit is treated as a failed attempt and counts toward maxRetries. The pre-run commit hash is captured AFTER the PRD state commit to avoid false positives.
 - **Working tree cleanliness is checked but not enforced**: Uncommitted files after provider finishes generate a warning but don't fail the story. This catches providers that left untracked or modified files.
 - **Test file heuristic in verify summary**: If no test files (`*_test.*`, `*.test.*`, `*.spec.*`, `__tests__/`) are modified on the branch, a WARN is included in the `verifySummary` for the verify agent to act on.
+- **`$EDITOR` validation in PRD editing**: `prdEditManual()` validates the editor binary exists before spawning. Falls back from `$EDITOR` to `nano`, but checks either is available. Returns a clear error with instructions to set `$EDITOR`.
 - **EnsureBrowser skips without UI stories**: If no story in the PRD has a "ui" tag, `EnsureBrowser` returns immediately — no `os.Stat`, no download attempt. Failed browser download disables browser for the entire run (`Enabled=false`), preventing repeated download retries on each story.
 
 ## Testing
@@ -337,6 +338,7 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `logger_test.go` - event logging, run numbering, log rotation, event filtering, run summaries
 - `resources_test.go` - ResourceManager, ResourcesConfig, cache operations, FormatSize
 - `resourcereg_test.go` - MapDependencyToResource, MergeWithCustom, DefaultResources validation
+- `prd_test.go` - editor validation in prdEditManual
 - `external_git_test.go` - ExternalGitOps, Exists, GetRepoSize
 
 Run with `go test ./...` or `go test -v ./...` for verbose output.

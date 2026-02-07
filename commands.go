@@ -552,12 +552,43 @@ func cmdDoctor(args []string) {
 		fmt.Printf("○ .ralph directory: not found (run 'ralph init')\n")
 	}
 
+	// Check sh
+	if isCommandAvailable("sh") {
+		fmt.Printf("✓ sh available\n")
+	} else {
+		fmt.Printf("✗ sh not found\n")
+		issues++
+	}
+
 	// Check git
 	if isCommandAvailable("git") {
 		fmt.Printf("✓ git available\n")
 	} else {
 		fmt.Printf("✗ git not found\n")
 		issues++
+	}
+
+	// Check git repository
+	cwd, _ := os.Getwd()
+	gitRoot := findGitRoot(cwd)
+	if _, err := os.Stat(filepath.Join(gitRoot, ".git")); err == nil {
+		fmt.Printf("✓ git repository found\n")
+	} else {
+		fmt.Printf("✗ not inside a git repository\n")
+		issues++
+	}
+
+	// Check .ralph directory writability
+	if fi, statErr := os.Stat(ralphDir); statErr == nil && fi.IsDir() {
+		testFile := filepath.Join(ralphDir, ".write-test")
+		if f, writeErr := os.Create(testFile); writeErr != nil {
+			fmt.Printf("✗ .ralph directory not writable\n")
+			issues++
+		} else {
+			f.Close()
+			os.Remove(testFile)
+			fmt.Printf("✓ .ralph directory writable\n")
+		}
 	}
 
 	// Check verify commands

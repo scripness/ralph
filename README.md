@@ -106,7 +106,7 @@ stateDiagram-v2
 ## How It Works
 
 1. Ralph loads `.ralph/*-[feature]/prd.json`
-2. **Readiness check**: refuses to run if verify commands are placeholder or binaries missing from PATH
+2. **Readiness check**: refuses to run if verify commands are placeholder, binaries missing from PATH, not inside a git repo, or `.ralph/` is not writable
 3. **Pre-verify phase**: runs verification on ALL non-blocked stories before implementation
    - Stories that pass are marked as passed (catches already-implemented work)
    - Stories that fail but were previously marked passed are reset to pending (catches PRD changes)
@@ -418,10 +418,11 @@ Ralph works best with codebases that have:
 
 ### Required
 
+- **Shell**: `sh` must be in PATH (used to execute verify and service commands)
+- **Git repository**: Project must be inside a git repo with clean working tree
 - **Type checking**: TypeScript strict mode, Go vet, mypy, etc.
 - **Linting**: ESLint, golint, ruff, etc.
 - **Test framework**: Unit tests at minimum (Jest, Go test, pytest)
-- **Git**: Version control with clean working tree
 
 ### Recommended
 
@@ -562,6 +563,19 @@ Add e2e test commands to `ralph.config.json`:
     "ui": ["bun run test:e2e"]
   }
 }
+```
+
+### "Not inside a git repository"
+```bash
+git init                # Initialize a git repo in your project
+```
+
+### "'sh' not found in PATH"
+This shouldn't happen on standard Unix systems. Check your PATH configuration.
+
+### "editor 'nano' not found in PATH"
+```bash
+export EDITOR=vim       # Set your preferred editor
 ```
 
 ### Story keeps failing verification
