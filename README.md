@@ -151,7 +151,8 @@ ralph resources list           # Show cached framework source code
 ralph resources sync           # Sync all detected dependencies
 ralph resources sync <name>    # Sync specific resource (e.g., "next")
 ralph resources clear          # Clear all cached resources
-ralph resources path <name>    # Print path to cached resource
+ralph resources path           # Print cache directory path
+ralph resources path <name>    # Print path to specific cached resource
 ```
 
 Ralph auto-detects project dependencies and caches their source code repositories locally. This allows AI agents to verify implementations against actual framework source code, tests, and examples.
