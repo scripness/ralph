@@ -19,7 +19,7 @@ go install github.com/scripness/ralph@latest
 ## Quick Start
 
 ```bash
-# Initialize Ralph (prompts for provider + verify commands)
+# Initialize Ralph (detects project, prompts for provider + verify commands with auto-detected defaults)
 ralph init
 
 # Create a PRD for a feature

@@ -160,6 +160,25 @@ func TestFeatureDir_Paths(t *testing.T) {
 	}
 }
 
+func TestFindFeatureDir_CaseInsensitive(t *testing.T) {
+	dir := t.TempDir()
+	ralphDir := filepath.Join(dir, ".ralph")
+	featureDir := filepath.Join(ralphDir, "2024-01-15-auth")
+	os.MkdirAll(featureDir, 0755)
+
+	cases := []string{"Auth", "AUTH", "auth", "AuTh"}
+	for _, name := range cases {
+		fd, err := FindFeatureDir(dir, name, false)
+		if err != nil {
+			t.Errorf("FindFeatureDir(%q) unexpected error: %v", name, err)
+			continue
+		}
+		if fd.Path != featureDir {
+			t.Errorf("FindFeatureDir(%q) = %q, want %q", name, fd.Path, featureDir)
+		}
+	}
+}
+
 func TestFeatureDir_EnsureExists(t *testing.T) {
 	dir := t.TempDir()
 	fd := &FeatureDir{

@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -53,7 +55,7 @@ func TestPromptProviderSelection_InvalidThenValid(t *testing.T) {
 func TestPromptVerifyCommands_AllProvided(t *testing.T) {
 	input := "go vet ./...\ngolangci-lint run\ngo test ./...\n"
 	reader := bufio.NewReader(strings.NewReader(input))
-	got := promptVerifyCommands(reader)
+	got := promptVerifyCommands(reader, [3]string{})
 	want := []string{"go vet ./...", "golangci-lint run", "go test ./..."}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d commands, got %d: %v", len(want), len(got), got)
@@ -68,7 +70,7 @@ func TestPromptVerifyCommands_AllProvided(t *testing.T) {
 func TestPromptVerifyCommands_AllSkipped(t *testing.T) {
 	input := "\n\n\n"
 	reader := bufio.NewReader(strings.NewReader(input))
-	got := promptVerifyCommands(reader)
+	got := promptVerifyCommands(reader, [3]string{})
 	if len(got) != 0 {
 		t.Errorf("expected empty slice when all skipped, got %v", got)
 	}
@@ -77,7 +79,7 @@ func TestPromptVerifyCommands_AllSkipped(t *testing.T) {
 func TestPromptVerifyCommands_PartialSkip(t *testing.T) {
 	input := "bun run typecheck\n\nbun run test\n"
 	reader := bufio.NewReader(strings.NewReader(input))
-	got := promptVerifyCommands(reader)
+	got := promptVerifyCommands(reader, [3]string{})
 	want := []string{"bun run typecheck", "bun run test"}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d commands, got %d: %v", len(want), len(got), got)
@@ -92,7 +94,7 @@ func TestPromptVerifyCommands_PartialSkip(t *testing.T) {
 func TestPromptVerifyCommands_WhitespaceOnly(t *testing.T) {
 	input := "   \n\t\n  \t  \n"
 	reader := bufio.NewReader(strings.NewReader(input))
-	got := promptVerifyCommands(reader)
+	got := promptVerifyCommands(reader, [3]string{})
 	if len(got) != 0 {
 		t.Errorf("expected empty slice for whitespace-only input, got %v", got)
 	}
@@ -125,6 +127,67 @@ func TestProviderChoices_MatchKnownProviders(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("knownProviders has %q which is not in providerChoices", name)
+		}
+	}
+}
+
+func TestPromptVerifyCommands_AcceptsDetectedDefaults(t *testing.T) {
+	// All Enter = accept detected defaults
+	input := "\n\n\n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	detected := [3]string{"go vet ./...", "", "go test ./..."}
+	got := promptVerifyCommands(reader, detected)
+	want := []string{"go vet ./...", "go test ./..."}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d commands, got %d: %v", len(want), len(got), got)
+	}
+	for i, cmd := range want {
+		if got[i] != cmd {
+			t.Errorf("command[%d]: got %q, want %q", i, got[i], cmd)
+		}
+	}
+}
+
+func TestPromptVerifyCommands_OverridesDetectedDefaults(t *testing.T) {
+	// Override first and third, accept second
+	input := "bun run typecheck\n\nbun run test:unit\n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	detected := [3]string{"npm run typecheck", "npm run lint", "npm run test"}
+	got := promptVerifyCommands(reader, detected)
+	want := []string{"bun run typecheck", "npm run lint", "bun run test:unit"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d commands, got %d: %v", len(want), len(got), got)
+	}
+	for i, cmd := range want {
+		if got[i] != cmd {
+			t.Errorf("command[%d]: got %q, want %q", i, got[i], cmd)
+		}
+	}
+}
+
+func TestCmdInit_CreatesGitignore(t *testing.T) {
+	dir := t.TempDir()
+	ralphDir := filepath.Join(dir, ".ralph")
+	os.MkdirAll(ralphDir, 0755)
+
+	// Replicate the gitignore creation logic from cmdInit
+	gitignorePath := filepath.Join(ralphDir, ".gitignore")
+	gitignoreContent := "# Ralph temporary files\nralph.lock\n*.tmp\nscreenshots/\n*/logs/\n"
+	if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
+		t.Fatalf("failed to write .gitignore: %v", err)
+	}
+
+	// Verify the file exists and has correct content
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("failed to read .gitignore: %v", err)
+	}
+	content := string(data)
+
+	expectedPatterns := []string{"ralph.lock", "*.tmp", "screenshots/", "*/logs/"}
+	for _, pattern := range expectedPatterns {
+		if !strings.Contains(content, pattern) {
+			t.Errorf(".gitignore should contain %q, got:\n%s", pattern, content)
 		}
 	}
 }

@@ -575,6 +575,60 @@ func extractRustDependencies(projectRoot string) []Dependency {
 	return deps
 }
 
+// DetectVerifyCommands reads project config files to suggest verify commands.
+// Returns (typecheck, lint, test) where empty string means no suggestion.
+// Only suggests commands that are 100% deterministic from config files.
+func DetectVerifyCommands(projectRoot string) (typecheck, lint, test string) {
+	techStack, pkgMgr := detectTechStack(projectRoot)
+
+	switch techStack {
+	case "typescript", "javascript":
+		scripts := readPackageJSONScripts(projectRoot)
+		if scripts["typecheck"] != "" {
+			typecheck = pkgMgr + " run typecheck"
+		}
+		if scripts["lint"] != "" {
+			lint = pkgMgr + " run lint"
+		}
+		// Prefer test:unit over test (more specific)
+		if scripts["test:unit"] != "" {
+			test = pkgMgr + " run test:unit"
+		} else if scripts["test"] != "" {
+			test = pkgMgr + " run test"
+		}
+	case "go":
+		typecheck = "go vet ./..."
+		test = "go test ./..."
+	case "rust":
+		typecheck = "cargo check"
+		test = "cargo test"
+	case "python":
+		deps := extractPythonDependencies(projectRoot)
+		for _, d := range deps {
+			if d.Name == "pytest" {
+				test = "pytest"
+				break
+			}
+		}
+	}
+	return
+}
+
+// readPackageJSONScripts reads the scripts field from package.json
+func readPackageJSONScripts(projectRoot string) map[string]string {
+	data, err := os.ReadFile(filepath.Join(projectRoot, "package.json"))
+	if err != nil {
+		return nil
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return nil
+	}
+	return pkg.Scripts
+}
+
 // GetDependencyNames returns just the names of dependencies
 func GetDependencyNames(deps []Dependency) []string {
 	var names []string
