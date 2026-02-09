@@ -118,6 +118,19 @@ func TestDetectTechStack_Python_Requirements(t *testing.T) {
 	}
 }
 
+func TestDetectTechStack_Python_SetupPy(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "setup.py"), []byte("from setuptools import setup\nsetup()"), 0644)
+
+	stack, pm := detectTechStack(dir)
+	if stack != "python" {
+		t.Errorf("expected stack='python', got '%s'", stack)
+	}
+	if pm != "pip" {
+		t.Errorf("expected pm='pip', got '%s'", pm)
+	}
+}
+
 func TestDetectTechStack_Unknown(t *testing.T) {
 	dir := t.TempDir()
 
@@ -315,6 +328,180 @@ func TestDiscoverCodebase_WithConfig(t *testing.T) {
 	}
 	if ctx.TestCommand != "bun run test" {
 		t.Errorf("expected testCommand='bun run test', got '%s'", ctx.TestCommand)
+	}
+}
+
+func TestDetectVerifyCommands_JSProject(t *testing.T) {
+	dir := t.TempDir()
+	pkgJSON := `{"scripts":{"typecheck":"tsc --noEmit","lint":"eslint .","test:unit":"vitest run","test":"vitest"}}`
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "npm run typecheck" {
+		t.Errorf("typecheck: got %q, want %q", tc, "npm run typecheck")
+	}
+	if lint != "npm run lint" {
+		t.Errorf("lint: got %q, want %q", lint, "npm run lint")
+	}
+	// Should prefer test:unit over test
+	if test != "npm run test:unit" {
+		t.Errorf("test: got %q, want %q", test, "npm run test:unit")
+	}
+}
+
+func TestDetectVerifyCommands_JSProject_BunPackageManager(t *testing.T) {
+	dir := t.TempDir()
+	pkgJSON := `{"scripts":{"typecheck":"tsc --noEmit","lint":"eslint .","test":"vitest"}}`
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644)
+	os.WriteFile(filepath.Join(dir, "bun.lockb"), []byte(""), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "bun run typecheck" {
+		t.Errorf("typecheck: got %q, want %q", tc, "bun run typecheck")
+	}
+	if lint != "bun run lint" {
+		t.Errorf("lint: got %q, want %q", lint, "bun run lint")
+	}
+	if test != "bun run test" {
+		t.Errorf("test: got %q, want %q", test, "bun run test")
+	}
+}
+
+func TestDetectVerifyCommands_JSProject_BunLockTextFormat(t *testing.T) {
+	dir := t.TempDir()
+	pkgJSON := `{"scripts":{"test":"vitest"}}`
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644)
+	os.WriteFile(filepath.Join(dir, "bun.lock"), []byte(""), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "" {
+		t.Errorf("typecheck: got %q, want empty", tc)
+	}
+	if lint != "" {
+		t.Errorf("lint: got %q, want empty", lint)
+	}
+	if test != "bun run test" {
+		t.Errorf("test: got %q, want %q", test, "bun run test")
+	}
+}
+
+func TestDetectVerifyCommands_JSProject_NoScripts(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies":{"react":"18.0.0"}}`), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "" {
+		t.Errorf("typecheck should be empty, got %q", tc)
+	}
+	if lint != "" {
+		t.Errorf("lint should be empty, got %q", lint)
+	}
+	if test != "" {
+		t.Errorf("test should be empty, got %q", test)
+	}
+}
+
+func TestDetectVerifyCommands_GoProject(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test"), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "go vet ./..." {
+		t.Errorf("typecheck: got %q, want %q", tc, "go vet ./...")
+	}
+	if lint != "" {
+		t.Errorf("lint should be empty for Go, got %q", lint)
+	}
+	if test != "go test ./..." {
+		t.Errorf("test: got %q, want %q", test, "go test ./...")
+	}
+}
+
+func TestDetectVerifyCommands_RustProject(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]"), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "cargo check" {
+		t.Errorf("typecheck: got %q, want %q", tc, "cargo check")
+	}
+	if lint != "" {
+		t.Errorf("lint should be empty for Rust, got %q", lint)
+	}
+	if test != "cargo test" {
+		t.Errorf("test: got %q, want %q", test, "cargo test")
+	}
+}
+
+func TestDetectVerifyCommands_PythonWithPytest(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("pytest==7.4.0\nflask==3.0.0"), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "" {
+		t.Errorf("typecheck should be empty for Python, got %q", tc)
+	}
+	if lint != "" {
+		t.Errorf("lint should be empty for Python, got %q", lint)
+	}
+	if test != "pytest" {
+		t.Errorf("test: got %q, want %q", test, "pytest")
+	}
+}
+
+func TestDetectVerifyCommands_UnknownProject(t *testing.T) {
+	dir := t.TempDir()
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "" {
+		t.Errorf("typecheck should be empty, got %q", tc)
+	}
+	if lint != "" {
+		t.Errorf("lint should be empty, got %q", lint)
+	}
+	if test != "" {
+		t.Errorf("test should be empty, got %q", test)
+	}
+}
+
+func TestReadPackageJSONScripts(t *testing.T) {
+	dir := t.TempDir()
+	pkgJSON := `{"scripts":{"typecheck":"tsc --noEmit","lint":"eslint .","dev":"next dev","test":"vitest"}}`
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644)
+
+	scripts := readPackageJSONScripts(dir)
+	if scripts == nil {
+		t.Fatal("expected non-nil scripts")
+	}
+	if scripts["typecheck"] != "tsc --noEmit" {
+		t.Errorf("typecheck: got %q", scripts["typecheck"])
+	}
+	if scripts["lint"] != "eslint ." {
+		t.Errorf("lint: got %q", scripts["lint"])
+	}
+	if scripts["test"] != "vitest" {
+		t.Errorf("test: got %q", scripts["test"])
+	}
+	if scripts["dev"] != "next dev" {
+		t.Errorf("dev: got %q", scripts["dev"])
+	}
+}
+
+func TestReadPackageJSONScripts_NoFile(t *testing.T) {
+	dir := t.TempDir()
+	scripts := readPackageJSONScripts(dir)
+	if scripts != nil {
+		t.Errorf("expected nil scripts for missing package.json, got %v", scripts)
+	}
+}
+
+func TestReadPackageJSONScripts_NoScriptsField(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies":{}}`), 0644)
+
+	scripts := readPackageJSONScripts(dir)
+	if scripts != nil {
+		t.Errorf("expected nil scripts for package.json without scripts field, got %v", scripts)
 	}
 }
 

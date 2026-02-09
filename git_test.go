@@ -167,6 +167,75 @@ func TestGitOps_DefaultBranch(t *testing.T) {
 	}
 }
 
+func TestGitOps_DefaultBranch_FallbackToMaster(t *testing.T) {
+	// Create a repo with only "master" branch (no origin/HEAD, no "main")
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	run("init", "-b", "master")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test"), 0644)
+	run("add", "README.md")
+	run("commit", "-m", "initial commit")
+
+	git := NewGitOps(dir)
+	branch := git.DefaultBranch()
+	if branch != "master" {
+		t.Errorf("expected 'master' when only master branch exists, got '%s'", branch)
+	}
+}
+
+func TestGitOps_DefaultBranch_FallbackToMainDefault(t *testing.T) {
+	// Create a repo with a non-standard branch name (no origin/HEAD, no main, no master)
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	run("init", "-b", "develop")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test"), 0644)
+	run("add", "README.md")
+	run("commit", "-m", "initial commit")
+
+	git := NewGitOps(dir)
+	branch := git.DefaultBranch()
+	// When neither main nor master exists, falls back to "main" as default
+	if branch != "main" {
+		t.Errorf("expected 'main' as fallback default, got '%s'", branch)
+	}
+}
+
 func TestGitOps_GetDiffSummary(t *testing.T) {
 	dir, git := initTestRepo(t)
 

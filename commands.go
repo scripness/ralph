@@ -74,9 +74,15 @@ func promptProviderSelection(reader *bufio.Reader) string {
 
 // promptVerifyCommands prompts the user for typecheck, lint, and test commands.
 // Returns only the non-empty commands. reader is accepted as a parameter so tests can inject controlled input.
-func promptVerifyCommands(reader *bufio.Reader) []string {
+// detected is [typecheck, lint, test] from DetectVerifyCommands; empty strings mean no default detected.
+func promptVerifyCommands(reader *bufio.Reader, detected [3]string) []string {
 	fmt.Println()
-	fmt.Println("Verify commands (press Enter to skip any):")
+	hasDefaults := detected[0] != "" || detected[1] != "" || detected[2] != ""
+	if hasDefaults {
+		fmt.Println("Verify commands (detected from project config, press Enter to accept or type to override):")
+	} else {
+		fmt.Println("Verify commands (press Enter to skip any):")
+	}
 	fmt.Println()
 
 	prompts := []struct {
@@ -89,13 +95,19 @@ func promptVerifyCommands(reader *bufio.Reader) []string {
 	}
 
 	var commands []string
-	for _, p := range prompts {
-		fmt.Printf("  %s (%s)\n", p.label, p.example)
+	for i, p := range prompts {
+		if detected[i] != "" {
+			fmt.Printf("  %s [%s]\n", p.label, detected[i])
+		} else {
+			fmt.Printf("  %s (%s)\n", p.label, p.example)
+		}
 		fmt.Print("  > ")
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
 		if input != "" {
 			commands = append(commands, input)
+		} else if detected[i] != "" {
+			commands = append(commands, detected[i])
 		}
 	}
 
@@ -125,8 +137,12 @@ func cmdInit(args []string) {
 	reader := bufio.NewReader(os.Stdin)
 	providerCommand := promptProviderSelection(reader)
 
-	// Prompt for verify commands
-	verifyCommands := promptVerifyCommands(reader)
+	// Detect verify commands from project config files
+	tc, lint, test := DetectVerifyCommands(projectRoot)
+	detected := [3]string{tc, lint, test}
+
+	// Prompt for verify commands (with auto-detected defaults)
+	verifyCommands := promptVerifyCommands(reader, detected)
 
 	// Create ralph.config.json
 	if err := WriteDefaultConfig(projectRoot, providerCommand, verifyCommands); err != nil {

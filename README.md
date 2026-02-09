@@ -19,7 +19,7 @@ go install github.com/scripness/ralph@latest
 ## Quick Start
 
 ```bash
-# Initialize Ralph (prompts for provider + verify commands)
+# Initialize Ralph (detects project, prompts for provider + verify commands with auto-detected defaults)
 ralph init
 
 # Create a PRD for a feature
@@ -437,7 +437,7 @@ Ralph auto-detects these via `ralph prd` discovery:
 |-------|-----------|------------------|
 | **Go** | `go.mod` | go |
 | **TypeScript/JavaScript** | `package.json`, `tsconfig.json` | bun, npm, yarn, pnpm |
-| **Python** | `pyproject.toml`, `requirements.txt` | pip, poetry, uv |
+| **Python** | `pyproject.toml`, `requirements.txt`, `setup.py` | pip |
 | **Rust** | `Cargo.toml` | cargo |
 
 Frameworks detected: React, Next.js, Vue, Svelte, Express, FastAPI, Gin, etc.

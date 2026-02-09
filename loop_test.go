@@ -180,6 +180,16 @@ func TestProcessLine_SuggestNextMarker(t *testing.T) {
 	}
 }
 
+func TestProcessLine_ReasonMarkerOverwrite(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("<ralph>REASON:First reason</ralph>", result, nil)
+	processLine("<ralph>REASON:Second reason</ralph>", result, nil)
+
+	if result.Reason != "Second reason" {
+		t.Errorf("expected last reason to win, got '%s'", result.Reason)
+	}
+}
+
 func TestProcessLine_CombinedMarkers(t *testing.T) {
 	result := &ProviderResult{}
 	processLine("<ralph>BLOCK:US-007</ralph>", result, nil)
