@@ -598,6 +598,9 @@ func DetectVerifyCommands(projectRoot string) (typecheck, lint, test string) {
 		}
 	case "go":
 		typecheck = "go vet ./..."
+		if fileExists(filepath.Join(projectRoot, ".golangci.yml")) || fileExists(filepath.Join(projectRoot, ".golangci.yaml")) {
+			lint = "golangci-lint run"
+		}
 		test = "go test ./..."
 	case "rust":
 		typecheck = "cargo check"

@@ -133,6 +133,7 @@ ralph init [--force]           # Initialize Ralph (creates config + .ralph/)
 ralph prd <feature>            # Create/refine/finalize a PRD
 ralph run <feature>            # Run the agent loop (infinite until done)
 ralph verify <feature>         # Run verification only
+# Feature names are case-insensitive: "ralph run Auth" and "ralph run auth" find the same feature
 ```
 
 ### Status Commands
@@ -150,7 +151,7 @@ ralph validate <feature>       # Validate prd.json schema
 ralph resources list           # Show cached framework source code
 ralph resources sync           # Sync all detected dependencies
 ralph resources sync <name>    # Sync specific resource (e.g., "next")
-ralph resources clear          # Clear all cached resources
+ralph resources clear          # Clear all cached resources (prompts for confirmation)
 ralph resources path           # Print cache directory path
 ralph resources path <name>    # Print path to specific cached resource
 ```
@@ -575,6 +576,9 @@ Service ready URLs must include the protocol scheme:
 ```bash
 git init                # Initialize a git repo in your project
 ```
+
+### "Provider 'X' is not a known provider"
+This is a non-blocking warning when using a custom provider command. Ralph will still work — provider defaults (promptMode, args, etc.) will use fallback values. You can set them explicitly in `ralph.config.json` if needed.
 
 ### "'sh' not found in PATH"
 This shouldn't happen on standard Unix systems. Check your PATH configuration.

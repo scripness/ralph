@@ -417,6 +417,34 @@ func TestDetectVerifyCommands_GoProject(t *testing.T) {
 	}
 }
 
+func TestDetectVerifyCommands_GoProject_WithGolangciLint(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test"), 0644)
+	os.WriteFile(filepath.Join(dir, ".golangci.yml"), []byte("linters:\n  enable:\n    - errcheck"), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "go vet ./..." {
+		t.Errorf("typecheck: got %q, want %q", tc, "go vet ./...")
+	}
+	if lint != "golangci-lint run" {
+		t.Errorf("lint: got %q, want %q", lint, "golangci-lint run")
+	}
+	if test != "go test ./..." {
+		t.Errorf("test: got %q, want %q", test, "go test ./...")
+	}
+}
+
+func TestDetectVerifyCommands_GoProject_WithGolangciYaml(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test"), 0644)
+	os.WriteFile(filepath.Join(dir, ".golangci.yaml"), []byte("linters:\n  enable:\n    - errcheck"), 0644)
+
+	_, lint, _ := DetectVerifyCommands(dir)
+	if lint != "golangci-lint run" {
+		t.Errorf("lint: got %q, want %q", lint, "golangci-lint run")
+	}
+}
+
 func TestDetectVerifyCommands_RustProject(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]"), 0644)
