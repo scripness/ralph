@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Verify prerequisites
-	for _, bin := range []string{"claude", "bun", "git"} {
+	for _, bin := range []string{"claude", "bun", "git", "gh"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			os.RemoveAll(tmpDir)
 			log.Fatalf("E2E tests require %s in PATH", bin)
@@ -836,10 +836,10 @@ func phase1Setup(t *testing.T, env *testEnv) {
 		t.Logf("Artifacts preserved at: %s", env.projectDir)
 	})
 
-	// Clone warrantycert
+	// Clone warrantycert (using gh for authenticated access)
 	t.Log("Cloning warrantycert...")
-	runCmd(t, "", 2*time.Minute, "git", "clone", "--depth", "1",
-		"https://github.com/scripness/warrantycert", env.projectDir)
+	runCmd(t, "", 2*time.Minute, "gh", "repo", "clone",
+		"scripness/warrantycert", env.projectDir, "--", "--depth", "1")
 
 	// Install dependencies
 	t.Log("Installing dependencies (bun install)...")
