@@ -872,6 +872,11 @@ func phase1Setup(t *testing.T, env *testEnv) {
 	t.Log("Setting up database (bun run db:fresh)...")
 	runCmd(t, env.projectDir, 30*time.Second, "bun", "run", "db:fresh")
 
+	// Generate initial CSS (Tailwind needs this before dev server can start)
+	t.Log("Generating initial CSS...")
+	runCmd(t, env.projectDir, 60*time.Second, "bunx", "@tailwindcss/cli",
+		"-i", "public/input.css", "-o", "public/styles.css")
+
 	// Install Playwright chromium
 	t.Log("Installing Playwright chromium...")
 	runCmd(t, env.projectDir, 2*time.Minute, "bunx", "playwright", "install", "chromium")
@@ -951,7 +956,11 @@ func phase3ConfigEnhancement(t *testing.T, env *testEnv) {
 			RestartBeforeVerify: true,
 		},
 	}
-	cfg.Verify.UI = []string{"bun run test:e2e"}
+	// Note: verify.ui is intentionally omitted. Pre-verify runs the full verification
+	// suite per story — with 3 UI stories, running bun run test:e2e 3 times would eat
+	// 15+ minutes on timeouts before any implementation starts. Browser steps (navigate,
+	// assertVisible) already provide UI verification. The e2e tests are the feature being
+	// built (US-003), not a pre-existing verification tool.
 	if cfg.Verify.Timeout == 0 {
 		cfg.Verify.Timeout = 300
 	}
@@ -978,8 +987,8 @@ func phase3ConfigEnhancement(t *testing.T, env *testEnv) {
 	if reloaded.Services[0].Ready != "http://localhost:3000" {
 		t.Errorf("Service ready URL: got %q", reloaded.Services[0].Ready)
 	}
-	if len(reloaded.Verify.UI) != 1 || reloaded.Verify.UI[0] != "bun run test:e2e" {
-		t.Errorf("verify.ui: got %v", reloaded.Verify.UI)
+	if len(reloaded.Verify.UI) != 0 {
+		t.Errorf("verify.ui should be empty, got %v", reloaded.Verify.UI)
 	}
 	if reloaded.Browser == nil || !reloaded.Browser.Enabled {
 		t.Error("Browser should be enabled")
