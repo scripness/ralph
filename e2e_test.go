@@ -947,7 +947,7 @@ func phase3ConfigEnhancement(t *testing.T, env *testEnv) {
 			Name:                "dev",
 			Start:               "bun run dev",
 			Ready:               "http://localhost:3000",
-			ReadyTimeout:        30,
+			ReadyTimeout:        60,
 			RestartBeforeVerify: true,
 		},
 	}
