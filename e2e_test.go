@@ -307,12 +307,14 @@ func runRalphWithStdin(t *testing.T, dir string, stdin string, timeout time.Dura
 type promptResponse struct {
 	pattern  string // substring to match in combined stdout+stderr
 	response string // what to write to stdin when matched
-	oneShot  bool   // if true, only respond once
-	used     bool   // track if already triggered
+	used bool // track if already triggered (each response fires at most once)
 }
 
 // runRalphInteractive runs ralph with expect-style stdin interaction.
-// It watches stdout/stderr for prompt patterns and responds just-in-time.
+// It reads stdout/stderr byte-by-byte (via raw Read), checking partial lines
+// for prompt patterns. This is critical because prompts like "Enter choice (1-6): "
+// and "  > " don't end with newlines — bufio.Scanner would deadlock waiting for \n
+// while ralph blocks waiting for stdin.
 func runRalphInteractive(t *testing.T, dir string, timeout time.Duration,
 	responses []promptResponse, args ...string) ralphResult {
 	t.Helper()
@@ -345,50 +347,71 @@ func runRalphInteractive(t *testing.T, dir string, timeout time.Duration,
 	var stdoutBuf, stderrBuf bytes.Buffer
 	var mu sync.Mutex
 
-	// checkAndRespond scans a line for matching patterns and writes responses.
-	checkAndRespond := func(line string) {
-		mu.Lock()
-		defer mu.Unlock()
-		for i := range responses {
-			if responses[i].oneShot && responses[i].used {
-				continue
+	// readStream reads from a pipe in small chunks, processing bytes incrementally.
+	// It checks partial lines (before \n) against prompt patterns so that prompts
+	// without trailing newlines (e.g. "Enter choice (1-6): ") are matched immediately.
+	// After a match on a partial line, further pattern checks are suppressed until
+	// the next newline to prevent substring false positives (e.g. "Test" in "Typecheck").
+	readStream := func(pipe io.Reader, buf *bytes.Buffer, label string) {
+		chunk := make([]byte, 256)
+		var currentLine strings.Builder
+		matchedOnCurrentLine := false
+		for {
+			n, readErr := pipe.Read(chunk)
+			if n > 0 {
+				buf.Write(chunk[:n])
+				for _, b := range chunk[:n] {
+					if b == '\n' {
+						line := currentLine.String()
+						t.Logf("%s: %s", label, line)
+						currentLine.Reset()
+						matchedOnCurrentLine = false
+					} else {
+						currentLine.WriteByte(b)
+						if !matchedOnCurrentLine {
+							partial := currentLine.String()
+							mu.Lock()
+							matchIdx := -1
+							for i := range responses {
+								if responses[i].used {
+									continue
+								}
+								if strings.Contains(partial, responses[i].pattern) {
+									matchIdx = i
+									responses[i].used = true
+									break
+								}
+							}
+							mu.Unlock()
+							if matchIdx >= 0 {
+								matchedOnCurrentLine = true
+								time.Sleep(100 * time.Millisecond)
+								io.WriteString(stdinPipe, responses[matchIdx].response+"\n")
+								t.Logf("RESPOND: matched %q -> sent %q",
+									responses[matchIdx].pattern, responses[matchIdx].response)
+							}
+						}
+					}
+				}
 			}
-			if strings.Contains(line, responses[i].pattern) {
-				time.Sleep(100 * time.Millisecond)
-				io.WriteString(stdinPipe, responses[i].response+"\n")
-				responses[i].used = true
-				t.Logf("RESPOND: matched %q -> sent %q", responses[i].pattern, responses[i].response)
+			if readErr != nil {
+				if currentLine.Len() > 0 {
+					t.Logf("%s: %s", label, currentLine.String())
+				}
 				break
 			}
 		}
 	}
 
-	// Goroutine to read stdout line by line.
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stdoutPipe)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			stdoutBuf.WriteString(line + "\n")
-			t.Logf("STDOUT: %s", line)
-			checkAndRespond(line)
-		}
+		readStream(stdoutPipe, &stdoutBuf, "STDOUT")
 	}()
-
-	// Goroutine to read stderr line by line.
 	go func() {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stderrPipe)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			stderrBuf.WriteString(line + "\n")
-			t.Logf("STDERR: %s", line)
-			checkAndRespond(line)
-		}
+		readStream(stderrPipe, &stderrBuf, "STDERR")
 	}()
 
 	done := make(chan error, 1)
@@ -999,7 +1022,7 @@ func phase4Doctor(t *testing.T, env *testEnv) {
 func phase5PrdCreate(t *testing.T, env *testEnv) {
 	result := runRalphInteractive(t, env.projectDir, 10*time.Minute,
 		[]promptResponse{
-			{pattern: "Ready to finalize for execution?", response: "y", oneShot: true},
+			{pattern: "Ready to finalize for execution?", response: "y"},
 		},
 		"prd", env.featureName,
 	)
@@ -1296,8 +1319,8 @@ func phase9PrdRefine(t *testing.T, env *testEnv) {
 
 	result := runRalphInteractive(t, env.projectDir, 10*time.Minute,
 		[]promptResponse{
-			{pattern: "Choose", response: "a", oneShot: true},
-			{pattern: "Finalize for execution?", response: "y", oneShot: true},
+			{pattern: "Choose", response: "a"},
+			{pattern: "Finalize for execution?", response: "y"},
 		},
 		"prd", env.featureName,
 	)
