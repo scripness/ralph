@@ -46,6 +46,7 @@ Prompt templates live in `prompts/` and are embedded at compile time:
 ```bash
 make build    # go build -ldflags="-s -w" -o ralph .
 make test     # go test ./...
+make test-e2e # go test -tags e2e -timeout 60m -v -run TestE2E ./...
 ```
 
 Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automation, `github.com/creativeprojects/go-selfupdate` for self-update.
@@ -368,8 +369,75 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `resourcereg_test.go` - MapDependencyToResource, MergeWithCustom, DefaultResources validation
 - `prd_test.go` - editor validation in prdEditManual
 - `external_git_test.go` - ExternalGitOps, Exists, GetRepoSize
+- `e2e_test.go` - Full end-to-end test (`//go:build e2e`) exercising init → prd → run → verify on real project with real Claude
 
 Run with `go test ./...` or `go test -v ./...` for verbose output.
+
+### E2E Tests
+
+`e2e_test.go` contains a full end-to-end test (`//go:build e2e`) that exercises the complete user journey on a real TypeScript project (warrantycert) with real Claude CLI. No mocking, no pre-crafted data.
+
+**Prerequisites:** `claude` CLI (configured with API key), `bun`, `git`, internet access, system Chromium or auto-download capability.
+
+**Run:** `make test-e2e` (or `go test -tags e2e -timeout 60m -v -run TestE2E ./...`)
+
+**What it tests (15 sequential phases):**
+0. **Smoke Tests** — `--help`, `--version`, unknown command (exit codes + output patterns)
+1. **Project Setup** — Clone warrantycert, `bun install`, database setup, Playwright install, baseline typecheck
+2. **ralph init** — Interactive provider selection (claude) + verify command acceptance (detected defaults)
+3. **Config Enhancement** — Add services, verify.ui, browser config programmatically
+4. **ralph doctor** — Validate all environment checks pass (config, provider, dirs, tools, git)
+5. **ralph prd** — Create + finalize PRD for "certificate-search" feature (real Claude brainstorming)
+6. **Pre-Run Checks** — validate (schema + story count), status (no-arg + feature), next commands
+7. **ralph run** — First implementation run (25 min timeout, real Claude coding)
+8. **Post-Run Analysis** — Parse PRD state, JSONL event assertions (run_start, provider_start, verify_start, story_start, service_start, marker_detected), git history
+9. **PRD Refinement** — Conditional: refine if not all stories passed, re-validate after
+10. **Second Run** — Conditional: re-run with refined PRD (20 min timeout)
+11. **Status + Logs + Resources** — status (no-arg), logs --list/--summary/--json/--run/--type/--story, resources list/path
+12. **ralph verify** — Conditional: final verification if all stories passed
+13. **Post-Run Doctor** — Verify doctor still passes after full run (no stale locks, etc.)
+14. **Report** — Comprehensive summary with per-story breakdown
+
+**Key design:** Uses `promptResponder` (expect-style stdin interaction) to drive interactive sessions — watches stdout for prompt patterns and responds just-in-time. Process tracker (`processTracker`) ensures all ralph subprocesses are killed on test abort via `t.Cleanup`. JSONL event assertions validate the internal event stream (run_start, provider_start, verify_start, etc.). The test validates Ralph's full orchestration pipeline including service management, browser verification, and e2e test execution.
+
+**Artifact directory:** Each run saves structured output to `e2e-runs/<timestamp>/` (override with `RALPH_E2E_ARTIFACT_DIR` env var). Structure:
+```
+e2e-runs/2026-02-10T15-04-05/
+  report.md              # Human-readable report organized by story/idea
+  result.txt             # PASS, PARTIAL, FAIL, or INCOMPLETE
+  summary.json           # Machine-readable: stories, branch, run_number, config
+  config.json            # ralph.config.json used
+  prd.md / prd.json      # Original PRD
+  prd-final.json         # Final PRD state after all runs
+  prd-after-run1.json    # PRD snapshot after first run
+  prd-refined.json       # PRD after refinement (if applicable)
+  git-log.txt            # Commits on the ralph/ branch
+  git-diff.txt           # Full diff from main
+  git-diff-stat.txt      # Diff stat summary
+  git-status.txt         # Working tree status after runs
+  learnings.txt          # All learnings captured
+  phases/                # Stdout+stderr from each ralph invocation
+    00-smoke.txt
+    02-init.txt
+    04-doctor.txt
+    05-prd-create.txt
+    07-first-run.txt
+    09-SKIPPED.txt       # Skipped phase indicator (if applicable)
+    13-post-doctor.txt
+    ...
+  stories/               # Per-story breakdown (organized by "idea")
+    us-001/
+      summary.md         # Description, criteria, status, failure details
+      failure.txt        # Raw verification failure output (if failed)
+      browser-steps.txt  # Browser step events from JSONL (if UI story)
+    us-002/
+      ...
+  logs/                  # Copied JSONL run logs
+    run-001.jsonl
+    ...
+```
+
+**Duration:** ~20-45 minutes depending on Claude's implementation speed.
 
 ## Releasing
 

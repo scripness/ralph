@@ -8,6 +8,9 @@ ralph.exe
 *.swp
 *.swo
 
+# E2E test artifacts
+e2e-runs/
+
 # OS
 .DS_Store
 Thumbs.db
