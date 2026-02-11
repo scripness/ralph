@@ -310,6 +310,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Browser executable path validation**: `CheckReadiness` validates `browser.executablePath` exists on disk if explicitly set and browser is enabled.
 - **Unknown provider warning**: `CheckReadinessWarnings()` warns when `provider.command` is not in `knownProviders` map. Non-blocking warning printed before every run/verify.
 - **Interactive PRD strips non-interactive flags**: `runProviderInteractive()` removes `--print`/`-p` from provider args via `stripNonInteractiveArgs()` so the provider runs as a conversational CLI session. The `ralph run` loop (which uses `runProvider()` in loop.go) is unaffected.
+- **Interactive commands skip Setpgid**: `Command.Run()` in prd.go does NOT set `Setpgid: true` — the provider must stay in ralph's foreground process group to read from the terminal. `Setpgid` would put it in a background group, causing SIGTTIN on stdin reads (freezing the process). The run loop in loop.go uses `Setpgid: true` since it communicates via pipes, not the terminal.
 - **`ralph prd` validates git + warns about placeholder commands**: `cmdPrd()` calls `checkGitAvailable()` and warns (without blocking) if verify.default contains placeholder commands.
 - **ResetStoryForPreVerify vs ResetStory**: `ResetStory` (called from verify phase RESET marker) increments retries and can block the story. `ResetStoryForPreVerify` (called during pre-verify) resets without incrementing retries — the story wasn't re-attempted, it just became invalid due to PRD changes.
 

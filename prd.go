@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // runPrdStateMachine runs the smart PRD workflow
@@ -249,7 +248,9 @@ func (c *Command) Run() error {
 	if c.dir != "" {
 		cmd.Dir = c.dir
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// NOTE: no Setpgid here. The provider must stay in ralph's process group
+	// so it can read from the controlling terminal. Setpgid would put it in a
+	// background group, causing SIGTTIN on any stdin read (freezing the process).
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
