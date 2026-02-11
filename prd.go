@@ -198,14 +198,20 @@ func prdEditManual(path string) error {
 // Interactive mode needs stdin for user input, so stdin promptMode
 // falls back to arg mode. File mode is preserved for providers that
 // need it (e.g., to avoid shell argument length limits).
+// Non-interactive flags like --print are stripped so the provider runs
+// as a full interactive CLI session (user answers questions, then exits).
 func runProviderInteractive(cfg *ResolvedConfig, prompt string) error {
 	promptMode := cfg.Config.Provider.PromptMode
 	if promptMode == "stdin" || promptMode == "" {
 		promptMode = "arg"
 	}
 
+	// Strip non-interactive flags so the provider runs interactively.
+	// e.g., claude's --print suppresses streaming and prevents conversation.
+	interactiveArgs := stripNonInteractiveArgs(cfg.Config.Provider.Args)
+
 	args, promptFile, err := buildProviderArgs(
-		cfg.Config.Provider.Args,
+		interactiveArgs,
 		promptMode,
 		cfg.Config.Provider.PromptFlag,
 		prompt,
@@ -261,6 +267,25 @@ type execCmd struct {
 
 func execCommand(name string, args ...string) *exec.Cmd {
 	return exec.Command(name, args...)
+}
+
+// nonInteractiveArgs are flags that prevent interactive provider sessions.
+// These are stripped by runProviderInteractive so the user can converse
+// with the provider during PRD creation.
+var nonInteractiveArgs = map[string]bool{
+	"--print": true,
+	"-p":      true,
+}
+
+// stripNonInteractiveArgs removes flags that prevent interactive sessions.
+func stripNonInteractiveArgs(args []string) []string {
+	filtered := make([]string, 0, len(args))
+	for _, arg := range args {
+		if !nonInteractiveArgs[arg] {
+			filtered = append(filtered, arg)
+		}
+	}
+	return filtered
 }
 
 // promptYesNo prompts for a yes/no answer

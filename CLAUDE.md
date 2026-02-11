@@ -157,7 +157,7 @@ Auto-detected defaults by provider command name (all fields auto-detected when o
 
 `defaultArgs` are applied only when `args` key is absent from config JSON. Setting `"args": []` explicitly opts out of default args.
 
-For interactive PRD sessions (`ralph prd`), `stdin` prompt mode is automatically overridden to `arg` since the provider needs stdin for interactive input.
+For interactive PRD sessions (`ralph prd`), `stdin` prompt mode is automatically overridden to `arg` since the provider needs stdin for interactive input. Non-interactive flags (`--print`, `-p`) are also stripped so the provider runs as a full interactive CLI session where the user can converse with the AI.
 
 ## Key Differences from Original Ralph (snarktank/ralph v1)
 
@@ -309,6 +309,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Service URL format validation**: `validateConfig()` validates that `services[].ready` starts with `http://` or `https://`. Catches typos like `localhost:3000` (missing scheme) at config load time.
 - **Browser executable path validation**: `CheckReadiness` validates `browser.executablePath` exists on disk if explicitly set and browser is enabled.
 - **Unknown provider warning**: `CheckReadinessWarnings()` warns when `provider.command` is not in `knownProviders` map. Non-blocking warning printed before every run/verify.
+- **Interactive PRD strips non-interactive flags**: `runProviderInteractive()` removes `--print`/`-p` from provider args via `stripNonInteractiveArgs()` so the provider runs as a conversational CLI session. The `ralph run` loop (which uses `runProvider()` in loop.go) is unaffected.
 - **`ralph prd` validates git + warns about placeholder commands**: `cmdPrd()` calls `checkGitAvailable()` and warns (without blocking) if verify.default contains placeholder commands.
 - **ResetStoryForPreVerify vs ResetStory**: `ResetStory` (called from verify phase RESET marker) increments retries and can block the story. `ResetStoryForPreVerify` (called during pre-verify) resets without incrementing retries — the story wasn't re-attempted, it just became invalid due to PRD changes.
 
@@ -367,7 +368,7 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `logger_test.go` - event logging, run numbering, log rotation, event filtering, run summaries
 - `resources_test.go` - ResourceManager, ResourcesConfig, cache operations, FormatSize
 - `resourcereg_test.go` - MapDependencyToResource, MergeWithCustom, DefaultResources validation
-- `prd_test.go` - editor validation in prdEditManual
+- `prd_test.go` - editor validation in prdEditManual, stripNonInteractiveArgs
 - `external_git_test.go` - ExternalGitOps, Exists, GetRepoSize
 - `e2e_test.go` - Full end-to-end test (`//go:build e2e`) exercising init → prd → run → verify on real project with real Claude
 
