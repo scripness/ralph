@@ -76,3 +76,9 @@ Stories tagged `[ui]` should have:
 ## Save Location
 
 After refinement, save the updated version to: {{outputPath}}
+
+## After Saving
+
+Once you have saved the refined PRD to disk, tell the user:
+
+> PRD saved to {{outputPath}}. If you're happy with it, exit this session (Ctrl+C or /exit) and ralph will guide you through the next step.

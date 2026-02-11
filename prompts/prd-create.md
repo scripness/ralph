@@ -152,3 +152,9 @@ The PRD reader will be an AI agent with a single context window. Therefore:
 - **Keep stories small** — if in doubt, split it
 - **Be specific** — vague requirements lead to rework
 - **Order matters** — dependencies must come first
+
+## After Saving
+
+Once you have saved the PRD to disk, tell the user:
+
+> PRD saved to {{outputPath}}. If you're happy with it, exit this session (Ctrl+C or /exit) and ralph will guide you through the next step.

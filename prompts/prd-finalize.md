@@ -130,3 +130,9 @@ Before saving, verify:
 - [ ] Stories with testable logic have "Tests pass" as a criterion
 - [ ] No story depends on a later story
 - [ ] Stories are small enough for one implementation session
+
+## After Saving
+
+Once you have saved prd.json to disk, tell the user:
+
+> prd.json saved to {{outputPath}}. If you're happy with it, exit this session (Ctrl+C or /exit) and ralph will validate the JSON and guide you to the next step.

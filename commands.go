@@ -374,6 +374,14 @@ func cmdPrd(args []string) {
 		os.Exit(1)
 	}
 
+	// Ensure we're on the feature branch before any commits
+	branchName := "ralph/" + feature
+	git := NewGitOps(projectRoot)
+	if err := git.EnsureBranch(branchName); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to switch to branch %s: %v\n", branchName, err)
+		os.Exit(1)
+	}
+
 	if err := runPrdStateMachine(cfg, featureDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

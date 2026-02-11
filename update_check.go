@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	selfupdate "github.com/creativeprojects/go-selfupdate"
@@ -68,7 +69,7 @@ func checkForUpdate() (string, bool) {
 		var cache updateCheckCache
 		if json.Unmarshal(data, &cache) == nil {
 			if time.Since(cache.LastCheck) < updateCheckInterval {
-				if cache.LatestVersion != "" && cache.LatestVersion != version {
+				if cache.LatestVersion != "" && isNewerVersion(cache.LatestVersion, version) {
 					return cache.LatestVersion, true
 				}
 				return "", false
@@ -101,6 +102,29 @@ func checkForUpdate() (string, bool) {
 		return "", false
 	}
 	return latestVersion, true
+}
+
+// isNewerVersion returns true if latest is strictly newer than current.
+// Both versions may optionally have a "v" prefix.
+func isNewerVersion(latest, current string) bool {
+	latest = strings.TrimPrefix(latest, "v")
+	current = strings.TrimPrefix(current, "v")
+	// Split into parts and compare numerically
+	lp := strings.Split(latest, ".")
+	cp := strings.Split(current, ".")
+	for i := 0; i < len(lp) && i < len(cp); i++ {
+		if lp[i] != cp[i] {
+			// Compare as numbers by padding to same length
+			for len(lp[i]) < len(cp[i]) {
+				lp[i] = "0" + lp[i]
+			}
+			for len(cp[i]) < len(lp[i]) {
+				cp[i] = "0" + cp[i]
+			}
+			return lp[i] > cp[i]
+		}
+	}
+	return len(lp) > len(cp)
 }
 
 func updateCheckCachePath() string {

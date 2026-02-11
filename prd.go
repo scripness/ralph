@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -54,6 +55,9 @@ func prdStateNew(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	}
 
 	fmt.Printf("\nSaved to %s\n\n", featureDir.PrdMdPath())
+
+	// Commit prd.md
+	commitPrdFile(cfg, featureDir.PrdMdPath(), "ralph: create prd.md for "+featureDir.Feature)
 
 	// Ask to finalize
 	if promptYesNo("Ready to finalize for execution?") {
@@ -140,6 +144,9 @@ func prdRefine(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	fmt.Printf("\nUpdated %s\n", featureDir.PrdMdPath())
 
+	// Commit refined prd.md
+	commitPrdFile(cfg, featureDir.PrdMdPath(), "ralph: refine prd.md for "+featureDir.Feature)
+
 	if promptYesNo("Finalize for execution?") {
 		return prdFinalize(cfg, featureDir)
 	}
@@ -169,6 +176,10 @@ func prdFinalize(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			fmt.Println("Edit manually or run 'ralph prd " + featureDir.Feature + "' again.")
 			return nil
 		}
+
+		// Commit both prd.md and prd.json
+		commitPrdFile(cfg, featureDir.PrdMdPath(), "ralph: finalize prd.md for "+featureDir.Feature)
+		commitPrdFile(cfg, featureDir.PrdJsonPath(), "ralph: finalize prd.json for "+featureDir.Feature)
 
 		fmt.Printf("\n✓ PRD finalized: %s\n", featureDir.PrdJsonPath())
 		fmt.Printf("\nRun 'ralph run %s' to start implementation.\n", featureDir.Feature)
@@ -287,6 +298,23 @@ func stripNonInteractiveArgs(args []string) []string {
 		}
 	}
 	return filtered
+}
+
+// commitPrdFile commits a PRD file if commits.prdChanges is enabled.
+// Safety: refuses to commit unless currently on a ralph/ branch.
+func commitPrdFile(cfg *ResolvedConfig, path, message string) {
+	if cfg.Config.Commits == nil || !cfg.Config.Commits.PrdChanges {
+		return
+	}
+	git := NewGitOps(cfg.ProjectRoot)
+	branch, err := git.CurrentBranch()
+	if err != nil || !strings.HasPrefix(branch, "ralph/") {
+		fmt.Printf("Warning: not on a ralph/ branch (on %s), skipping commit of %s\n", branch, filepath.Base(path))
+		return
+	}
+	if err := git.CommitFile(path, message); err != nil {
+		fmt.Printf("Warning: failed to commit %s: %v\n", filepath.Base(path), err)
+	}
 }
 
 // promptYesNo prompts for a yes/no answer

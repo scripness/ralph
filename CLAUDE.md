@@ -85,7 +85,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 ### CLI handles (the provider must NOT do these):
 - **Readiness enforcement**: Hard-fails before run/verify if not in a git repo, `sh` is missing, `.ralph/` is not writable, QA commands are missing/placeholder, or not in PATH
 - **Story selection**: CLI picks the next story by priority, skipping passed/blocked
-- **Branch management**: CLI creates/switches to the `ralph/<feature>` branch
+- **Branch management**: CLI creates/switches to the `ralph/<feature>` branch (both `ralph prd` and `ralph run` call `EnsureBranch` before any commits)
 - **State updates**: CLI marks stories passed/failed/blocked based on verification results
 - **Verification**: CLI runs `verify.default` and `verify.ui` commands, not the provider
 - **Browser testing**: CLI executes browserSteps via rod; console errors are hard failures
@@ -93,7 +93,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Learning management**: CLI deduplicates learnings and saves them on every code path (including timeout/error)
 - **Crash recovery**: CLI tracks `currentStoryId` in prd.json to resume interrupted work
 - **Concurrency control**: CLI uses lock file to prevent parallel runs
-- **PRD persistence**: CLI commits prd.json changes atomically (including STUCK/timeout/no-DONE paths)
+- **PRD persistence**: CLI commits both prd.md and prd.json. `ralph prd` commits prd.md after creation/refinement and both files after finalization. `ralph run` commits prd.json state changes atomically (including STUCK/timeout/no-DONE paths)
 
 ### Provider handles (told via prompts in prompts/run.md):
 - **Code implementation**: Write the code for the assigned story
@@ -286,7 +286,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Learning deduplication**: `AddLearning()` normalizes (case-insensitive, trimmed) before checking for duplicates. Learnings are saved on all code paths: success, timeout, error, STUCK, and no-DONE. Prompt delivery caps at 50 most recent learnings to prevent context overflow.
 - **PRD quality warnings**: `WarnPRDQuality()` checks stories for missing "Typecheck passes" acceptance criteria (soft warning, does not block).
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
-- **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h (falls back to `/tmp/ralph-update-check.json` if home directory is unavailable). Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`.
+- **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h (falls back to `/tmp/ralph-update-check.json` if home directory is unavailable). Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`. Cache uses `isNewerVersion()` for proper semver comparison (not just string inequality) to avoid suggesting downgrades after upgrades.
 - **Resources module**: `ResourceManager` auto-detects project dependencies via `ExtractDependencies()`, maps them to source repos via `MapDependencyToResource()`, and caches full repos in `~/.ralph/resources/`. Shallow clones (`--depth 1 --single-branch`) minimize disk usage. `EnsureResources()` is called before the story loop to sync detected frameworks. Cache metadata is stored in `registry.json`. Use `ralph resources list/sync/clear` for manual management. `ralph doctor` shows cache status.
 - **Resource verification instructions**: Prompts include `{{resourceVerificationInstructions}}` which tells the agent about cached framework source code. When resources are cached, agents can read actual source to verify implementations. Falls back to web search instructions when no resources are cached.
 - **Verification summary**: `runFinalVerification` accumulates structured PASS/FAIL/WARN lines for each verification step (including truncated command output for failures) and passes them to the verify prompt as `verifySummary`.
@@ -311,7 +311,7 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Unknown provider warning**: `CheckReadinessWarnings()` warns when `provider.command` is not in `knownProviders` map. Non-blocking warning printed before every run/verify.
 - **Interactive PRD strips non-interactive flags**: `runProviderInteractive()` removes `--print`/`-p` from provider args via `stripNonInteractiveArgs()` so the provider runs as a conversational CLI session. The `ralph run` loop (which uses `runProvider()` in loop.go) is unaffected.
 - **Interactive commands skip Setpgid**: `Command.Run()` in prd.go does NOT set `Setpgid: true` — the provider must stay in ralph's foreground process group to read from the terminal. `Setpgid` would put it in a background group, causing SIGTTIN on stdin reads (freezing the process). The run loop in loop.go uses `Setpgid: true` since it communicates via pipes, not the terminal.
-- **`ralph prd` validates git + warns about placeholder commands**: `cmdPrd()` calls `checkGitAvailable()` and warns (without blocking) if verify.default contains placeholder commands.
+- **`ralph prd` validates git + ensures branch + warns about placeholder commands**: `cmdPrd()` calls `checkGitAvailable()`, ensures `ralph/<feature>` branch via `EnsureBranch`, and warns (without blocking) if verify.default contains placeholder commands. `commitPrdFile()` has a defense-in-depth check that refuses to commit unless on a `ralph/` branch.
 - **ResetStoryForPreVerify vs ResetStory**: `ResetStory` (called from verify phase RESET marker) increments retries and can block the story. `ResetStoryForPreVerify` (called during pre-verify) resets without incrementing retries — the story wasn't re-attempted, it just became invalid due to PRD changes.
 
 ## Prompt Template Variables
@@ -365,7 +365,7 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `cleanup_test.go` - CleanupCoordinator idempotency, nil resource handling
 - `atomic_test.go` - atomic writes, JSON validation
 - `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, DefaultBranch fallback chain, GetDiffSummary, HasNewCommitSince, IsWorkingTreeClean, GetChangedFiles, HasTestFileChanges)
-- `update_check_test.go` - update check cache path
+- `update_check_test.go` - update check cache path, isNewerVersion semver comparison
 - `logger_test.go` - event logging, run numbering, log rotation, event filtering, run summaries
 - `resources_test.go` - ResourceManager, ResourcesConfig, cache operations, FormatSize
 - `resourcereg_test.go` - MapDependencyToResource, MergeWithCustom, DefaultResources validation
