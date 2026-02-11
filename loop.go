@@ -111,7 +111,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	// Check for crash recovery - if currentStoryId is set, we were interrupted
 	if prd.Run.CurrentStoryID != nil {
-		fmt.Printf("\n⚠ Resuming from interrupted story: %s\n", *prd.Run.CurrentStoryID)
+		fmt.Printf("\n! Resuming from interrupted story: %s\n", *prd.Run.CurrentStoryID)
 	}
 
 	// Initialize service manager
@@ -219,7 +219,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		if HasBlockedStories(prd) && GetNextStory(prd) == nil {
 			logger.LogPrintln()
 			fmt.Println(strings.Repeat("=", 60))
-			logger.LogPrintln(" ⚠ All remaining stories are blocked")
+			logger.LogPrintln(" ! All remaining stories are blocked")
 			fmt.Println(strings.Repeat("=", 60))
 			logger.LogPrintln()
 			logger.LogPrintln("Blocked stories:")
@@ -272,7 +272,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 		// Generate and send prompt
 		prompt := generateRunPrompt(cfg, featureDir, prd, story)
+		logger.LogPrintln("Provider running...")
 		logger.ProviderStart()
+		providerStartTime := time.Now()
 		result, err := runProvider(cfg, prompt, logger, cleanup)
 
 		// Collect markers for logging
@@ -295,6 +297,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			}
 		}
 		logger.ProviderEnd(result.ExitCode, result.TimedOut, detectedMarkers)
+		logger.LogPrint("Provider done (%s)\n", FormatDuration(time.Since(providerStartTime)))
 
 		// Process learnings and blocks even on error (result is non-nil even on timeout)
 		if result != nil {
@@ -303,7 +306,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 				logger.Learning(learning)
 			}
 			for _, storyID := range result.Blocks {
-				logger.LogPrint("\n⚠ Provider blocked story: %s\n", storyID)
+				logger.LogPrint("\n! Provider blocked story: %s\n", storyID)
 				prd.MarkStoryBlocked(storyID, result.Reason)
 				logger.StateChange(storyID, "pending", "blocked", map[string]interface{}{"reason": result.Reason})
 			}
@@ -329,7 +332,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			if reason == "" {
 				reason = "Provider signaled STUCK"
 			}
-			logger.LogPrint("\n⚠ Provider stuck on %s: %s\n", story.ID, reason)
+			logger.LogPrint("\n! Provider stuck on %s: %s\n", story.ID, reason)
 			logger.StateChange(story.ID, "pending", "failed", map[string]interface{}{"reason": reason})
 			prd.MarkStoryFailed(story.ID, reason, cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
@@ -363,7 +366,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 		// Check that provider actually committed something
 		if !git.HasNewCommitSince(preRunCommit) {
-			logger.LogPrintln("\n⚠ Provider signaled DONE but made no new commit.")
+			logger.LogPrintln("\n! Provider signaled DONE but made no new commit.")
 			logger.Warning("provider signaled DONE but made no new commit")
 			prd.MarkStoryFailed(story.ID, "No commit made — provider signaled DONE without committing code", cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
@@ -380,7 +383,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 		// Warn if working tree is dirty (provider left uncommitted files)
 		if !git.IsWorkingTreeClean() {
-			logger.LogPrintln("\n⚠ Working tree has uncommitted changes after provider finished.")
+			logger.LogPrintln("\n! Working tree has uncommitted changes after provider finished.")
 			logger.LogPrintln("  Provider may have left untracked or modified files.")
 			logger.Warning("working tree has uncommitted changes after provider finished")
 		}
@@ -559,7 +562,9 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger, cleanup 
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
-			fmt.Fprintln(os.Stderr, line)
+			if logger != nil {
+				logger.ProviderLine("stderr", line)
+			}
 			mu.Lock()
 			stderrBuilder.WriteString(line + "\n")
 			outputBuilder.WriteString(line + "\n")
@@ -573,7 +578,9 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger, cleanup 
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		fmt.Println(line)
+		if logger != nil {
+			logger.ProviderLine("stdout", line)
+		}
 		mu.Lock()
 		stdoutBuilder.WriteString(line + "\n")
 		outputBuilder.WriteString(line + "\n")
@@ -624,18 +631,21 @@ func processLine(line string, result *ProviderResult, logger *RunLogger) {
 		result.Done = true
 		if logger != nil {
 			logger.MarkerDetected("DONE", "")
+			logger.LogPrintln("  ◆ DONE")
 		}
 	}
 	if strings.Contains(line, VerifiedMarker) {
 		result.Verified = true
 		if logger != nil {
 			logger.MarkerDetected("VERIFIED", "")
+			logger.LogPrintln("  ◆ VERIFIED")
 		}
 	}
 	if strings.Contains(line, StuckMarker) {
 		result.Stuck = true
 		if logger != nil {
 			logger.MarkerDetected("STUCK", "")
+			logger.LogPrintln("  ◆ STUCK")
 		}
 	}
 
@@ -645,6 +655,7 @@ func processLine(line string, result *ProviderResult, logger *RunLogger) {
 		result.Learnings = append(result.Learnings, value)
 		if logger != nil {
 			logger.MarkerDetected("LEARNING", value)
+			logger.LogPrint("  ~ LEARNING: %s\n", value)
 		}
 	}
 
@@ -656,6 +667,7 @@ func processLine(line string, result *ProviderResult, logger *RunLogger) {
 		}
 		if logger != nil {
 			logger.MarkerDetected("RESET", matches[1])
+			logger.LogPrint("  ◆ RESET: %s\n", matches[1])
 		}
 	}
 
@@ -667,6 +679,7 @@ func processLine(line string, result *ProviderResult, logger *RunLogger) {
 		}
 		if logger != nil {
 			logger.MarkerDetected("BLOCK", matches[1])
+			logger.LogPrint("  ◆ BLOCK: %s\n", matches[1])
 		}
 	}
 
@@ -992,7 +1005,7 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 
 				if svcMgr.HasUIServices() {
 					if err := svcMgr.RestartForVerify(); err != nil {
-						logger.LogPrint("    ⚠ Service restart failed: %v\n", err)
+						logger.LogPrint("    ! Service restart failed: %v\n", err)
 						logger.ServiceRestart("all", false)
 						verifyFailed = true
 						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: service restart for %s (%v)", story.ID, err))
@@ -1116,7 +1129,9 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 
 	// Send verification prompt to provider
 	prompt := generateVerifyPrompt(cfg, featureDir, prd, verifySummary)
+	logger.LogPrintln("Provider running (verification review)...")
 	logger.ProviderStart()
+	verifyProviderStart := time.Now()
 	result, err := runProvider(cfg, prompt, logger, cleanup)
 
 	// Collect markers for logging
@@ -1133,6 +1148,7 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 		}
 	}
 	logger.ProviderEnd(result.ExitCode, result.TimedOut, detectedMarkers)
+	logger.LogPrint("Provider done (%s)\n", FormatDuration(time.Since(verifyProviderStart)))
 
 	// Save learnings from verification
 	if result != nil && len(result.Learnings) > 0 {
@@ -1274,8 +1290,8 @@ func runCommand(dir, cmdStr string, timeoutSec int) (string, error) {
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Dir = dir
 	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
 		return truncateOutput(buf.String(), 50), fmt.Errorf("timed out after %ds", timeoutSec)

@@ -359,6 +359,44 @@ func TestDefaultLoggingConfig(t *testing.T) {
 	}
 }
 
+func TestRunLogger_ProviderLine(t *testing.T) {
+	dir := t.TempDir()
+
+	logger, err := NewRunLogger(dir, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	logger.ProviderLine("stdout", "Hello from provider")
+	logger.ProviderLine("stderr", "Warning: something")
+	logger.Close()
+
+	events, err := ReadEvents(logger.LogPath(), &EventFilter{EventType: EventProviderLine})
+	if err != nil {
+		t.Fatalf("failed to read events: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 provider_line events, got %d", len(events))
+	}
+
+	// Check first event
+	if events[0].Data["stream"] != "stdout" {
+		t.Errorf("expected stream=stdout, got %v", events[0].Data["stream"])
+	}
+	if events[0].Data["line"] != "Hello from provider" {
+		t.Errorf("expected line='Hello from provider', got %v", events[0].Data["line"])
+	}
+
+	// Check second event
+	if events[1].Data["stream"] != "stderr" {
+		t.Errorf("expected stream=stderr, got %v", events[1].Data["stream"])
+	}
+	if events[1].Data["line"] != "Warning: something" {
+		t.Errorf("expected line='Warning: something', got %v", events[1].Data["line"])
+	}
+}
+
 // Helper to create bool pointer
 func ptrBool(b bool) *bool {
 	return &b

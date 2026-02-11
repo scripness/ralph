@@ -743,7 +743,7 @@ func cmdDoctor(args []string) {
 	if lock != nil {
 		fmt.Println()
 		if isProcessAlive(lock.PID) {
-			fmt.Printf("⚠ Ralph is currently running (PID %d, feature: %s)\n", lock.PID, lock.Feature)
+			fmt.Printf("! Ralph is currently running (PID %d, feature: %s)\n", lock.PID, lock.Feature)
 		} else {
 			fmt.Printf("○ Stale lock found (PID %d no longer running)\n", lock.PID)
 		}
@@ -764,6 +764,7 @@ func cmdLogs(args []string) {
 	listRuns := fs.Bool("list", false, "List all runs with summary")
 	tail := fs.Int("tail", 50, "Show last N events")
 	follow := fs.Bool("follow", false, "Follow log in real-time")
+	fs.BoolVar(follow, "f", false, "Follow log in real-time (shorthand)")
 	eventType := fs.String("type", "", "Filter by event type")
 	storyID := fs.String("story", "", "Filter by story ID")
 	jsonOutput := fs.Bool("json", false, "Output raw JSONL")
@@ -1106,11 +1107,15 @@ func printEvent(e *Event) {
 		to, _ := e.Data["to"].(string)
 		fmt.Printf("[%s] ↔ State: %s → %s\n", timestamp, from, to)
 
+	case EventProviderLine:
+		line, _ := e.Data["line"].(string)
+		fmt.Printf("[%s]   %s\n", timestamp, line)
+
 	case EventLearning:
-		fmt.Printf("[%s] 📝 Learning: %s\n", timestamp, e.Message)
+		fmt.Printf("[%s] ~ Learning: %s\n", timestamp, e.Message)
 
 	case EventWarning:
-		fmt.Printf("[%s] ⚠ Warning: %s\n", timestamp, e.Message)
+		fmt.Printf("[%s] ! Warning: %s\n", timestamp, e.Message)
 
 	case EventError:
 		fmt.Printf("[%s] ✗ Error: %s\n", timestamp, e.Message)

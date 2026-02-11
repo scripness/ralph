@@ -482,7 +482,7 @@ func FormatBrowserResults(results []BrowserCheckResult) string {
 			sb.WriteString("    ✓ Loaded successfully\n")
 		}
 		if len(r.ConsoleErrors) > 0 {
-			sb.WriteString(fmt.Sprintf("    ⚠ Console errors: %d\n", len(r.ConsoleErrors)))
+			sb.WriteString(fmt.Sprintf("    ! Console errors: %d\n", len(r.ConsoleErrors)))
 			for _, err := range r.ConsoleErrors {
 				sb.WriteString(fmt.Sprintf("      - %s\n", err))
 			}
@@ -546,7 +546,7 @@ func FormatStepResult(result *BrowserCheckResult) string {
 	}
 
 	if len(result.ConsoleErrors) > 0 {
-		sb.WriteString(fmt.Sprintf("    ⚠ Console errors: %d\n", len(result.ConsoleErrors)))
+		sb.WriteString(fmt.Sprintf("    ! Console errors: %d\n", len(result.ConsoleErrors)))
 	}
 
 	return sb.String()

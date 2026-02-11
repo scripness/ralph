@@ -41,6 +41,7 @@ const (
 	EventServiceHealth  EventType = "service_health"
 	EventStateChange    EventType = "state_change"
 	EventLearning       EventType = "learning"
+	EventProviderLine   EventType = "provider_line"
 	EventWarning        EventType = "warning"
 	EventError          EventType = "error"
 )
@@ -325,6 +326,17 @@ func (l *RunLogger) ProviderOutput(stdout, stderr string) {
 		Data: map[string]interface{}{
 			"stdout": stdout,
 			"stderr": stderr,
+		},
+	})
+}
+
+// ProviderLine logs a single line of provider output in real-time
+func (l *RunLogger) ProviderLine(stream, line string) {
+	l.logEvent(Event{
+		Type: EventProviderLine,
+		Data: map[string]interface{}{
+			"stream": stream,
+			"line":   line,
 		},
 	})
 }

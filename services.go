@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -152,8 +150,8 @@ func (sm *ServiceManager) startService(svc ServiceConfig) error {
 	cmd.Dir = sm.projectRoot
 	co := &capturedOutput{maxBytes: 256 * 1024}
 	sm.outputs[svc.Name] = co
-	cmd.Stdout = io.MultiWriter(os.Stdout, co)
-	cmd.Stderr = io.MultiWriter(os.Stderr, co)
+	cmd.Stdout = co
+	cmd.Stderr = co
 	
 	// Set process group so we can kill all children
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
