@@ -144,7 +144,7 @@ func TestGetResourceByName(t *testing.T) {
 }
 
 func TestDefaultResourcesHasExpectedEntries(t *testing.T) {
-	expected := []string{"next", "react", "svelte", "vue", "tailwindcss", "prisma", "vitest", "vite"}
+	expected := []string{"next", "react", "svelte", "vue", "tailwindcss", "prisma", "vitest", "vite", "phoenix", "ecto", "phoenix_live_view"}
 
 	for _, name := range expected {
 		r := GetResourceByName(name, DefaultResources)

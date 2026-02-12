@@ -370,7 +370,8 @@ func TestBuildProviderArgs_EndToEnd(t *testing.T) {
 			dir := t.TempDir()
 			configContent := fmt.Sprintf(`{
 				"provider": {"command": %q},
-				"verify": {"default": ["echo ok"]}
+				"verify": {"default": ["echo ok"]},
+				"services": [{"name": "dev", "ready": "http://localhost:3000"}]
 			}`, tt.command)
 			os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
 

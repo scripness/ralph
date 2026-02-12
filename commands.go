@@ -114,6 +114,28 @@ func promptVerifyCommands(reader *bufio.Reader, detected [3]string) []string {
 	return commands
 }
 
+// promptServiceConfig prompts the user for dev server configuration.
+// Returns nil if the user skips (placeholder will be used).
+func promptServiceConfig(reader *bufio.Reader) *ServiceConfig {
+	fmt.Println("\nDev server (for browser verification and service health checks):")
+	fmt.Print("  Start command (e.g. npm run dev, mix phx.server): ")
+	startCmd, _ := reader.ReadString('\n')
+	startCmd = strings.TrimSpace(startCmd)
+	if startCmd == "" {
+		return nil
+	}
+	fmt.Print("  Ready URL [http://localhost:3000]: ")
+	readyURL, _ := reader.ReadString('\n')
+	readyURL = strings.TrimSpace(readyURL)
+	if readyURL == "" {
+		readyURL = "http://localhost:3000"
+	}
+	if !strings.HasPrefix(readyURL, "http://") && !strings.HasPrefix(readyURL, "https://") {
+		readyURL = "http://" + readyURL
+	}
+	return &ServiceConfig{Name: "dev", Start: startCmd, Ready: readyURL, ReadyTimeout: 30, RestartBeforeVerify: true}
+}
+
 func cmdInit(args []string) {
 	force := false
 	for _, arg := range args {
@@ -144,8 +166,11 @@ func cmdInit(args []string) {
 	// Prompt for verify commands (with auto-detected defaults)
 	verifyCommands := promptVerifyCommands(reader, detected)
 
+	// Prompt for service config
+	svcConfig := promptServiceConfig(reader)
+
 	// Create ralph.config.json
-	if err := WriteDefaultConfig(projectRoot, providerCommand, verifyCommands); err != nil {
+	if err := WriteDefaultConfig(projectRoot, providerCommand, verifyCommands, svcConfig); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write config: %v\n", err)
 		os.Exit(1)
 	}

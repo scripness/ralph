@@ -165,6 +165,60 @@ func TestPromptVerifyCommands_OverridesDetectedDefaults(t *testing.T) {
 	}
 }
 
+func TestPromptServiceConfig_WithInput(t *testing.T) {
+	input := "npm run dev\nlocalhost:4000\n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	svc := promptServiceConfig(reader)
+	if svc == nil {
+		t.Fatal("expected non-nil service config")
+	}
+	if svc.Start != "npm run dev" {
+		t.Errorf("expected start='npm run dev', got %q", svc.Start)
+	}
+	if svc.Ready != "http://localhost:4000" {
+		t.Errorf("expected ready='http://localhost:4000', got %q", svc.Ready)
+	}
+	if svc.Name != "dev" {
+		t.Errorf("expected name='dev', got %q", svc.Name)
+	}
+	if !svc.RestartBeforeVerify {
+		t.Error("expected RestartBeforeVerify=true")
+	}
+}
+
+func TestPromptServiceConfig_DefaultURL(t *testing.T) {
+	input := "bun run dev\n\n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	svc := promptServiceConfig(reader)
+	if svc == nil {
+		t.Fatal("expected non-nil service config")
+	}
+	if svc.Ready != "http://localhost:3000" {
+		t.Errorf("expected default ready URL, got %q", svc.Ready)
+	}
+}
+
+func TestPromptServiceConfig_Skip(t *testing.T) {
+	input := "\n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	svc := promptServiceConfig(reader)
+	if svc != nil {
+		t.Errorf("expected nil when start command is empty, got %+v", svc)
+	}
+}
+
+func TestPromptServiceConfig_URLWithScheme(t *testing.T) {
+	input := "mix phx.server\nhttps://localhost:4001\n"
+	reader := bufio.NewReader(strings.NewReader(input))
+	svc := promptServiceConfig(reader)
+	if svc == nil {
+		t.Fatal("expected non-nil service config")
+	}
+	if svc.Ready != "https://localhost:4001" {
+		t.Errorf("expected URL with scheme preserved, got %q", svc.Ready)
+	}
+}
+
 func TestCmdInit_CreatesGitignore(t *testing.T) {
 	dir := t.TempDir()
 	ralphDir := filepath.Join(dir, ".ralph")

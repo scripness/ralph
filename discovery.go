@@ -73,6 +73,11 @@ func detectTechStack(projectRoot string) (techStack, packageManager string) {
 		return "rust", "cargo"
 	}
 
+	// Check for Elixir
+	if fileExists(filepath.Join(projectRoot, "mix.exs")) {
+		return "elixir", "mix"
+	}
+
 	// Check for Python
 	if fileExists(filepath.Join(projectRoot, "pyproject.toml")) {
 		return "python", "pip"
@@ -121,6 +126,8 @@ func detectFrameworks(projectRoot string, techStack string) []string {
 		frameworks = detectPythonFrameworks(projectRoot)
 	case "rust":
 		frameworks = detectRustFrameworks(projectRoot)
+	case "elixir":
+		frameworks = detectElixirFrameworks(projectRoot)
 	}
 
 	return frameworks
@@ -324,6 +331,37 @@ func detectRustFrameworks(projectRoot string) []string {
 	return frameworks
 }
 
+// detectElixirFrameworks detects Elixir frameworks from mix.exs
+func detectElixirFrameworks(projectRoot string) []string {
+	var frameworks []string
+
+	mixPath := filepath.Join(projectRoot, "mix.exs")
+	data, err := os.ReadFile(mixPath)
+	if err != nil {
+		return frameworks
+	}
+
+	content := string(data)
+
+	deps := map[string]string{
+		":phoenix":           "phoenix",
+		":phoenix_live_view": "phoenix_live_view",
+		":ecto":              "ecto",
+		":plug":              "plug",
+		":absinthe":          "absinthe",
+		":oban":              "oban",
+		":credo":             "credo",
+	}
+
+	for dep, name := range deps {
+		if strings.Contains(content, dep) {
+			frameworks = append(frameworks, name)
+		}
+	}
+
+	return frameworks
+}
+
 // FormatCodebaseContext formats the discovered context for inclusion in prompts
 func FormatCodebaseContext(ctx *CodebaseContext) string {
 	if ctx == nil || ctx.TechStack == "unknown" {
@@ -375,6 +413,8 @@ func ExtractDependencies(projectRoot string, techStack string) []Dependency {
 		return extractPythonDependencies(projectRoot)
 	case "rust":
 		return extractRustDependencies(projectRoot)
+	case "elixir":
+		return extractElixirDependencies(projectRoot)
 	}
 	return nil
 }
@@ -575,6 +615,75 @@ func extractRustDependencies(projectRoot string) []Dependency {
 	return deps
 }
 
+// extractElixirDependencies parses mix.exs for dependencies
+func extractElixirDependencies(projectRoot string) []Dependency {
+	var deps []Dependency
+
+	mixPath := filepath.Join(projectRoot, "mix.exs")
+	data, err := os.ReadFile(mixPath)
+	if err != nil {
+		return deps
+	}
+
+	lines := strings.Split(string(data), "\n")
+	inDeps := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Detect deps function start
+		if strings.Contains(trimmed, "defp deps") || strings.Contains(trimmed, "def deps") {
+			inDeps = true
+			continue
+		}
+
+		// Detect end of deps block
+		if inDeps && trimmed == "end" {
+			break
+		}
+
+		if !inDeps {
+			continue
+		}
+
+		// Parse {:name, "~> version"} tuples
+		if strings.HasPrefix(trimmed, "{:") {
+			// Extract name
+			nameStart := strings.Index(trimmed, "{:") + 2
+			nameEnd := strings.Index(trimmed[nameStart:], ",")
+			if nameEnd < 0 {
+				nameEnd = strings.Index(trimmed[nameStart:], "}")
+			}
+			if nameEnd < 0 {
+				continue
+			}
+			name := trimmed[nameStart : nameStart+nameEnd]
+
+			// Extract version
+			version := ""
+			if qStart := strings.Index(trimmed, "\""); qStart >= 0 {
+				qEnd := strings.Index(trimmed[qStart+1:], "\"")
+				if qEnd >= 0 {
+					version = trimmed[qStart+1 : qStart+1+qEnd]
+				}
+			}
+
+			// Check if dev/test only
+			isDev := strings.Contains(trimmed, "only: :dev") ||
+				strings.Contains(trimmed, "only: :test") ||
+				strings.Contains(trimmed, "only: [:dev") ||
+				strings.Contains(trimmed, "only: [:test")
+
+			deps = append(deps, Dependency{
+				Name:    name,
+				Version: version,
+				IsDev:   isDev,
+			})
+		}
+	}
+
+	return deps
+}
+
 // DetectVerifyCommands reads project config files to suggest verify commands.
 // Returns (typecheck, lint, test) where empty string means no suggestion.
 // Only suggests commands that are 100% deterministic from config files.
@@ -613,6 +722,14 @@ func DetectVerifyCommands(projectRoot string) (typecheck, lint, test string) {
 				break
 			}
 		}
+	case "elixir":
+		typecheck = "mix compile --warnings-as-errors"
+		if data, err := os.ReadFile(filepath.Join(projectRoot, "mix.exs")); err == nil {
+			if strings.Contains(string(data), ":credo") {
+				lint = "mix credo"
+			}
+		}
+		test = "mix test"
 	}
 	return
 }

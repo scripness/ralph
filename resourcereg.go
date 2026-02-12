@@ -82,6 +82,20 @@ var DefaultResources = []Resource{
 	{Name: "jotai", URL: "https://github.com/pmndrs/jotai", Branch: "main",
 		Notes: "Jotai atomic state management. Check src/ for atom implementation."},
 
+	// Elixir/Phoenix Ecosystem
+	{Name: "phoenix", URL: "https://github.com/phoenixframework/phoenix", Branch: "main",
+		Notes: "Phoenix web framework. Check lib/phoenix/ for core."},
+	{Name: "phoenix_live_view", URL: "https://github.com/phoenixframework/phoenix_live_view", Branch: "main",
+		Notes: "Phoenix LiveView. Check lib/phoenix_live_view/ for core."},
+	{Name: "ecto", URL: "https://github.com/elixir-ecto/ecto", Branch: "main",
+		Notes: "Ecto database library. Check lib/ecto/ for core."},
+	{Name: "phoenix_html", URL: "https://github.com/phoenixframework/phoenix_html", Branch: "main",
+		Notes: "Phoenix HTML helpers. Check lib/phoenix_html/."},
+	{Name: "absinthe", URL: "https://github.com/absinthe-graphql/absinthe", Branch: "main",
+		Notes: "Absinthe GraphQL toolkit. Check lib/absinthe/."},
+	{Name: "oban", URL: "https://github.com/oban-bg/oban", Branch: "main",
+		Notes: "Oban background jobs. Check lib/oban/ for workers and queues."},
+
 	// Go Frameworks
 	{Name: "gin", URL: "https://github.com/gin-gonic/gin", Branch: "master",
 		Notes: "Gin web framework for Go. Check .go files for middleware patterns."},

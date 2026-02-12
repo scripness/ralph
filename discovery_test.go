@@ -131,6 +131,21 @@ func TestDetectTechStack_Python_SetupPy(t *testing.T) {
 	}
 }
 
+func TestDetectTechStack_Elixir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule MyApp.MixProject do
+  use Mix.Project
+end`), 0644)
+
+	stack, pm := detectTechStack(dir)
+	if stack != "elixir" {
+		t.Errorf("expected stack='elixir', got '%s'", stack)
+	}
+	if pm != "mix" {
+		t.Errorf("expected pm='mix', got '%s'", pm)
+	}
+}
+
 func TestDetectTechStack_Unknown(t *testing.T) {
 	dir := t.TempDir()
 
@@ -530,6 +545,129 @@ func TestReadPackageJSONScripts_NoScriptsField(t *testing.T) {
 	scripts := readPackageJSONScripts(dir)
 	if scripts != nil {
 		t.Errorf("expected nil scripts for package.json without scripts field, got %v", scripts)
+	}
+}
+
+func TestDetectElixirFrameworks(t *testing.T) {
+	dir := t.TempDir()
+	mixExs := `defmodule MyApp.MixProject do
+  use Mix.Project
+
+  defp deps do
+    [
+      {:phoenix, "~> 1.7"},
+      {:phoenix_live_view, "~> 0.20"},
+      {:ecto, "~> 3.11"},
+      {:credo, "~> 1.7", only: [:dev, :test]}
+    ]
+  end
+end`
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(mixExs), 0644)
+
+	frameworks := detectElixirFrameworks(dir)
+	expected := map[string]bool{"phoenix": false, "phoenix_live_view": false, "ecto": false, "credo": false}
+	for _, f := range frameworks {
+		if _, ok := expected[f]; ok {
+			expected[f] = true
+		}
+	}
+	for name, found := range expected {
+		if !found {
+			t.Errorf("expected '%s' in frameworks, got %v", name, frameworks)
+		}
+	}
+}
+
+func TestDetectElixirFrameworks_NoMixExs(t *testing.T) {
+	dir := t.TempDir()
+	frameworks := detectElixirFrameworks(dir)
+	if len(frameworks) != 0 {
+		t.Errorf("expected empty frameworks for missing mix.exs, got %v", frameworks)
+	}
+}
+
+func TestExtractElixirDependencies(t *testing.T) {
+	dir := t.TempDir()
+	mixExs := `defmodule MyApp.MixProject do
+  use Mix.Project
+
+  defp deps do
+    [
+      {:phoenix, "~> 1.7.0"},
+      {:ecto_sql, "~> 3.11"},
+      {:credo, "~> 1.7", only: :dev},
+      {:ex_machina, "~> 2.7", only: :test}
+    ]
+  end
+end`
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(mixExs), 0644)
+
+	deps := extractElixirDependencies(dir)
+	if len(deps) != 4 {
+		t.Fatalf("expected 4 deps, got %d: %v", len(deps), deps)
+	}
+
+	// Check phoenix is not dev
+	for _, d := range deps {
+		if d.Name == "phoenix" && d.IsDev {
+			t.Error("phoenix should not be a dev dependency")
+		}
+		if d.Name == "credo" && !d.IsDev {
+			t.Error("credo should be a dev dependency")
+		}
+		if d.Name == "ex_machina" && !d.IsDev {
+			t.Error("ex_machina should be a dev/test dependency")
+		}
+	}
+}
+
+func TestExtractElixirDependencies_NoFile(t *testing.T) {
+	dir := t.TempDir()
+	deps := extractElixirDependencies(dir)
+	if deps != nil {
+		t.Errorf("expected nil for missing mix.exs, got %v", deps)
+	}
+}
+
+func TestDetectVerifyCommands_Elixir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule MyApp.MixProject do
+  use Mix.Project
+  defp deps do
+    [{:phoenix, "~> 1.7"}]
+  end
+end`), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "mix compile --warnings-as-errors" {
+		t.Errorf("typecheck: got %q, want %q", tc, "mix compile --warnings-as-errors")
+	}
+	if lint != "" {
+		t.Errorf("lint should be empty without credo, got %q", lint)
+	}
+	if test != "mix test" {
+		t.Errorf("test: got %q, want %q", test, "mix test")
+	}
+}
+
+func TestDetectVerifyCommands_ElixirWithCredo(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte(`defmodule MyApp.MixProject do
+  use Mix.Project
+  defp deps do
+    [{:phoenix, "~> 1.7"}, {:credo, "~> 1.7", only: :dev}]
+  end
+end`), 0644)
+
+	tc, lint, test := DetectVerifyCommands(dir)
+	if tc != "mix compile --warnings-as-errors" {
+		t.Errorf("typecheck: got %q, want %q", tc, "mix compile --warnings-as-errors")
+	}
+	if lint != "mix credo" {
+		t.Errorf("lint: got %q, want %q", lint, "mix credo")
+	}
+	if test != "mix test" {
+		t.Errorf("test: got %q, want %q", test, "mix test")
 	}
 }
 

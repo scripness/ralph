@@ -48,7 +48,8 @@ func TestLoadConfig_Valid(t *testing.T) {
 		"verify": {
 			"default": ["bun run test"],
 			"ui": ["bun run test:e2e"]
-		}
+		},
+		"services": [{"name": "dev", "ready": "http://localhost:3000"}]
 	}`
 	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
 
@@ -132,7 +133,8 @@ func TestLoadConfig_Defaults(t *testing.T) {
 		},
 		"verify": {
 			"default": ["bun run test"]
-		}
+		},
+		"services": [{"name": "dev", "ready": "http://localhost:3000"}]
 	}`
 	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
 
@@ -170,7 +172,7 @@ func TestIsCommandAvailable(t *testing.T) {
 func TestWriteDefaultConfig(t *testing.T) {
 	dir := t.TempDir()
 
-	err := WriteDefaultConfig(dir, "claude", nil)
+	err := WriteDefaultConfig(dir, "claude", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -320,7 +322,8 @@ func TestLoadConfig_ProviderDefaults_AllProviders(t *testing.T) {
 			dir := t.TempDir()
 			configContent := fmt.Sprintf(`{
 				"provider": {"command": %q},
-				"verify": {"default": ["echo test"]}
+				"verify": {"default": ["echo test"]},
+				"services": [{"name": "dev", "ready": "http://localhost:3000"}]
 			}`, tt.command)
 			os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
 
@@ -361,7 +364,8 @@ func TestLoadConfig_ProviderExplicitEmptyArgs(t *testing.T) {
 		},
 		"verify": {
 			"default": ["bun run test"]
-		}
+		},
+		"services": [{"name": "dev", "ready": "http://localhost:3000"}]
 	}`
 	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
 
@@ -393,7 +397,7 @@ func TestWriteDefaultConfig_AutoDetection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 
-			err := WriteDefaultConfig(dir, tt.command, nil)
+			err := WriteDefaultConfig(dir, tt.command, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -667,7 +671,8 @@ func TestVerifyTimeoutDefault(t *testing.T) {
 	dir := t.TempDir()
 	configContent := `{
 		"provider": {"command": "amp"},
-		"verify": {"default": ["echo ok"]}
+		"verify": {"default": ["echo ok"]},
+		"services": [{"name": "dev", "ready": "http://localhost:3000"}]
 	}`
 	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
 
@@ -684,7 +689,8 @@ func TestVerifyTimeoutExplicit(t *testing.T) {
 	dir := t.TempDir()
 	configContent := `{
 		"provider": {"command": "amp"},
-		"verify": {"default": ["echo ok"], "timeout": 600}
+		"verify": {"default": ["echo ok"], "timeout": 600},
+		"services": [{"name": "dev", "ready": "http://localhost:3000"}]
 	}`
 	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
 
@@ -701,7 +707,8 @@ func TestVerifyTimeoutZero(t *testing.T) {
 	dir := t.TempDir()
 	configContent := `{
 		"provider": {"command": "amp"},
-		"verify": {"default": ["echo ok"], "timeout": 0}
+		"verify": {"default": ["echo ok"], "timeout": 0},
+		"services": [{"name": "dev", "ready": "http://localhost:3000"}]
 	}`
 	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
 
@@ -815,7 +822,7 @@ func TestWriteDefaultConfig_WithVerifyCommands(t *testing.T) {
 	dir := t.TempDir()
 
 	commands := []string{"go vet ./...", "golangci-lint run", "go test ./..."}
-	err := WriteDefaultConfig(dir, "claude", commands)
+	err := WriteDefaultConfig(dir, "claude", commands, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -842,7 +849,7 @@ func TestWriteDefaultConfig_WithVerifyCommands(t *testing.T) {
 func TestWriteDefaultConfig_EmptyVerifyCommands(t *testing.T) {
 	dir := t.TempDir()
 
-	err := WriteDefaultConfig(dir, "claude", []string{})
+	err := WriteDefaultConfig(dir, "claude", []string{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -861,7 +868,7 @@ func TestWriteDefaultConfig_EmptyVerifyCommands(t *testing.T) {
 func TestWriteDefaultConfig_NoCommitsMessage(t *testing.T) {
 	dir := t.TempDir()
 
-	err := WriteDefaultConfig(dir, "claude", nil)
+	err := WriteDefaultConfig(dir, "claude", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -999,5 +1006,102 @@ func TestCheckReadiness_BrowserExecutablePathValid(t *testing.T) {
 		if strings.Contains(issue, "browser.executablePath") {
 			t.Errorf("unexpected browser issue for valid path: %s", issue)
 		}
+	}
+}
+
+func TestValidateConfig_RequiresServices(t *testing.T) {
+	cfg := &RalphConfig{
+		Provider: ProviderConfig{Command: "claude"},
+		Verify:   VerifyConfig{Default: []string{"go test ./..."}},
+		Services: []ServiceConfig{},
+	}
+	err := validateConfig(cfg)
+	if err == nil {
+		t.Error("expected error for empty services")
+	}
+	if err != nil && !strings.Contains(err.Error(), "services must have at least one entry") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateConfig_RequiresServicesNil(t *testing.T) {
+	cfg := &RalphConfig{
+		Provider: ProviderConfig{Command: "claude"},
+		Verify:   VerifyConfig{Default: []string{"go test ./..."}},
+		Services: nil,
+	}
+	err := validateConfig(cfg)
+	if err == nil {
+		t.Error("expected error for nil services")
+	}
+}
+
+func TestCheckReadiness_PlaceholderServiceCommand(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+		},
+		Services: []ServiceConfig{
+			{Name: "dev", Start: "echo 'Replace with your dev server command'", Ready: "http://localhost:3000"},
+		},
+	}
+
+	issues := CheckReadiness(cfg, nil)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "placeholder") && strings.Contains(issue, "service 'dev'") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected placeholder service command issue, got %v", issues)
+	}
+}
+
+func TestCheckReadiness_BrowserStepsButBrowserDisabled(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	cfg := &RalphConfig{
+		Verify: VerifyConfig{
+			Default: []string{"go version"},
+			UI:      []string{"go version"},
+		},
+		Browser: &BrowserConfig{Enabled: false},
+	}
+	prd := &PRD{
+		UserStories: []UserStory{
+			{
+				ID:   "US-001",
+				Tags: []string{"ui"},
+				BrowserSteps: []BrowserStep{
+					{Action: "navigate", URL: "/"},
+				},
+			},
+		},
+	}
+
+	issues := CheckReadiness(cfg, prd)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "browserSteps") && strings.Contains(issue, "browser is disabled") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected browserSteps+disabled browser issue, got %v", issues)
 	}
 }

@@ -843,7 +843,13 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 						logger.BrowserEnd(true, 0)
 					}
 				}
+			} else if IsUIStory(story) || len(story.BrowserSteps) > 0 {
+				logger.Warning(fmt.Sprintf("browser verification skipped for %s: no service with a ready URL", story.ID))
+				logger.LogPrint("  ⚠ Browser verification skipped for %s\n", story.ID)
 			}
+		} else if (cfg.Config.Browser == nil || !cfg.Config.Browser.Enabled) && (IsUIStory(story) || len(story.BrowserSteps) > 0) {
+			logger.Warning(fmt.Sprintf("browser verification skipped for %s: browser disabled", story.ID))
+			logger.LogPrint("  ⚠ Browser verification skipped for %s: browser disabled\n", story.ID)
 		}
 
 		// Run UI verification commands
@@ -1132,6 +1138,30 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 						}
 					}
 				}
+			}
+		}
+	}
+
+	// Warn about skipped browser verification for UI stories
+	if cfg.Config.Browser == nil || !cfg.Config.Browser.Enabled {
+		for i := range prd.UserStories {
+			story := &prd.UserStories[i]
+			if story.Blocked || !IsUIStory(story) {
+				continue
+			}
+			logger.Warning(fmt.Sprintf("browser verification skipped for %s: browser disabled", story.ID))
+			summaryLines = append(summaryLines, fmt.Sprintf("WARN: browser verification skipped for %s (browser disabled)", story.ID))
+		}
+	} else if svcMgr != nil && cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
+		baseURL := GetBaseURL(cfg.Config.Services)
+		if baseURL == "" {
+			for i := range prd.UserStories {
+				story := &prd.UserStories[i]
+				if story.Blocked || !IsUIStory(story) {
+					continue
+				}
+				logger.Warning(fmt.Sprintf("browser verification skipped for %s: no base URL", story.ID))
+				summaryLines = append(summaryLines, fmt.Sprintf("WARN: browser verification skipped for %s (no base URL)", story.ID))
 			}
 		}
 	}

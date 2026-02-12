@@ -75,7 +75,7 @@ type CommitsConfig struct {
 type RalphConfig struct {
 	MaxRetries int              `json:"maxRetries,omitempty"`
 	Provider   ProviderConfig   `json:"provider"`
-	Services   []ServiceConfig  `json:"services,omitempty"`
+	Services   []ServiceConfig  `json:"services"`
 	Verify     VerifyConfig     `json:"verify"`
 	Browser    *BrowserConfig   `json:"browser,omitempty"`
 	Commits    *CommitsConfig   `json:"commits,omitempty"`
@@ -168,6 +168,9 @@ func validateConfig(cfg *RalphConfig) error {
 	if len(cfg.Verify.Default) == 0 {
 		return fmt.Errorf("verify.default must have at least one command")
 	}
+	if len(cfg.Services) == 0 {
+		return fmt.Errorf("services must have at least one entry (e.g. {\"name\": \"dev\", \"start\": \"npm run dev\", \"ready\": \"http://localhost:3000\"})")
+	}
 	for i, svc := range cfg.Services {
 		if svc.Name == "" {
 			return fmt.Errorf("services[%d].name is required", i)
@@ -245,7 +248,8 @@ func applyProviderDefaults(p *ProviderConfig) {
 
 // WriteDefaultConfig writes a default ralph.config.json with the given provider command.
 // If verifyCommands is non-empty, they are used as verify.default; otherwise placeholders are written.
-func WriteDefaultConfig(projectRoot, providerCommand string, verifyCommands []string) error {
+// If svc is non-nil, it is used as the service config; otherwise a placeholder service is written.
+func WriteDefaultConfig(projectRoot, providerCommand string, verifyCommands []string, svc *ServiceConfig) error {
 	defaultVerify := []string{
 		"echo 'Add your typecheck command'",
 		"echo 'Add your lint command'",
@@ -253,6 +257,13 @@ func WriteDefaultConfig(projectRoot, providerCommand string, verifyCommands []st
 	}
 	if len(verifyCommands) > 0 {
 		defaultVerify = verifyCommands
+	}
+
+	services := []ServiceConfig{
+		{Name: "dev", Start: "echo 'Replace with your dev server command'", Ready: "http://localhost:3000", ReadyTimeout: 30},
+	}
+	if svc != nil {
+		services = []ServiceConfig{*svc}
 	}
 
 	cfg := RalphConfig{
@@ -264,7 +275,7 @@ func WriteDefaultConfig(projectRoot, providerCommand string, verifyCommands []st
 		Verify: VerifyConfig{
 			Default: defaultVerify,
 		},
-		Services: []ServiceConfig{},
+		Services: services,
 		Browser: &BrowserConfig{
 			Enabled:       true,
 			Headless:      true,
@@ -377,9 +388,13 @@ func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
 	// Check service start command binaries are available
 	for _, svc := range cfg.Services {
 		if svc.Start != "" {
-			base := extractBaseCommand(svc.Start)
-			if base != "" && !isCommandAvailable(base) {
-				issues = append(issues, fmt.Sprintf("service '%s': '%s' not found in PATH (from: %s)", svc.Name, base, svc.Start))
+			if isPlaceholderCommand(svc.Start) {
+				issues = append(issues, fmt.Sprintf("service '%s': start command is a placeholder. Replace with your actual dev server command.", svc.Name))
+			} else {
+				base := extractBaseCommand(svc.Start)
+				if base != "" && !isCommandAvailable(base) {
+					issues = append(issues, fmt.Sprintf("service '%s': '%s' not found in PATH (from: %s)", svc.Name, base, svc.Start))
+				}
 			}
 		}
 	}
@@ -391,17 +406,23 @@ func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
 		}
 	}
 
-	// UI stories require verify.ui commands
+	// UI stories require verify.ui commands; browserSteps require browser enabled
 	if prd != nil {
 		hasUIStories := false
+		hasBrowserSteps := false
 		for _, s := range prd.UserStories {
 			if IsUIStory(&s) {
 				hasUIStories = true
-				break
+			}
+			if len(s.BrowserSteps) > 0 {
+				hasBrowserSteps = true
 			}
 		}
 		if hasUIStories && len(cfg.Verify.UI) == 0 {
 			issues = append(issues, "PRD has UI stories but verify.ui has no commands. Add e2e test commands (e.g., 'bun run test:e2e').")
+		}
+		if hasBrowserSteps && (cfg.Browser == nil || !cfg.Browser.Enabled) {
+			issues = append(issues, "PRD has stories with browserSteps but browser is disabled. Set browser.enabled=true in config.")
 		}
 	}
 
