@@ -114,8 +114,19 @@ func ValidatePRD(prd *PRD) error {
 }
 
 // GetNextStory returns the next story to work on (not passed, not blocked, by priority).
+// If CurrentStoryID is set (crash recovery), that story is returned first if still eligible.
 // The returned pointer references the original element in prd.UserStories.
 func GetNextStory(prd *PRD) *UserStory {
+	// Crash recovery: prefer the story that was in progress when interrupted
+	if prd.Run.CurrentStoryID != nil {
+		for i := range prd.UserStories {
+			s := &prd.UserStories[i]
+			if s.ID == *prd.Run.CurrentStoryID && !s.Passes && !s.Blocked {
+				return s
+			}
+		}
+	}
+
 	var indices []int
 	for i, s := range prd.UserStories {
 		if !s.Passes && !s.Blocked {
@@ -133,6 +144,17 @@ func GetNextStory(prd *PRD) *UserStory {
 	})
 
 	return &prd.UserStories[indices[0]]
+}
+
+// GetPendingStories returns all stories that are neither passed nor blocked.
+func GetPendingStories(prd *PRD) []UserStory {
+	var pending []UserStory
+	for _, s := range prd.UserStories {
+		if !s.Passes && !s.Blocked {
+			pending = append(pending, s)
+		}
+	}
+	return pending
 }
 
 // GetStoryByID returns a story by its ID
@@ -220,11 +242,13 @@ func (prd *PRD) AddLearning(learning string) {
 	prd.Run.Learnings = append(prd.Run.Learnings, learning)
 }
 
-// MarkStoryPassed marks a story as passed with result info
+// MarkStoryPassed marks a story as passed with result info.
+// Clears Blocked flag to ensure no conflicting state.
 func (prd *PRD) MarkStoryPassed(storyID, commit, summary string) {
 	for i := range prd.UserStories {
 		if prd.UserStories[i].ID == storyID {
 			prd.UserStories[i].Passes = true
+			prd.UserStories[i].Blocked = false
 			prd.UserStories[i].LastResult = &LastResult{
 				CompletedAt: time.Now().Format(time.RFC3339),
 				Commit:      commit,
@@ -235,10 +259,13 @@ func (prd *PRD) MarkStoryPassed(storyID, commit, summary string) {
 	}
 }
 
-// MarkStoryFailed marks a story as failed, incrementing retries
+// MarkStoryFailed marks a story as failed, incrementing retries.
+// Clears Passes and LastResult to ensure no conflicting state.
 func (prd *PRD) MarkStoryFailed(storyID, notes string, maxRetries int) {
 	for i := range prd.UserStories {
 		if prd.UserStories[i].ID == storyID {
+			prd.UserStories[i].Passes = false
+			prd.UserStories[i].LastResult = nil
 			prd.UserStories[i].Retries++
 			prd.UserStories[i].Notes = notes
 			if prd.UserStories[i].Retries >= maxRetries {
@@ -265,11 +292,14 @@ func (prd *PRD) ResetStory(storyID, notes string, maxRetries int) {
 	}
 }
 
-// MarkStoryBlocked marks a story as blocked (provider explicitly blocked it)
+// MarkStoryBlocked marks a story as blocked (provider explicitly blocked it).
+// Clears Passes and LastResult to ensure no conflicting state.
 func (prd *PRD) MarkStoryBlocked(storyID, notes string) {
 	for i := range prd.UserStories {
 		if prd.UserStories[i].ID == storyID {
 			prd.UserStories[i].Blocked = true
+			prd.UserStories[i].Passes = false
+			prd.UserStories[i].LastResult = nil
 			prd.UserStories[i].Notes = notes
 			break
 		}

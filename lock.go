@@ -43,15 +43,15 @@ func (lf *LockFile) Acquire(feature, branch string) error {
 		if err != nil {
 			// Lock file exists but can't be read - try to remove it
 			os.Remove(lf.path)
-		} else if isProcessAlive(existing.PID) {
-			return fmt.Errorf("ralph is already running (PID %d, feature: %s)\nStarted at: %s",
-				existing.PID, existing.Feature, existing.StartedAt.Format(time.RFC3339))
-		} else {
+		} else if isLockStale(existing) {
 			// Stale lock - remove it
-			fmt.Printf("Removing stale lock (PID %d no longer running)\n", existing.PID)
+			fmt.Printf("Removing stale lock (PID %d no longer running or lock too old)\n", existing.PID)
 			if err := os.Remove(lf.path); err != nil {
 				return fmt.Errorf("failed to remove stale lock: %w", err)
 			}
+		} else {
+			return fmt.Errorf("ralph is already running (PID %d, feature: %s)\nStarted at: %s",
+				existing.PID, existing.Feature, existing.StartedAt.Format(time.RFC3339))
 		}
 	}
 
@@ -142,6 +142,20 @@ func isProcessAlive(pid int) bool {
 	// to check if process exists
 	err = process.Signal(syscall.Signal(0))
 	return err == nil
+}
+
+// maxLockAge is the maximum age of a lock before it's considered stale,
+// even if the process is still alive. Guards against PID reuse.
+const maxLockAge = 24 * time.Hour
+
+// isLockStale returns true if the lock should be considered stale.
+// A lock is stale if the owning process is dead, or if the lock is older
+// than maxLockAge (guards against PID reuse by the OS).
+func isLockStale(info *LockInfo) bool {
+	if !isProcessAlive(info.PID) {
+		return true
+	}
+	return time.Since(info.StartedAt) > maxLockAge
 }
 
 // ReadLockStatus reads the current lock status without acquiring

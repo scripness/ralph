@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -472,4 +473,63 @@ func containsSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestAggregateBrowserResults_Empty(t *testing.T) {
+	result := aggregateBrowserResults(nil)
+	if result != nil {
+		t.Error("expected nil for empty results")
+	}
+
+	result = aggregateBrowserResults([]BrowserCheckResult{})
+	if result != nil {
+		t.Error("expected nil for zero-length results")
+	}
+}
+
+func TestAggregateBrowserResults_SingleResult(t *testing.T) {
+	results := []BrowserCheckResult{
+		{URL: "http://localhost:3000", ConsoleErrors: []string{"error1"}},
+	}
+	composite := aggregateBrowserResults(results)
+	if composite == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if composite.URL != "http://localhost:3000" {
+		t.Errorf("expected URL from first result, got %s", composite.URL)
+	}
+	if len(composite.ConsoleErrors) != 1 {
+		t.Errorf("expected 1 console error, got %d", len(composite.ConsoleErrors))
+	}
+}
+
+func TestAggregateBrowserResults_MergesConsoleErrors(t *testing.T) {
+	results := []BrowserCheckResult{
+		{URL: "http://localhost:3000/a", ConsoleErrors: []string{"error1"}},
+		{URL: "http://localhost:3000/b", ConsoleErrors: []string{"error2", "error3"}},
+	}
+	composite := aggregateBrowserResults(results)
+	if composite == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if len(composite.ConsoleErrors) != 3 {
+		t.Errorf("expected 3 console errors merged, got %d", len(composite.ConsoleErrors))
+	}
+}
+
+func TestAggregateBrowserResults_PropagatesFirstError(t *testing.T) {
+	err1 := fmt.Errorf("first error")
+	err2 := fmt.Errorf("second error")
+	results := []BrowserCheckResult{
+		{URL: "http://localhost:3000/a"},
+		{URL: "http://localhost:3000/b", Error: err1},
+		{URL: "http://localhost:3000/c", Error: err2},
+	}
+	composite := aggregateBrowserResults(results)
+	if composite == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if composite.Error != err1 {
+		t.Errorf("expected first error propagated, got %v", composite.Error)
+	}
 }

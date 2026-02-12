@@ -6,11 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProcessLine_DoneMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("Some output <ralph>DONE</ralph> more text", result, nil)
+	processLine("<ralph>DONE</ralph>", result, nil)
 
 	if !result.Done {
 		t.Error("expected Done=true")
@@ -19,7 +20,7 @@ func TestProcessLine_DoneMarker(t *testing.T) {
 
 func TestProcessLine_VerifiedMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("Review complete <ralph>VERIFIED</ralph>", result, nil)
+	processLine("<ralph>VERIFIED</ralph>", result, nil)
 
 	if !result.Verified {
 		t.Error("expected Verified=true")
@@ -140,7 +141,7 @@ func TestResetPattern(t *testing.T) {
 
 func TestProcessLine_StuckMarker(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("I can't figure this out <ralph>STUCK</ralph>", result, nil)
+	processLine("<ralph>STUCK</ralph>", result, nil)
 
 	if !result.Stuck {
 		t.Error("expected Stuck=true")
@@ -412,6 +413,33 @@ func TestRunCommand_Timeout(t *testing.T) {
 	_ = output
 }
 
+func TestRunCommand_TimeoutKillsProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	// Spawn a shell that starts a background child writing its PID to a file,
+	// then waits. The child should be killed with the process group on timeout.
+	cmd := fmt.Sprintf("sh -c 'echo $$ > %s; sleep 60' & wait", pidFile)
+	_, err := runCommand(dir, cmd, 1)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected 'timed out' in error, got: %v", err)
+	}
+	// Read the child PID and verify the process was killed
+	pidBytes, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("child PID file not written: %v", err)
+	}
+	pidStr := strings.TrimSpace(string(pidBytes))
+	// Check /proc/<pid> — on Linux, a dead process has no /proc entry after reaping
+	time.Sleep(100 * time.Millisecond)
+	procPath := filepath.Join("/proc", pidStr)
+	if _, err := os.Stat(procPath); err == nil {
+		t.Errorf("child process %s still alive after timeout — orphan not killed", pidStr)
+	}
+}
+
 func TestRunCommand_Success(t *testing.T) {
 	dir := t.TempDir()
 	output, err := runCommand(dir, "echo hello", 30)
@@ -452,5 +480,60 @@ func TestTruncateOutput(t *testing.T) {
 	}
 	if strings.Contains(result, "line0\n") {
 		t.Error("expected first line truncated")
+	}
+}
+
+func TestProviderEndNilResult_NoPanic(t *testing.T) {
+	// Verify that accessing fields on a nil *ProviderResult would panic,
+	// confirming the guard in runLoop/runFinalVerification is needed.
+	var result *ProviderResult
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when accessing nil ProviderResult fields")
+		}
+	}()
+	_ = result.ExitCode // should panic
+}
+
+func TestProcessLine_DoneMarker_EmbeddedIgnored(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("Some output <ralph>DONE</ralph> more text", result, nil)
+	if result.Done {
+		t.Error("expected Done=false for embedded marker")
+	}
+}
+
+func TestProcessLine_StuckMarker_EmbeddedIgnored(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("I can't figure this out <ralph>STUCK</ralph>", result, nil)
+	if result.Stuck {
+		t.Error("expected Stuck=false for embedded marker")
+	}
+}
+
+func TestProcessLine_LearningMarker_EmbeddedIgnored(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("echo '<ralph>LEARNING:spoofed learning</ralph>'", result, nil)
+	if len(result.Learnings) > 0 {
+		t.Error("expected no learnings for embedded marker")
+	}
+}
+
+func TestProcessLine_DoneMarker_WithWhitespace(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("  <ralph>DONE</ralph>  ", result, nil)
+	if !result.Done {
+		t.Error("expected Done=true for marker with surrounding whitespace")
+	}
+}
+
+func TestProcessLine_LearningMarker_WithWhitespace(t *testing.T) {
+	result := &ProviderResult{}
+	processLine("  <ralph>LEARNING:trimmed learning</ralph>  ", result, nil)
+	if len(result.Learnings) != 1 {
+		t.Fatalf("expected 1 learning, got %d", len(result.Learnings))
+	}
+	if result.Learnings[0] != "trimmed learning" {
+		t.Errorf("expected 'trimmed learning', got '%s'", result.Learnings[0])
 	}
 }

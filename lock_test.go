@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLockFile_AcquireRelease(t *testing.T) {
@@ -89,5 +90,35 @@ func TestReadLockStatus_WithLock(t *testing.T) {
 	}
 	if info.PID != os.Getpid() {
 		t.Errorf("expected PID=%d, got %d", os.Getpid(), info.PID)
+	}
+}
+
+func TestIsLockStale_DeadProcess(t *testing.T) {
+	info := &LockInfo{
+		PID:       999999, // almost certainly not running
+		StartedAt: time.Now(),
+	}
+	if !isLockStale(info) {
+		t.Error("expected stale for dead process")
+	}
+}
+
+func TestIsLockStale_AliveButOld(t *testing.T) {
+	info := &LockInfo{
+		PID:       os.Getpid(), // current process, alive
+		StartedAt: time.Now().Add(-25 * time.Hour), // older than maxLockAge
+	}
+	if !isLockStale(info) {
+		t.Error("expected stale for alive but old lock")
+	}
+}
+
+func TestIsLockStale_AliveAndRecent(t *testing.T) {
+	info := &LockInfo{
+		PID:       os.Getpid(), // current process, alive
+		StartedAt: time.Now(),  // recent
+	}
+	if isLockStale(info) {
+		t.Error("expected not stale for alive and recent lock")
 	}
 }

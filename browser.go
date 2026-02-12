@@ -62,10 +62,7 @@ func (br *BrowserRunner) RunSteps(story *UserStory, baseURL string) (*BrowserChe
 		if err != nil {
 			return nil, err
 		}
-		if len(results) > 0 {
-			return &results[0], nil
-		}
-		return nil, nil
+		return aggregateBrowserResults(results), nil
 	}
 
 	// Initialize browser
@@ -88,6 +85,9 @@ func (br *BrowserRunner) RunSteps(story *UserStory, baseURL string) (*BrowserChe
 			break
 		}
 	}
+
+	// Wait for async JS errors before collecting (matches checkURL delay)
+	time.Sleep(1 * time.Second)
 
 	br.mu.Lock()
 	result.ConsoleErrors = append([]string{}, br.consoleErrors...)
@@ -345,6 +345,22 @@ func (br *BrowserRunner) checkURL(url, storyID string) BrowserCheckResult {
 	}
 
 	return result
+}
+
+// aggregateBrowserResults merges multiple BrowserCheckResult into a single composite.
+// Propagates the first error and collects all console errors.
+func aggregateBrowserResults(results []BrowserCheckResult) *BrowserCheckResult {
+	if len(results) == 0 {
+		return nil
+	}
+	composite := &BrowserCheckResult{URL: results[0].URL}
+	for _, r := range results {
+		if r.Error != nil && composite.Error == nil {
+			composite.Error = r.Error
+		}
+		composite.ConsoleErrors = append(composite.ConsoleErrors, r.ConsoleErrors...)
+	}
+	return composite
 }
 
 // extractURLs extracts URLs to check from acceptance criteria

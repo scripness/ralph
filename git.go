@@ -30,7 +30,10 @@ func (g *GitOps) EnsureBranch(branchName string) error {
 
 	// Check if branch exists
 	if g.BranchExists(branchName) {
-		// Switch to existing branch
+		// Refuse to switch with uncommitted changes — they could be lost
+		if !g.IsWorkingTreeClean() {
+			return fmt.Errorf("working tree has uncommitted changes; commit or stash before switching to branch %s", branchName)
+		}
 		return g.Checkout(branchName)
 	}
 
@@ -122,33 +125,48 @@ func (g *GitOps) DefaultBranch() string {
 			return parts[len(parts)-1]
 		}
 	}
-	// Fallback: check which exists
+	// Fallback: check local branches
 	if g.BranchExists("main") {
 		return "main"
 	}
 	if g.BranchExists("master") {
 		return "master"
 	}
+	// Fallback: check remote tracking branches (no local main/master)
+	if g.BranchExists("origin/main") {
+		return "origin/main"
+	}
+	if g.BranchExists("origin/master") {
+		return "origin/master"
+	}
 	return "main"
 }
 
 // HasFileChanged returns true if the given file path (relative to project root) was
 // modified on the current branch compared to the default branch.
+// Falls back to two-dot diff if three-dot fails (e.g., no merge-base).
 func (g *GitOps) HasFileChanged(relativePath string) bool {
 	base := g.DefaultBranch()
 	out, err := g.run("diff", "--name-only", base+"...HEAD", "--", relativePath)
 	if err != nil {
-		return false
+		out, err = g.run("diff", "--name-only", base, "HEAD", "--", relativePath)
+		if err != nil {
+			return false
+		}
 	}
 	return strings.TrimSpace(out) != ""
 }
 
 // GetDiffSummary returns the stat summary of changes from the default branch to HEAD.
+// Falls back to two-dot diff if three-dot fails (e.g., no merge-base).
 func (g *GitOps) GetDiffSummary() string {
 	base := g.DefaultBranch()
 	out, err := g.run("diff", "--stat", base+"...HEAD")
 	if err != nil {
-		return ""
+		out, err = g.run("diff", "--stat", base, "HEAD")
+		if err != nil {
+			return ""
+		}
 	}
 	return strings.TrimSpace(out)
 }
@@ -171,11 +189,15 @@ func (g *GitOps) IsWorkingTreeClean() bool {
 
 // GetChangedFiles returns the list of files changed from the default branch to HEAD.
 // Uses three-dot diff (merge-base) which is correct for feature branches.
+// Falls back to two-dot diff if three-dot fails (e.g., no merge-base).
 func (g *GitOps) GetChangedFiles() []string {
 	base := g.DefaultBranch()
 	out, err := g.run("diff", "--name-only", base+"...HEAD")
 	if err != nil {
-		return nil
+		out, err = g.run("diff", "--name-only", base, "HEAD")
+		if err != nil {
+			return nil
+		}
 	}
 	trimmed := strings.TrimSpace(out)
 	if trimmed == "" {
@@ -193,6 +215,19 @@ func (g *GitOps) HasTestFileChanges() bool {
 			strings.Contains(lower, ".test.") ||
 			strings.Contains(lower, ".spec.") ||
 			strings.Contains(lower, "__tests__/") {
+			return true
+		}
+	}
+	return false
+}
+
+// HasNonRalphChanges returns true if any files changed from the default branch
+// to HEAD are outside the .ralph/ directory. Used to guard pre-verification:
+// if only .ralph/ files changed (e.g., prd.md, prd.json), no code was implemented
+// and verification would produce false positives.
+func (g *GitOps) HasNonRalphChanges() bool {
+	for _, f := range g.GetChangedFiles() {
+		if !strings.HasPrefix(f, ".ralph/") {
 			return true
 		}
 	}

@@ -873,3 +873,170 @@ func TestLoadPRD_WithBrowserSteps(t *testing.T) {
 		t.Errorf("expected URL='/test', got '%s'", story.BrowserSteps[0].URL)
 	}
 }
+
+func TestGetPendingStories(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: true},
+			{ID: "US-002", Passes: false, Blocked: false},
+			{ID: "US-003", Passes: false, Blocked: true},
+			{ID: "US-004", Passes: false, Blocked: false},
+		},
+	}
+
+	pending := GetPendingStories(prd)
+	if len(pending) != 2 {
+		t.Fatalf("expected 2 pending, got %d", len(pending))
+	}
+	if pending[0].ID != "US-002" || pending[1].ID != "US-004" {
+		t.Errorf("expected US-002 and US-004, got %s and %s", pending[0].ID, pending[1].ID)
+	}
+}
+
+func TestGetPendingStories_AllComplete(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: true},
+			{ID: "US-002", Passes: false, Blocked: true},
+		},
+	}
+
+	pending := GetPendingStories(prd)
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending, got %d", len(pending))
+	}
+}
+
+func TestGetNextStory_PrefersCurrentStoryID(t *testing.T) {
+	currentID := "US-003"
+	prd := &PRD{
+		Run: Run{CurrentStoryID: &currentID},
+		UserStories: []UserStory{
+			{ID: "US-001", Priority: 1, Passes: false},
+			{ID: "US-002", Priority: 2, Passes: false},
+			{ID: "US-003", Priority: 3, Passes: false}, // lower priority but current
+		},
+	}
+
+	next := GetNextStory(prd)
+	if next == nil {
+		t.Fatal("expected next story, got nil")
+	}
+	if next.ID != "US-003" {
+		t.Errorf("expected US-003 (currentStoryID), got %s", next.ID)
+	}
+}
+
+func TestGetNextStory_CurrentStoryID_PassedFallsThrough(t *testing.T) {
+	currentID := "US-001"
+	prd := &PRD{
+		Run: Run{CurrentStoryID: &currentID},
+		UserStories: []UserStory{
+			{ID: "US-001", Priority: 1, Passes: true}, // current but already passed
+			{ID: "US-002", Priority: 2, Passes: false},
+		},
+	}
+
+	next := GetNextStory(prd)
+	if next == nil {
+		t.Fatal("expected next story, got nil")
+	}
+	if next.ID != "US-002" {
+		t.Errorf("expected US-002 (fallthrough), got %s", next.ID)
+	}
+}
+
+func TestGetNextStory_CurrentStoryID_BlockedFallsThrough(t *testing.T) {
+	currentID := "US-001"
+	prd := &PRD{
+		Run: Run{CurrentStoryID: &currentID},
+		UserStories: []UserStory{
+			{ID: "US-001", Priority: 1, Passes: false, Blocked: true},
+			{ID: "US-002", Priority: 2, Passes: false},
+		},
+	}
+
+	next := GetNextStory(prd)
+	if next == nil {
+		t.Fatal("expected next story, got nil")
+	}
+	if next.ID != "US-002" {
+		t.Errorf("expected US-002 (fallthrough from blocked), got %s", next.ID)
+	}
+}
+
+func TestGetNextStory_CurrentStoryID_NonExistentFallsThrough(t *testing.T) {
+	currentID := "US-999"
+	prd := &PRD{
+		Run: Run{CurrentStoryID: &currentID},
+		UserStories: []UserStory{
+			{ID: "US-001", Priority: 1, Passes: false},
+			{ID: "US-002", Priority: 2, Passes: false},
+		},
+	}
+
+	next := GetNextStory(prd)
+	if next == nil {
+		t.Fatal("expected next story, got nil")
+	}
+	if next.ID != "US-001" {
+		t.Errorf("expected US-001 (fallthrough from nonexistent), got %s", next.ID)
+	}
+}
+
+func TestMarkStoryPassed_ClearsBlocked(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: false, Blocked: true},
+		},
+	}
+
+	prd.MarkStoryPassed("US-001", "abc123", "Implemented")
+
+	story := GetStoryByID(prd, "US-001")
+	if !story.Passes {
+		t.Error("expected passes=true")
+	}
+	if story.Blocked {
+		t.Error("expected blocked=false after marking passed")
+	}
+}
+
+func TestMarkStoryFailed_ClearsPasses(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: true, LastResult: &LastResult{Commit: "abc"}},
+		},
+	}
+
+	prd.MarkStoryFailed("US-001", "test failure", 3)
+
+	story := GetStoryByID(prd, "US-001")
+	if story.Passes {
+		t.Error("expected passes=false after marking failed")
+	}
+	if story.LastResult != nil {
+		t.Error("expected lastResult=nil after marking failed")
+	}
+}
+
+func TestMarkStoryBlocked_ClearsPasses(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Passes: true, LastResult: &LastResult{Commit: "abc"}},
+		},
+	}
+
+	prd.MarkStoryBlocked("US-001", "impossible to implement")
+
+	story := GetStoryByID(prd, "US-001")
+	if story.Passes {
+		t.Error("expected passes=false after marking blocked")
+	}
+	if story.LastResult != nil {
+		t.Error("expected lastResult=nil after marking blocked")
+	}
+	if !story.Blocked {
+		t.Error("expected blocked=true")
+	}
+}

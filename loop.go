@@ -24,11 +24,11 @@ const (
 )
 
 var (
-	LearningPattern    = regexp.MustCompile(`<ralph>LEARNING:(.+?)</ralph>`)
-	ResetPattern       = regexp.MustCompile(`<ralph>RESET:(.+?)</ralph>`)
-	ReasonPattern      = regexp.MustCompile(`<ralph>REASON:(.+?)</ralph>`)
-	BlockPattern       = regexp.MustCompile(`<ralph>BLOCK:(.+?)</ralph>`)
-	SuggestNextPattern = regexp.MustCompile(`<ralph>SUGGEST_NEXT:(.+?)</ralph>`)
+	LearningPattern    = regexp.MustCompile(`^<ralph>LEARNING:(.+?)</ralph>$`)
+	ResetPattern       = regexp.MustCompile(`^<ralph>RESET:(.+?)</ralph>$`)
+	ReasonPattern      = regexp.MustCompile(`^<ralph>REASON:(.+?)</ralph>$`)
+	BlockPattern       = regexp.MustCompile(`^<ralph>BLOCK:(.+?)</ralph>$`)
+	SuggestNextPattern = regexp.MustCompile(`^<ralph>SUGGEST_NEXT:(.+?)</ralph>$`)
 )
 
 // ProviderResult contains the result of a provider iteration
@@ -296,7 +296,11 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 				detectedMarkers = append(detectedMarkers, "BLOCK")
 			}
 		}
-		logger.ProviderEnd(result.ExitCode, result.TimedOut, detectedMarkers)
+		if result != nil {
+			logger.ProviderEnd(result.ExitCode, result.TimedOut, detectedMarkers)
+		} else {
+			logger.ProviderEnd(0, false, nil)
+		}
 		logger.LogPrint("Provider done (%s)\n", FormatDuration(time.Since(providerStartTime)))
 
 		// Process learnings and blocks even on error (result is non-nil even on timeout)
@@ -319,7 +323,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save PRD: %v\n", saveErr)
 			}
 			if cfg.Config.Commits.PrdChanges {
-				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s provider error", story.ID))
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s provider error", story.ID)); commitErr != nil {
+					logger.Warning("failed to commit PRD state: " + commitErr.Error())
+				}
 			}
 			logger.IterationEnd(false)
 			logger.RunEnd(false, "provider error")
@@ -341,7 +347,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 			if cfg.Config.Commits.PrdChanges {
-				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s stuck", story.ID))
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s stuck", story.ID)); commitErr != nil {
+					logger.Warning("failed to commit PRD state: " + commitErr.Error())
+				}
 			}
 			logger.IterationEnd(false)
 			continue
@@ -358,7 +366,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 			if cfg.Config.Commits.PrdChanges {
-				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no completion signal", story.ID))
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no completion signal", story.ID)); commitErr != nil {
+					logger.Warning("failed to commit PRD state: " + commitErr.Error())
+				}
 			}
 			logger.IterationEnd(false)
 			continue
@@ -375,7 +385,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 			if cfg.Config.Commits.PrdChanges {
-				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no commit", story.ID))
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no commit", story.ID)); commitErr != nil {
+					logger.Warning("failed to commit PRD state: " + commitErr.Error())
+				}
 			}
 			logger.IterationEnd(false)
 			continue
@@ -412,7 +424,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			}
 
 			if cfg.Config.Commits.PrdChanges {
-				commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s failed verification", story.ID))
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s failed verification", story.ID)); commitErr != nil {
+					logger.Warning("failed to commit PRD state: " + commitErr.Error())
+				}
 			}
 			logger.IterationEnd(false)
 			continue
@@ -433,7 +447,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		}
 
 		if cfg.Config.Commits.PrdChanges {
-			commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s complete", story.ID))
+			if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s complete", story.ID)); commitErr != nil {
+				logger.Warning("failed to commit PRD state: " + commitErr.Error())
+			}
 		}
 
 		logger.LogPrint("\n✓ %s complete\n", story.ID)
@@ -491,6 +507,11 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger, cleanup 
 	cmd.Dir = cfg.ProjectRoot
 	cmd.Env = os.Environ()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		// Kill the entire process group on timeout (matches runCommand pattern)
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 5 * time.Second
 
 	// Setup stdin pipe for stdin mode
 	var stdinPipe io.WriteCloser
@@ -554,14 +575,15 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger, cleanup 
 
 	// Use WaitGroup for stderr goroutine
 	var wg sync.WaitGroup
+	var stderrScanErr error
 	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stderr)
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
+		s := bufio.NewScanner(stderr)
+		s.Buffer(make([]byte, 64*1024), 1024*1024)
+		for s.Scan() {
+			line := s.Text()
 			if logger != nil {
 				logger.ProviderLine("stderr", line)
 			}
@@ -571,6 +593,7 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger, cleanup 
 			processLine(line, result, logger)
 			mu.Unlock()
 		}
+		stderrScanErr = s.Err()
 	}()
 
 	// Process stdout
@@ -588,30 +611,31 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger, cleanup 
 		mu.Unlock()
 	}
 
+	// Check stdout scanner for errors (e.g., line >1MB)
+	if scanErr := scanner.Err(); scanErr != nil && logger != nil {
+		logger.Warning(fmt.Sprintf("stdout scanner error (possible line >1MB): %v", scanErr))
+	}
+
 	// Wait for stderr to finish
 	wg.Wait()
 
-	// Check for timeout
-	if ctx.Err() == context.DeadlineExceeded {
-		if cmd.Process != nil {
-			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		result.TimedOut = true
-		result.Output = outputBuilder.String()
-		// Log provider output even on timeout
-		if logger != nil {
-			logger.ProviderOutput(stdoutBuilder.String(), stderrBuilder.String())
-		}
-		return result, fmt.Errorf("provider timed out after %v", timeout)
+	// Check stderr scanner for errors (e.g., line >1MB)
+	if stderrScanErr != nil && logger != nil {
+		logger.Warning(fmt.Sprintf("stderr scanner error (possible line >1MB): %v", stderrScanErr))
 	}
 
-	// Wait for process
+	// Always wait for process — cmd.Cancel handles process group kill on timeout
 	err = cmd.Wait()
 	result.Output = outputBuilder.String()
 
 	// Log provider output
 	if logger != nil {
 		logger.ProviderOutput(stdoutBuilder.String(), stderrBuilder.String())
+	}
+
+	if ctx.Err() == context.DeadlineExceeded {
+		result.TimedOut = true
+		return result, fmt.Errorf("provider timed out after %v", timeout)
 	}
 
 	if err != nil {
@@ -625,23 +649,27 @@ func runProvider(cfg *ResolvedConfig, prompt string, logger *RunLogger, cleanup 
 	return result, nil
 }
 
-// processLine processes a line of output for markers
+// processLine processes a line of output for markers.
+// Uses whole-line matching (after trimming whitespace) to prevent marker spoofing
+// via embedded text like 'echo "<ralph>DONE</ralph>"'.
 func processLine(line string, result *ProviderResult, logger *RunLogger) {
-	if strings.Contains(line, DoneMarker) {
+	trimmed := strings.TrimSpace(line)
+
+	if trimmed == DoneMarker {
 		result.Done = true
 		if logger != nil {
 			logger.MarkerDetected("DONE", "")
 			logger.LogPrintln("  ◆ DONE")
 		}
 	}
-	if strings.Contains(line, VerifiedMarker) {
+	if trimmed == VerifiedMarker {
 		result.Verified = true
 		if logger != nil {
 			logger.MarkerDetected("VERIFIED", "")
 			logger.LogPrintln("  ◆ VERIFIED")
 		}
 	}
-	if strings.Contains(line, StuckMarker) {
+	if trimmed == StuckMarker {
 		result.Stuck = true
 		if logger != nil {
 			logger.MarkerDetected("STUCK", "")
@@ -650,7 +678,7 @@ func processLine(line string, result *ProviderResult, logger *RunLogger) {
 	}
 
 	// Extract learnings
-	if matches := LearningPattern.FindStringSubmatch(line); len(matches) > 1 {
+	if matches := LearningPattern.FindStringSubmatch(trimmed); len(matches) > 1 {
 		value := strings.TrimSpace(matches[1])
 		result.Learnings = append(result.Learnings, value)
 		if logger != nil {
@@ -660,7 +688,7 @@ func processLine(line string, result *ProviderResult, logger *RunLogger) {
 	}
 
 	// Extract resets
-	if matches := ResetPattern.FindStringSubmatch(line); len(matches) > 1 {
+	if matches := ResetPattern.FindStringSubmatch(trimmed); len(matches) > 1 {
 		ids := strings.Split(matches[1], ",")
 		for _, id := range ids {
 			result.Resets = append(result.Resets, strings.TrimSpace(id))
@@ -672,7 +700,7 @@ func processLine(line string, result *ProviderResult, logger *RunLogger) {
 	}
 
 	// Extract blocks
-	if matches := BlockPattern.FindStringSubmatch(line); len(matches) > 1 {
+	if matches := BlockPattern.FindStringSubmatch(trimmed); len(matches) > 1 {
 		ids := strings.Split(matches[1], ",")
 		for _, id := range ids {
 			result.Blocks = append(result.Blocks, strings.TrimSpace(id))
@@ -684,7 +712,7 @@ func processLine(line string, result *ProviderResult, logger *RunLogger) {
 	}
 
 	// Extract suggest next
-	if matches := SuggestNextPattern.FindStringSubmatch(line); len(matches) > 1 {
+	if matches := SuggestNextPattern.FindStringSubmatch(trimmed); len(matches) > 1 {
 		result.SuggestNext = strings.TrimSpace(matches[1])
 		if logger != nil {
 			logger.MarkerDetected("SUGGEST_NEXT", matches[1])
@@ -692,7 +720,7 @@ func processLine(line string, result *ProviderResult, logger *RunLogger) {
 	}
 
 	// Extract reason
-	if matches := ReasonPattern.FindStringSubmatch(line); len(matches) > 1 {
+	if matches := ReasonPattern.FindStringSubmatch(trimmed); len(matches) > 1 {
 		result.Reason = strings.TrimSpace(matches[1])
 		if logger != nil {
 			logger.MarkerDetected("REASON", matches[1])
@@ -843,8 +871,10 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 		if healthIssues := svcMgr.CheckServiceHealth(); len(healthIssues) > 0 {
 			// Include recent service output for diagnostics
 			reason := fmt.Sprintf("service health check failed: %s", strings.Join(healthIssues, "; "))
+			for _, issue := range healthIssues {
+				logger.ServiceHealth("", false, issue)
+			}
 			for _, svc := range cfg.Config.Services {
-				logger.ServiceHealth(svc.Name, false, healthIssues[0])
 				svcOutput := svcMgr.GetRecentOutput(svc.Name, 30)
 				if svcOutput != "" {
 					reason += fmt.Sprintf("\n\n--- %s output (last 30 lines) ---\n%s", svc.Name, svcOutput)
@@ -868,6 +898,14 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 func preVerifyStories(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svcMgr *ServiceManager, logger *RunLogger) error {
 	prdPath := featureDir.PrdJsonPath()
 	git := NewGitOps(cfg.ProjectRoot)
+
+	// Skip pre-verify if no code files changed on the branch.
+	// Only .ralph/ files (prd.md, prd.json) means no implementation exists yet.
+	// Running verification would produce false positives (commands pass vacuously).
+	if !git.HasNonRalphChanges() {
+		logger.LogPrintln("\nPre-verify: no code changes on branch, skipping")
+		return nil
+	}
 
 	logger.LogPrintln("\nPre-verifying stories...")
 	fmt.Println(strings.Repeat("-", 60))
@@ -994,6 +1032,20 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	if svcMgr != nil && cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
 		baseURL := GetBaseURL(cfg.Config.Services)
 		if baseURL != "" {
+			// Restart services once before all browser checks (not per-story)
+			serviceRestartFailed := false
+			if svcMgr.HasUIServices() {
+				if err := svcMgr.RestartForVerify(); err != nil {
+					logger.LogPrint("    ! Service restart failed: %v\n", err)
+					logger.ServiceRestart("all", false)
+					verifyFailed = true
+					serviceRestartFailed = true
+					summaryLines = append(summaryLines, fmt.Sprintf("FAIL: service restart (%v)", err))
+				} else {
+					logger.ServiceRestart("all", true)
+				}
+			}
+
 			for i := range prd.UserStories {
 				story := &prd.UserStories[i]
 				if story.Blocked || !IsUIStory(story) {
@@ -1003,15 +1055,11 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 				logger.LogPrint("  → Browser: %s (%s)\n", story.ID, story.Title)
 				logger.BrowserStart()
 
-				if svcMgr.HasUIServices() {
-					if err := svcMgr.RestartForVerify(); err != nil {
-						logger.LogPrint("    ! Service restart failed: %v\n", err)
-						logger.ServiceRestart("all", false)
-						verifyFailed = true
-						summaryLines = append(summaryLines, fmt.Sprintf("FAIL: service restart for %s (%v)", story.ID, err))
-						continue
-					}
-					logger.ServiceRestart("all", true)
+				if serviceRestartFailed {
+					logger.BrowserEnd(false, 0)
+					verifyFailed = true
+					summaryLines = append(summaryLines, fmt.Sprintf("FAIL: browser %s (service restart failed)", story.ID))
+					continue
 				}
 
 				browser := NewBrowserRunner(cfg.ProjectRoot, cfg.Config.Browser)
@@ -1093,9 +1141,7 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 		if healthIssues := svcMgr.CheckServiceHealth(); len(healthIssues) > 0 {
 			for _, issue := range healthIssues {
 				logger.LogPrint("  ✗ %s\n", issue)
-			}
-			for _, svc := range cfg.Config.Services {
-				logger.ServiceHealth(svc.Name, false, strings.Join(healthIssues, "; "))
+				logger.ServiceHealth("", false, issue)
 			}
 			verifyFailed = true
 			summaryLines = append(summaryLines, "FAIL: service health: "+strings.Join(healthIssues, "; "))
@@ -1147,7 +1193,11 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 			detectedMarkers = append(detectedMarkers, "LEARNING")
 		}
 	}
-	logger.ProviderEnd(result.ExitCode, result.TimedOut, detectedMarkers)
+	if result != nil {
+		logger.ProviderEnd(result.ExitCode, result.TimedOut, detectedMarkers)
+	} else {
+		logger.ProviderEnd(0, false, nil)
+	}
 	logger.LogPrint("Provider done (%s)\n", FormatDuration(time.Since(verifyProviderStart)))
 
 	// Save learnings from verification
@@ -1160,7 +1210,9 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 			fmt.Fprintf(os.Stderr, "Warning: failed to save verification learnings: %v\n", saveErr)
 		}
 		if cfg.Config.Commits.PrdChanges {
-			commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: save verification learnings")
+			if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: save verification learnings"); commitErr != nil {
+				logger.Warning("failed to commit PRD state: " + commitErr.Error())
+			}
 		}
 	}
 
@@ -1197,7 +1249,9 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 		}
 
 		if cfg.Config.Commits.PrdChanges {
-			commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: reset stories after verification")
+			if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: reset stories after verification"); commitErr != nil {
+				logger.Warning("failed to commit PRD state: " + commitErr.Error())
+			}
 		}
 
 		logger.VerifyEnd(false)
@@ -1216,6 +1270,12 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	prd, err := LoadPRD(featureDir.PrdJsonPath())
 	if err != nil {
 		return err
+	}
+
+	// Ensure we're on the correct branch before verifying
+	git := NewGitOps(cfg.ProjectRoot)
+	if err := git.EnsureBranch(prd.BranchName); err != nil {
+		return fmt.Errorf("failed to switch to branch %s: %w", prd.BranchName, err)
 	}
 
 	// Create cleanup coordinator for signal handling
@@ -1264,6 +1324,18 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	// Pre-resolve browser binary (downloads Chromium if needed)
 	EnsureBrowser(cfg.Config.Browser, prd)
 
+	// Check that all stories are complete before final verification
+	if !AllStoriesComplete(prd) {
+		pending := GetPendingStories(prd)
+		logger.LogPrintln("\n! Cannot run final verification: not all stories are complete")
+		for _, s := range pending {
+			logger.LogPrint("  - %s: %s\n", s.ID, s.Title)
+		}
+		logger.LogPrint("\nRun 'ralph run %s' to implement remaining stories first.\n", featureDir.Feature)
+		logger.RunEnd(false, "not all stories complete")
+		return fmt.Errorf("cannot verify: %d stories still pending", len(pending))
+	}
+
 	verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr, logger, cleanup)
 	if err != nil {
 		logger.RunEnd(false, "verification error")
@@ -1289,6 +1361,13 @@ func runCommand(dir, cmdStr string, timeoutSec int) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		// Kill the entire process group (sh + all children) on timeout,
+		// not just the sh process. Prevents orphaned test/lint processes.
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 100 * time.Millisecond
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

@@ -605,3 +605,270 @@ func TestGitOps_HasTestFileChanges_TestsDir(t *testing.T) {
 		t.Error("expected true with __tests__/ file")
 	}
 }
+
+func TestGitOps_HasNonRalphChanges_NoChanges(t *testing.T) {
+	_, git := initTestRepo(t)
+
+	// No divergence from main — should return false
+	git.CreateBranch("ralph/feature")
+	if git.HasNonRalphChanges() {
+		t.Error("expected false with no changes on branch")
+	}
+}
+
+func TestGitOps_HasNonRalphChanges_OnlyRalphFiles(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	// Only .ralph/ files — should return false
+	os.MkdirAll(filepath.Join(dir, ".ralph"), 0755)
+	os.WriteFile(filepath.Join(dir, ".ralph", "prd.md"), []byte("# PRD"), 0644)
+	os.WriteFile(filepath.Join(dir, ".ralph", "prd.json"), []byte("{}"), 0644)
+	run("add", ".ralph/prd.md", ".ralph/prd.json")
+	run("commit", "-m", "add prd files")
+
+	if git.HasNonRalphChanges() {
+		t.Error("expected false with only .ralph/ files changed")
+	}
+}
+
+func TestGitOps_HasNonRalphChanges_WithCodeFiles(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	// .ralph/ files + source code — should return true
+	os.MkdirAll(filepath.Join(dir, ".ralph"), 0755)
+	os.WriteFile(filepath.Join(dir, ".ralph", "prd.json"), []byte("{}"), 0644)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
+	run("add", ".ralph/prd.json", "main.go")
+	run("commit", "-m", "add code and prd")
+
+	if !git.HasNonRalphChanges() {
+		t.Error("expected true with code files changed")
+	}
+}
+
+func TestGitOps_DefaultBranch_FallbackToOriginMain(t *testing.T) {
+	// Create a repo with no local main/master, but an "origin/main" branch ref
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	run("init", "-b", "develop")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test"), 0644)
+	run("add", "README.md")
+	run("commit", "-m", "initial commit")
+	// Create a branch named "origin/main" (simulates remote tracking ref)
+	run("branch", "origin/main")
+
+	git := NewGitOps(dir)
+	branch := git.DefaultBranch()
+	if branch != "origin/main" {
+		t.Errorf("expected 'origin/main' fallback, got '%s'", branch)
+	}
+}
+
+func TestGitOps_DefaultBranch_FallbackToOriginMaster(t *testing.T) {
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	run("init", "-b", "develop")
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test")
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test"), 0644)
+	run("add", "README.md")
+	run("commit", "-m", "initial commit")
+	run("branch", "origin/master")
+
+	git := NewGitOps(dir)
+	branch := git.DefaultBranch()
+	if branch != "origin/master" {
+		t.Errorf("expected 'origin/master' fallback, got '%s'", branch)
+	}
+}
+
+func TestGitOps_GetChangedFiles_FallbackTwoDotDiff(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	os.WriteFile(filepath.Join(dir, "new-file.go"), []byte("package main"), 0644)
+	run("add", "new-file.go")
+	run("commit", "-m", "add new file")
+
+	files := git.GetChangedFiles()
+	found := false
+	for _, f := range files {
+		if f == "new-file.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected new-file.go in changed files, got %v", files)
+	}
+}
+
+func TestGitOps_EnsureBranch_RefusesSwitchWithDirtyTree(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	// Create target branch
+	git.CreateBranch("ralph/feature")
+	git.Checkout("main")
+
+	// Make uncommitted change
+	os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted"), 0644)
+	// Stage it
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+	run("add", "dirty.txt")
+
+	err := git.EnsureBranch("ralph/feature")
+	if err == nil {
+		t.Fatal("expected error when switching with dirty tree")
+	}
+	if !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Errorf("expected 'uncommitted changes' in error, got: %v", err)
+	}
+}
+
+func TestGitOps_EnsureBranch_AllowsCreateWithDirtyTree(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	// Make uncommitted change
+	os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("uncommitted"), 0644)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+	run("add", "dirty.txt")
+
+	// Creating a new branch should succeed even with dirty tree
+	err := git.EnsureBranch("ralph/new-feature")
+	if err != nil {
+		t.Fatalf("expected no error when creating branch with dirty tree, got: %v", err)
+	}
+	current, _ := git.CurrentBranch()
+	if current != "ralph/new-feature" {
+		t.Errorf("expected branch 'ralph/new-feature', got '%s'", current)
+	}
+}
+
+func TestGitOps_EnsureBranch_AllowsSwitchWithCleanTree(t *testing.T) {
+	_, git := initTestRepo(t)
+
+	// Create target branch
+	git.CreateBranch("ralph/feature")
+	git.Checkout("main")
+
+	// Clean tree — switch should succeed
+	err := git.EnsureBranch("ralph/feature")
+	if err != nil {
+		t.Fatalf("expected no error when switching with clean tree, got: %v", err)
+	}
+	current, _ := git.CurrentBranch()
+	if current != "ralph/feature" {
+		t.Errorf("expected branch 'ralph/feature', got '%s'", current)
+	}
+}
