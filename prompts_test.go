@@ -147,9 +147,12 @@ func TestGetPrompt_PrdFinalize(t *testing.T) {
 
 func TestGetPrompt_PrdRefine(t *testing.T) {
 	prompt := getPrompt("prd-refine", map[string]string{
-		"feature":    "auth",
-		"prdContent": "# Existing PRD content",
-		"outputPath": "/path/to/prd.md",
+		"feature":      "auth",
+		"prdContent":   "# Existing PRD content",
+		"outputPath":   "/path/to/prd.md",
+		"runState":     "",
+		"storyDetails": "",
+		"learnings":    "",
 	})
 
 	if !strings.Contains(prompt, "Existing PRD content") {
@@ -200,6 +203,8 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"prdContent":         "Test",
 			"outputPath":         "/test",
 			"prdPath":            "/test/prd.json",
+			"runState":           "",
+			"storyDetails":       "",
 			"serviceURLs":        "",
 			"resourceVerificationInstructions": "",
 			"diffSummary":        "",
@@ -847,5 +852,119 @@ func TestGetPrompt_VerifyWithCriteriaChecklist(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Acceptance Criteria Checklist") {
 		t.Error("prompt should contain acceptance criteria checklist heading")
+	}
+}
+
+func TestGeneratePrdRefinePrompt_WithPRD(t *testing.T) {
+	cfg := &ResolvedConfig{
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "claude"},
+		},
+	}
+	featureDir := &FeatureDir{Feature: "auth", Path: "/project/.ralph/2024-01-15-auth"}
+
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Title: "Login", Passes: true, Retries: 1, LastResult: &LastResult{Summary: "Done"}},
+			{ID: "US-002", Title: "Logout", Blocked: true, Notes: "Depends on sessions"},
+			{ID: "US-003", Title: "Register", Retries: 2, Notes: "Type errors"},
+		},
+		Run: Run{
+			Learnings: []string{"Use bcrypt for passwords"},
+		},
+	}
+
+	prompt := generatePrdRefinePrompt(cfg, featureDir, "# Auth PRD", prd)
+
+	if !strings.Contains(prompt, "Run State") {
+		t.Error("prompt should contain run state section")
+	}
+	if !strings.Contains(prompt, "1/3 stories complete (1 blocked)") {
+		t.Error("prompt should contain progress")
+	}
+	if !strings.Contains(prompt, "Story Execution Status") {
+		t.Error("prompt should contain story execution status")
+	}
+	if !strings.Contains(prompt, "US-001: Login** — PASSED") {
+		t.Error("prompt should show US-001 as PASSED")
+	}
+	if !strings.Contains(prompt, "US-002: Logout** — BLOCKED") {
+		t.Error("prompt should show US-002 as BLOCKED")
+	}
+	if !strings.Contains(prompt, "US-003: Register** — PENDING (2 retries)") {
+		t.Error("prompt should show US-003 as PENDING with retries")
+	}
+	if !strings.Contains(prompt, "Depends on sessions") {
+		t.Error("prompt should include story notes")
+	}
+	if !strings.Contains(prompt, "bcrypt") {
+		t.Error("prompt should include learnings")
+	}
+	if !strings.Contains(prompt, "Learnings from Previous Runs") {
+		t.Error("prompt should include learnings heading")
+	}
+}
+
+func TestGeneratePrdRefinePrompt_NilPRD(t *testing.T) {
+	cfg := &ResolvedConfig{
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "claude"},
+		},
+	}
+	featureDir := &FeatureDir{Feature: "auth", Path: "/project/.ralph/2024-01-15-auth"}
+
+	prompt := generatePrdRefinePrompt(cfg, featureDir, "# Auth PRD", nil)
+
+	if strings.Contains(prompt, "Run State") {
+		t.Error("prompt should NOT contain run state when PRD is nil")
+	}
+	if strings.Contains(prompt, "Story Execution Status") {
+		t.Error("prompt should NOT contain story details when PRD is nil")
+	}
+	if strings.Contains(prompt, "Learnings from Previous Runs") {
+		t.Error("prompt should NOT contain learnings when PRD is nil")
+	}
+	// Should still contain the standard refine content
+	if !strings.Contains(prompt, "Story Sizing") {
+		t.Error("prompt should still contain standard refine guidance")
+	}
+}
+
+func TestBuildRefinementStoryDetails(t *testing.T) {
+	prd := &PRD{
+		UserStories: []UserStory{
+			{ID: "US-001", Title: "Login", Passes: true, LastResult: &LastResult{Summary: "Implemented"}},
+			{ID: "US-002", Title: "Logout", Blocked: true, Retries: 3, Notes: "Cannot implement"},
+			{ID: "US-003", Title: "Register"},
+		},
+	}
+
+	result := buildRefinementStoryDetails(prd)
+
+	if !strings.Contains(result, "Story Execution Status") {
+		t.Error("expected heading")
+	}
+	if !strings.Contains(result, "US-001: Login** — PASSED") {
+		t.Error("expected PASSED status for US-001")
+	}
+	if !strings.Contains(result, "Last result: Implemented") {
+		t.Error("expected last result for US-001")
+	}
+	if !strings.Contains(result, "US-002: Logout** — BLOCKED (3 retries)") {
+		t.Error("expected BLOCKED with retries for US-002")
+	}
+	if !strings.Contains(result, "Notes: Cannot implement") {
+		t.Error("expected notes for US-002")
+	}
+	if !strings.Contains(result, "US-003: Register** — PENDING") {
+		t.Error("expected PENDING for US-003")
+	}
+}
+
+func TestBuildRefinementStoryDetails_Empty(t *testing.T) {
+	prd := &PRD{UserStories: []UserStory{}}
+	result := buildRefinementStoryDetails(prd)
+	if result != "" {
+		t.Errorf("expected empty string for no stories, got %q", result)
 	}
 }

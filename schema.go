@@ -320,6 +320,93 @@ func (prd *PRD) ResetStoryForPreVerify(storyID, notes string) {
 	}
 }
 
+// MergePRDState preserves execution state from oldPRD into newPRD after regeneration.
+// Stories are matched by ID. Per-story state (Passes, Retries, Blocked, LastResult, Notes)
+// and run-level state (Learnings, CurrentStoryID, StartedAt) are carried forward.
+// New stories (no ID match) keep fresh zero state; removed stories are silently dropped.
+func MergePRDState(oldPRD, newPRD *PRD) {
+	if oldPRD == nil {
+		return
+	}
+
+	// Build lookup of old stories by ID
+	oldStories := make(map[string]*UserStory, len(oldPRD.UserStories))
+	for i := range oldPRD.UserStories {
+		oldStories[oldPRD.UserStories[i].ID] = &oldPRD.UserStories[i]
+	}
+
+	// Merge per-story state
+	for i := range newPRD.UserStories {
+		if old, ok := oldStories[newPRD.UserStories[i].ID]; ok {
+			newPRD.UserStories[i].Passes = old.Passes
+			newPRD.UserStories[i].Retries = old.Retries
+			newPRD.UserStories[i].Blocked = old.Blocked
+			newPRD.UserStories[i].LastResult = old.LastResult
+			newPRD.UserStories[i].Notes = old.Notes
+		}
+	}
+
+	// Merge run-level state
+	newPRD.Run.Learnings = oldPRD.Run.Learnings
+	newPRD.Run.CurrentStoryID = oldPRD.Run.CurrentStoryID
+	newPRD.Run.StartedAt = oldPRD.Run.StartedAt
+}
+
+// MergePRDStateSummary returns a human-readable summary of what MergePRDState would preserve.
+func MergePRDStateSummary(oldPRD, newPRD *PRD) string {
+	if oldPRD == nil {
+		return ""
+	}
+
+	oldStories := make(map[string]*UserStory, len(oldPRD.UserStories))
+	for i := range oldPRD.UserStories {
+		oldStories[oldPRD.UserStories[i].ID] = &oldPRD.UserStories[i]
+	}
+
+	matched := 0
+	passed := 0
+	blocked := 0
+	newCount := 0
+
+	for _, s := range newPRD.UserStories {
+		if old, ok := oldStories[s.ID]; ok {
+			matched++
+			if old.Passes {
+				passed++
+			}
+			if old.Blocked {
+				blocked++
+			}
+		} else {
+			newCount++
+		}
+	}
+
+	if matched == 0 && newCount == 0 {
+		return ""
+	}
+
+	parts := []string{}
+	if matched > 0 {
+		detail := fmt.Sprintf("Preserved state for %d stories", matched)
+		stateParts := []string{}
+		if passed > 0 {
+			stateParts = append(stateParts, fmt.Sprintf("%d passed", passed))
+		}
+		if blocked > 0 {
+			stateParts = append(stateParts, fmt.Sprintf("%d blocked", blocked))
+		}
+		if len(stateParts) > 0 {
+			detail += " (" + strings.Join(stateParts, ", ") + ")"
+		}
+		parts = append(parts, detail)
+	}
+	if newCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d new stories added", newCount))
+	}
+	return strings.Join(parts, ". ") + "."
+}
+
 // CountComplete returns the number of completed stories
 func CountComplete(prd *PRD) int {
 	count := 0

@@ -347,13 +347,63 @@ func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, codeba
 	})
 }
 
-// generatePrdRefinePrompt generates the prompt for refining a PRD
-func generatePrdRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string) string {
+// generatePrdRefinePrompt generates the prompt for refining a PRD.
+// When prd is non-nil (prd.json exists), run state context is included.
+func generatePrdRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string, prd *PRD) string {
+	runState := ""
+	storyDetails := ""
+	learnings := ""
+
+	if prd != nil {
+		runState = "## Run State\n\n" + buildProgress(prd) + "\n"
+		storyDetails = buildRefinementStoryDetails(prd)
+		learnings = buildLearnings(prd.Run.Learnings, "## Learnings from Previous Runs")
+	}
+
 	return getPrompt("prd-refine", map[string]string{
-		"feature":    featureDir.Feature,
-		"prdContent": content,
-		"outputPath": featureDir.PrdMdPath(),
+		"feature":      featureDir.Feature,
+		"prdContent":   content,
+		"outputPath":   featureDir.PrdMdPath(),
+		"runState":     runState,
+		"storyDetails": storyDetails,
+		"learnings":    learnings,
 	})
+}
+
+// buildRefinementStoryDetails formats each story with execution status for the refine prompt.
+func buildRefinementStoryDetails(prd *PRD) string {
+	if len(prd.UserStories) == 0 {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, "## Story Execution Status")
+	lines = append(lines, "")
+
+	for _, s := range prd.UserStories {
+		status := "PENDING"
+		if s.Passes {
+			status = "PASSED"
+		} else if s.Blocked {
+			status = "BLOCKED"
+		}
+
+		line := fmt.Sprintf("- **%s: %s** — %s", s.ID, s.Title, status)
+		if s.Retries > 0 {
+			line += fmt.Sprintf(" (%d retries)", s.Retries)
+		}
+		lines = append(lines, line)
+
+		if s.Notes != "" {
+			lines = append(lines, fmt.Sprintf("  Notes: %s", s.Notes))
+		}
+		if s.LastResult != nil && s.LastResult.Summary != "" {
+			lines = append(lines, fmt.Sprintf("  Last result: %s", s.LastResult.Summary))
+		}
+	}
+
+	lines = append(lines, "")
+	return strings.Join(lines, "\n")
 }
 
 // generatePrdFinalizePrompt generates the prompt for finalizing a PRD

@@ -323,6 +323,9 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **`aggregateBrowserResults` helper**: `RunSteps` fallback to `RunChecks` aggregates all URL check results into a single `BrowserCheckResult` with merged console errors and the first error propagated.
 - **Scanner buffer overflow logging**: Both stdout and stderr scanners in `runProvider` check `scanner.Err()` after completion and log warnings for buffer overflows (lines >1MB).
 - **ResetStoryForPreVerify vs ResetStory**: `ResetStory` (called from verify phase RESET marker) increments retries and can block the story. `ResetStoryForPreVerify` (called during pre-verify) resets without incrementing retries — the story wasn't re-attempted, it just became invalid due to PRD changes.
+- **State-preserving PRD regeneration**: `MergePRDState(oldPRD, newPRD)` in schema.go preserves per-story state (Passes, Retries, Blocked, LastResult, Notes) and run-level state (Learnings, CurrentStoryID, StartedAt) when prd.json is regenerated. Stories are matched by ID. `prdFinalize()` loads the old prd.json before provider runs, then calls `MergePRDState` after the new one is validated. `MergePRDStateSummary()` returns a human-readable summary printed to the user.
+- **Refinement context from previous runs**: `generatePrdRefinePrompt()` accepts an optional `*PRD` parameter. When prd.json exists, the refine prompt includes run state (progress), per-story execution status (PASSED/BLOCKED/PENDING with retries and notes), and learnings from previous runs. When nil (not yet finalized), these resolve to empty strings.
+- **Story ID stability in finalize prompt**: `prd-finalize.md` instructs the provider to preserve existing `US-XXX` IDs from prd.md, only assigning new sequential IDs to genuinely new stories. This prevents state loss when story IDs change during regeneration.
 
 ## Prompt Template Variables
 
@@ -333,7 +336,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 | `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `resourceVerificationInstructions` |
 | `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs`, `diffSummary`, `resourceVerificationInstructions`, `verifySummary`, `criteriaChecklist` |
 | `prd-create.md` | `feature`, `outputPath`, `codebaseContext` |
-| `prd-refine.md` | `feature`, `prdContent`, `outputPath` |
+| `prd-refine.md` | `feature`, `prdContent`, `outputPath`, `runState`, `storyDetails`, `learnings` |
 | `prd-finalize.md` | `feature`, `prdContent`, `outputPath` |
 
 ## Non-obvious Behaviors
@@ -362,16 +365,19 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **Browser URL extraction from acceptance criteria**: `extractURLs()` in browser.go scans acceptance criteria text for path patterns ("navigate to /path", "visit /page", "accessible at /url") and explicit `http(s)://` URLs. If no URLs are found and the story is tagged "ui", the base URL from services config is used as fallback. This means UI stories get basic browser verification (page load + console error check) even without explicit `browserSteps`.
 - **EnsureBrowser skips without UI stories**: If no story in the PRD has a "ui" tag, `EnsureBrowser` returns immediately — no `os.Stat`, no download attempt. Failed browser download disables browser for the entire run (`Enabled=false`), preventing repeated download retries on each story.
 - **Pre-verify skips on fresh branches**: If no files outside `.ralph/` changed on the branch (checked via `HasNonRalphChanges()`), `preVerifyStories()` returns immediately. On a fresh branch with only PRD files, global verify commands (typecheck, lint, test) pass vacuously, falsely marking all stories as "already implemented."
+- **PRD regeneration preserves execution state**: When `prdFinalize()` regenerates prd.json (e.g., after refining the PRD), it loads the old prd.json first and merges state into the new one via `MergePRDState`. This means the "run → refine → regenerate → run again" workflow preserves passes, retries, blocked status, learnings, and notes. Pre-verify then validates which stories still pass.
+- **Refine prompt includes run context**: When prd.json exists, `prdRefine()` loads it and passes it to `generatePrdRefinePrompt()`. The provider sees which stories passed/failed/blocked and accumulated learnings, enabling informed refinement decisions.
+- **`prdStateFinalized` shows progress**: When returning to a finalized PRD, the menu shows current progress (e.g., "Progress: 3/5 stories complete (1 blocked)") if any stories have been worked on.
 
 ## Testing
 
 Tests are in `*_test.go` files alongside source. Key test files:
 - `commands_test.go` - provider selection prompt, verify command prompts (with detected defaults), service config prompt, provider choices validation, gitignore creation
 - `config_test.go` - config loading, validation, provider defaults, readiness checks (including placeholder service detection, browserSteps cross-check), command validation, verify timeout defaults, services required validation
-- `schema_test.go` - PRD validation, story state transitions (including flag clearing), browser steps, learning deduplication, PRD quality, ResetStoryForPreVerify, GetPendingStories, GetNextStory crash recovery via CurrentStoryID
+- `schema_test.go` - PRD validation, story state transitions (including flag clearing), browser steps, learning deduplication, PRD quality, ResetStoryForPreVerify, GetPendingStories, GetNextStory crash recovery via CurrentStoryID, MergePRDState (basic, nil old, new stories, removed stories, blocked, learnings), MergePRDStateSummary
 - `discovery_test.go` - tech stack detection (including Elixir), framework detection (including Phoenix), codebase context formatting, verify command auto-detection, Elixir dependency extraction
 - `services_test.go` - output capture, service manager, health checks
-- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism
+- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism, refine prompt with/without PRD run state, buildRefinementStoryDetails
 - `loop_test.go` - marker detection (including REASON overwrite, whole-line matching, embedded marker rejection, whitespace tolerance), nil ProviderResult guard, provider result parsing, command timeout, runCommand
 - `feature_test.go` - directory parsing, timestamp formats, case-insensitive matching
 - `lock_test.go` - lock acquisition, stale detection (including age-based isLockStale)

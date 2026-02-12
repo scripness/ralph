@@ -81,6 +81,14 @@ Create a valid JSON file with this structure:
 | `notes` | `""` (CLI will update) |
 | `browserSteps` | Optional array of interactive browser verification steps |
 
+## Story ID Stability
+
+**IMPORTANT:** If the PRD markdown references existing story IDs (e.g., US-001, US-002), you MUST preserve those exact IDs in the output JSON. The CLI tracks execution state (passes, retries, blocked status, learnings) by story ID. Changing IDs destroys this state.
+
+- Keep existing `US-XXX` IDs for stories that are unchanged or only modified
+- Only assign new sequential IDs (continuing from the highest existing ID) to genuinely **new** stories
+- If a story was removed from the PRD, simply omit it — do not reuse its ID
+
 ## Browser Steps (for UI stories)
 
 For UI stories, define interactive browser verification steps that the CLI will execute like a real user:

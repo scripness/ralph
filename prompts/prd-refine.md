@@ -4,6 +4,12 @@
 
 {{prdContent}}
 
+{{runState}}
+
+{{storyDetails}}
+
+{{learnings}}
+
 ## Your Task
 
 Help refine this PRD. Ask what the user would like to improve:
