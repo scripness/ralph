@@ -130,7 +130,8 @@ stateDiagram-v2
 
 ```bash
 ralph init [--force]           # Initialize Ralph (creates config + .ralph/)
-ralph prd <feature>            # Create/refine/finalize a PRD
+ralph prd <feature>            # Create/finalize a PRD
+ralph refine <feature>         # Interactive AI session with full feature context
 ralph run <feature>            # Run the agent loop (infinite until done)
 ralph verify <feature>         # Run verification only
 # Feature names are case-insensitive: "ralph run Auth" and "ralph run auth" find the same feature
@@ -514,6 +515,13 @@ Break the refactor into atomic stories with clear verification:
 - US-001: Extract database layer (tests pass)
 - US-002: Add connection pooling (tests pass)
 - US-003: Update all callers (tests pass)
+
+### Continuing Work
+```bash
+ralph refine user-auth       # Open AI session with full context
+                              # Fix blocked stories, adjust scope, make changes
+ralph run user-auth          # Pre-verify catches changes, resumes loop
+```
 
 ### UI Changes
 Tag stories with `ui` and define `browserSteps` for visual verification.

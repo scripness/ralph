@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -347,26 +348,71 @@ func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, codeba
 	})
 }
 
-// generatePrdRefinePrompt generates the prompt for refining a PRD.
-// When prd is non-nil (prd.json exists), run state context is included.
-func generatePrdRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string, prd *PRD) string {
-	runState := ""
-	storyDetails := ""
-	learnings := ""
-
-	if prd != nil {
-		runState = "## Run State\n\n" + buildProgress(prd) + "\n"
-		storyDetails = buildRefinementStoryDetails(prd)
-		learnings = buildLearnings(prd.Run.Learnings, "## Learnings from Previous Runs")
+// generateRefinePrompt generates the prompt for an interactive refine session.
+// Loads prd.md + prd.json content, discovers codebase context, builds git diff.
+func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD) string {
+	// Read prd.md content (expected to exist alongside prd.json)
+	prdMdContent := "(prd.md not found)"
+	if data, err := os.ReadFile(featureDir.PrdMdPath()); err == nil {
+		prdMdContent = string(data)
 	}
 
-	return getPrompt("prd-refine", map[string]string{
-		"feature":      featureDir.Feature,
-		"prdContent":   content,
-		"outputPath":   featureDir.PrdMdPath(),
-		"runState":     runState,
-		"storyDetails": storyDetails,
-		"learnings":    learnings,
+	// Read prd.json content
+	prdJsonContent := ""
+	if data, err := os.ReadFile(featureDir.PrdJsonPath()); err == nil {
+		prdJsonContent = "```json\n" + string(data) + "\n```"
+	}
+
+	// Build progress and story details
+	progress := buildProgress(prd)
+	storyDetails := buildRefinementStoryDetails(prd)
+	learnings := buildLearnings(prd.Run.Learnings, "## Learnings from Previous Runs")
+
+	// Build git diff summary
+	git := NewGitOps(cfg.ProjectRoot)
+	diffStat := git.GetDiffSummary()
+	diffStr := ""
+	if diffStat != "" {
+		diffStr = "## Changes on Branch\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n"
+	}
+
+	// Discover codebase context
+	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
+	codebaseStr := FormatCodebaseContext(codebaseCtx)
+
+	// Build verify commands list
+	var verifyLines []string
+	for _, cmd := range cfg.Config.Verify.Default {
+		verifyLines = append(verifyLines, "- "+cmd)
+	}
+	for _, cmd := range cfg.Config.Verify.UI {
+		verifyLines = append(verifyLines, "- "+cmd+" (UI)")
+	}
+	verifyStr := strings.Join(verifyLines, "\n")
+
+	// Build service URLs (leading \n matches generateRunPrompt/generateVerifyPrompt)
+	serviceURLsStr := ""
+	if len(cfg.Config.Services) > 0 {
+		serviceURLsStr = "\n**Services:**\n"
+		for _, svc := range cfg.Config.Services {
+			serviceURLsStr += fmt.Sprintf("- %s: %s\n", svc.Name, svc.Ready)
+		}
+	}
+
+	return getPrompt("refine", map[string]string{
+		"feature":        featureDir.Feature,
+		"prdMdContent":   prdMdContent,
+		"prdJsonContent": prdJsonContent,
+		"progress":       progress,
+		"storyDetails":   storyDetails,
+		"learnings":      learnings,
+		"diffSummary":    diffStr,
+		"codebaseContext": codebaseStr,
+		"verifyCommands": verifyStr,
+		"serviceURLs":    serviceURLsStr,
+		"knowledgeFile":  cfg.Config.Provider.KnowledgeFile,
+		"branchName":     prd.BranchName,
+		"featureDir":     featureDir.Path,
 	})
 }
 

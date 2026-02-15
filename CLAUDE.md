@@ -10,14 +10,14 @@ The core idea ("the Ralph Pattern"): break work into small user stories, spawn f
 
 ```
 main.go           CLI entry point, command dispatch
-commands.go       Command handlers (init, run, verify, prd, status, next, validate, doctor, logs, resources)
+commands.go       Command handlers (init, run, verify, prd, refine, status, next, validate, doctor, logs, resources)
 config.go         Configuration loading, validation, provider defaults, readiness checks
 schema.go         PRD data structures, story state machine, validation, PRD quality checks
 prompts.go        Prompt template loading + variable substitution (//go:embed prompts/*)
 loop.go           Main agent loop, provider subprocess management, verification orchestration, pre-verify phase
 logger.go         JSONL event logging, run history, timestamped console output
 browser.go        Browser automation via rod (Chrome DevTools Protocol)
-prd.go            Interactive PRD state machine (create/refine/finalize)
+prd.go            Interactive PRD state machine (create/finalize)
 feature.go        Date-prefixed feature directory management (.ralph/YYYY-MM-DD-feature/)
 services.go       Dev server lifecycle, output capture, health checks
 git.go            Git operations (branch, commit, status, working tree checks, test file detection)
@@ -38,8 +38,8 @@ Prompt templates live in `prompts/` and are embedded at compile time:
 - `run.md` - story implementation instructions sent to provider
 - `verify.md` - final verification instructions
 - `prd-create.md` - PRD brainstorming prompt
-- `prd-refine.md` - PRD refinement prompt
 - `prd-finalize.md` - PRD to JSON conversion prompt
+- `refine.md` - interactive refine session context prompt
 
 ## Build and Test
 
@@ -54,8 +54,9 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
 ## How the CLI Works (End-to-End)
 
 1. `ralph init` detects the project's tech stack, prompts for provider selection, verify commands (with auto-detected defaults from package.json/go.mod/Cargo.toml/pyproject.toml/mix.exs/requirements.txt), and dev server config (services are required), then creates `ralph.config.json` and `.ralph/` directory (with `.ralph/.gitignore`). Use `--force` to overwrite existing config.
-2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> refine (edit/regenerate) -> finalize to prd.json. Each phase presents lettered options (a/b/c/q) via stdin. When creating a new PRD, discovery runs first to detect the codebase context (tech stack, frameworks, verify commands) and includes it in the prompt.
-3. `ralph run <feature>` enters the main loop:
+2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> finalize to prd.json. When prd.md exists but no prd.json, offers Finalize/Edit/Quit. When both exist, offers Edit prd.md/Edit prd.json/Start execution/Quit with a tip about `ralph refine`. When creating a new PRD, discovery runs first to detect the codebase context (tech stack, frameworks, verify commands) and includes it in the prompt.
+3. `ralph refine <feature>` opens an interactive AI session pre-loaded with comprehensive feature context (prd.md, prd.json, progress, story status, learnings, git diff, codebase context, verify commands, service URLs). Requires prd.json to exist. The user works freely with the AI — no post-processing by the CLI. After refinement, `ralph run` handles safety via pre-verify.
+4. `ralph run <feature>` enters the main loop:
    - Readiness gate: refuses to run if not inside a git repo, `sh` is missing, `.ralph/` is not writable, QA commands are missing/placeholder, or command binaries aren't in PATH
    - Signal handling: SIGINT/SIGTERM releases the lock and exits with code 130
    - Loads config + PRD, acquires lock, ensures git branch, starts services
@@ -68,8 +69,8 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
    - Pass -> mark story complete; Fail -> retry (up to maxRetries, then block)
    - When all stories pass -> final verification (verify commands + browser verification for all UI stories + service health) -> provider reviews -> `VERIFIED` or `RESET`
    - Learnings are saved on every path (including timeout/error)
-4. `ralph verify <feature>` runs verification only (same readiness gates, starts services for browser verification)
-5. `ralph logs <feature>` views run history and logs:
+5. `ralph verify <feature>` runs verification only (same readiness gates, starts services for browser verification)
+6. `ralph logs <feature>` views run history and logs:
    - `--list` shows all runs with timestamps and outcomes
    - `--summary` shows detailed summary of latest run (stories, durations, verification results)
    - `--run N` views a specific run number
@@ -93,7 +94,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Learning management**: CLI deduplicates learnings and saves them on every code path (including timeout/error)
 - **Crash recovery**: CLI tracks `currentStoryId` in prd.json to resume interrupted work
 - **Concurrency control**: CLI uses lock file to prevent parallel runs
-- **PRD persistence**: CLI commits both prd.md and prd.json. `ralph prd` commits prd.md after creation/refinement and both files after finalization. `ralph run` commits prd.json state changes atomically (including STUCK/timeout/no-DONE paths)
+- **PRD persistence**: CLI commits both prd.md and prd.json. `ralph prd` commits prd.md after creation and both files after finalization. `ralph run` commits prd.json state changes atomically (including STUCK/timeout/no-DONE paths)
 
 ### Provider handles (told via prompts in prompts/run.md):
 - **Code implementation**: Write the code for the assigned story
@@ -157,7 +158,7 @@ Auto-detected defaults by provider command name (all fields auto-detected when o
 
 `defaultArgs` are applied only when `args` key is absent from config JSON. Setting `"args": []` explicitly opts out of default args.
 
-For interactive PRD sessions (`ralph prd`), `stdin` prompt mode is automatically overridden to `arg` since the provider needs stdin for interactive input. Non-interactive flags (`--print`, `-p`) are also stripped so the provider runs as a full interactive CLI session where the user can converse with the AI.
+For interactive sessions (`ralph prd`, `ralph refine`), `stdin` prompt mode is automatically overridden to `arg` since the provider needs stdin for interactive input. Non-interactive flags (`--print`, `-p`) are also stripped so the provider runs as a full interactive CLI session where the user can converse with the AI.
 
 ## Key Differences from Original Ralph (snarktank/ralph v1)
 
@@ -313,9 +314,9 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **Services required**: `validateConfig()` enforces at least one service entry. Also validates that `services[].ready` starts with `http://` or `https://`. Catches typos like `localhost:3000` (missing scheme) at config load time. `WriteDefaultConfig()` writes a placeholder service if none provided during init.
 - **Browser executable path validation**: `CheckReadiness` validates `browser.executablePath` exists on disk if explicitly set and browser is enabled.
 - **Unknown provider warning**: `CheckReadinessWarnings()` warns when `provider.command` is not in `knownProviders` map. Non-blocking warning printed before every run/verify.
-- **Interactive PRD strips non-interactive flags**: `runProviderInteractive()` removes `--print`/`-p` from provider args via `stripNonInteractiveArgs()` so the provider runs as a conversational CLI session. The `ralph run` loop (which uses `runProvider()` in loop.go) is unaffected.
+- **Interactive sessions strip non-interactive flags**: `runProviderInteractive()` removes `--print`/`-p` from provider args via `stripNonInteractiveArgs()` so the provider runs as a conversational CLI session. Used by `ralph prd` and `ralph refine`. The `ralph run` loop (which uses `runProvider()` in loop.go) is unaffected.
 - **Interactive commands skip Setpgid**: `Command.Run()` in prd.go does NOT set `Setpgid: true` — the provider must stay in ralph's foreground process group to read from the terminal. `Setpgid` would put it in a background group, causing SIGTTIN on stdin reads (freezing the process). The run loop in loop.go uses `Setpgid: true` since it communicates via pipes, not the terminal.
-- **`ralph prd` validates git + ensures branch + warns about placeholder commands**: `cmdPrd()` calls `checkGitAvailable()`, ensures `ralph/<feature>` branch via `EnsureBranch`, and warns (without blocking) if verify.default contains placeholder commands. `commitPrdFile()` has a defense-in-depth check that refuses to commit unless on a `ralph/` branch.
+- **`ralph prd` validates git + ensures branch + warns about placeholder commands**: `cmdPrd()` calls `checkGitAvailable()`, ensures `ralph/<feature>` branch via `EnsureBranch`, and warns (without blocking) if verify.default contains placeholder commands. `commitPrdFile()` has a defense-in-depth check that refuses to commit unless on a `ralph/` branch. The simplified finalized menu offers Edit prd.md/Edit prd.json/Start execution/Quit (no regeneration or AI refine — that's `ralph refine`).
 - **Story state transitions are total**: `MarkStoryPassed` clears `Blocked`, `MarkStoryFailed` clears `Passes` and `LastResult`, `MarkStoryBlocked` clears `Passes` and `LastResult`. This prevents conflicting state (e.g., a story that is both passed and blocked).
 - **Crash recovery via CurrentStoryID**: `GetNextStory` checks `prd.Run.CurrentStoryID` first and returns that story if it's still eligible (not passed, not blocked). Falls through to normal priority selection if the story is ineligible or nonexistent.
 - **EnsureBranch dirty-tree guard**: `EnsureBranch` refuses to switch to an existing branch with uncommitted changes (returns error). Creating a new branch with dirty tree is allowed (changes carry over safely). Already on the right branch skips the check entirely.
@@ -323,9 +324,8 @@ Story lifecycle: `pending (passes=false)` -> provider implements -> CLI verifies
 - **`aggregateBrowserResults` helper**: `RunSteps` fallback to `RunChecks` aggregates all URL check results into a single `BrowserCheckResult` with merged console errors and the first error propagated.
 - **Scanner buffer overflow logging**: Both stdout and stderr scanners in `runProvider` check `scanner.Err()` after completion and log warnings for buffer overflows (lines >1MB).
 - **ResetStoryForPreVerify vs ResetStory**: `ResetStory` (called from verify phase RESET marker) increments retries and can block the story. `ResetStoryForPreVerify` (called during pre-verify) resets without incrementing retries — the story wasn't re-attempted, it just became invalid due to PRD changes.
-- **State-preserving PRD regeneration**: `MergePRDState(oldPRD, newPRD)` in schema.go preserves per-story state (Passes, Retries, Blocked, LastResult, Notes) and run-level state (Learnings, CurrentStoryID, StartedAt) when prd.json is regenerated. Stories are matched by ID. `prdFinalize()` loads the old prd.json before provider runs, then calls `MergePRDState` after the new one is validated. `MergePRDStateSummary()` returns a human-readable summary printed to the user.
-- **Refinement context from previous runs**: `generatePrdRefinePrompt()` accepts an optional `*PRD` parameter. When prd.json exists, the refine prompt includes run state (progress), per-story execution status (PASSED/BLOCKED/PENDING with retries and notes), and learnings from previous runs. When nil (not yet finalized), these resolve to empty strings.
-- **Story ID stability in finalize prompt**: `prd-finalize.md` instructs the provider to preserve existing `US-XXX` IDs from prd.md, only assigning new sequential IDs to genuinely new stories. This prevents state loss when story IDs change during regeneration.
+- **`ralph refine` context loading**: `generateRefinePrompt()` reads prd.md + prd.json from disk, discovers codebase context, builds git diff summary, and includes verify commands + service URLs. The resulting prompt gives the AI comprehensive feature context for free-form interactive work. No post-processing — `ralph run`'s pre-verify handles safety.
+- **Story ID stability in finalize prompt**: `prd-finalize.md` instructs the provider to preserve existing `US-XXX` IDs from prd.md, only assigning new sequential IDs to genuinely new stories.
 
 ## Prompt Template Variables
 
@@ -336,8 +336,8 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 | `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `resourceVerificationInstructions` |
 | `verify.md` | `project`, `description`, `storySummaries`, `verifyCommands`, `learnings`, `knowledgeFile`, `prdPath`, `branchName`, `serviceURLs`, `diffSummary`, `resourceVerificationInstructions`, `verifySummary`, `criteriaChecklist` |
 | `prd-create.md` | `feature`, `outputPath`, `codebaseContext` |
-| `prd-refine.md` | `feature`, `prdContent`, `outputPath`, `runState`, `storyDetails`, `learnings` |
 | `prd-finalize.md` | `feature`, `prdContent`, `outputPath` |
+| `refine.md` | `feature`, `prdMdContent`, `prdJsonContent`, `progress`, `storyDetails`, `learnings`, `diffSummary`, `codebaseContext`, `verifyCommands`, `serviceURLs`, `knowledgeFile`, `branchName`, `featureDir` |
 
 ## Non-obvious Behaviors
 
@@ -365,19 +365,19 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **Browser URL extraction from acceptance criteria**: `extractURLs()` in browser.go scans acceptance criteria text for path patterns ("navigate to /path", "visit /page", "accessible at /url") and explicit `http(s)://` URLs. If no URLs are found and the story is tagged "ui", the base URL from services config is used as fallback. This means UI stories get basic browser verification (page load + console error check) even without explicit `browserSteps`.
 - **EnsureBrowser skips without UI stories**: If no story in the PRD has a "ui" tag, `EnsureBrowser` returns immediately — no `os.Stat`, no download attempt. Failed browser download disables browser for the entire run (`Enabled=false`), preventing repeated download retries on each story.
 - **Pre-verify skips on fresh branches**: If no files outside `.ralph/` changed on the branch (checked via `HasNonRalphChanges()`), `preVerifyStories()` returns immediately. On a fresh branch with only PRD files, global verify commands (typecheck, lint, test) pass vacuously, falsely marking all stories as "already implemented."
-- **PRD regeneration preserves execution state**: When `prdFinalize()` regenerates prd.json (e.g., after refining the PRD), it loads the old prd.json first and merges state into the new one via `MergePRDState`. This means the "run → refine → regenerate → run again" workflow preserves passes, retries, blocked status, learnings, and notes. Pre-verify then validates which stories still pass.
-- **Refine prompt includes run context**: When prd.json exists, `prdRefine()` loads it and passes it to `generatePrdRefinePrompt()`. The provider sees which stories passed/failed/blocked and accumulated learnings, enabling informed refinement decisions.
-- **`prdStateFinalized` shows progress**: When returning to a finalized PRD, the menu shows current progress (e.g., "Progress: 3/5 stories complete (1 blocked)") if any stories have been worked on.
+- **`prdFinalize` is a one-shot operation**: `prdFinalize()` converts prd.md to prd.json. There is no state merging — once prd.json exists, the finalized menu doesn't offer regeneration. For post-finalization work, use `ralph refine`.
+- **`ralph refine` requires prd.json**: `cmdRefine()` requires prd.json to exist (the feature must be finalized). It loads the PRD, ensures the feature branch, and opens an interactive session. No lock is acquired (interactive session, not automated).
+- **`prdStateFinalized` shows progress and refine hint**: When returning to a finalized PRD, the menu shows current progress (e.g., "Progress: 3/5 stories complete (1 blocked)") if any stories have been worked on, and prints a tip about `ralph refine`.
 
 ## Testing
 
 Tests are in `*_test.go` files alongside source. Key test files:
 - `commands_test.go` - provider selection prompt, verify command prompts (with detected defaults), service config prompt, provider choices validation, gitignore creation
 - `config_test.go` - config loading, validation, provider defaults, readiness checks (including placeholder service detection, browserSteps cross-check), command validation, verify timeout defaults, services required validation
-- `schema_test.go` - PRD validation, story state transitions (including flag clearing), browser steps, learning deduplication, PRD quality, ResetStoryForPreVerify, GetPendingStories, GetNextStory crash recovery via CurrentStoryID, MergePRDState (basic, nil old, new stories, removed stories, blocked, learnings), MergePRDStateSummary
+- `schema_test.go` - PRD validation, story state transitions (including flag clearing), browser steps, learning deduplication, PRD quality, ResetStoryForPreVerify, GetPendingStories, GetNextStory crash recovery via CurrentStoryID
 - `discovery_test.go` - tech stack detection (including Elixir), framework detection (including Phoenix), codebase context formatting, verify command auto-detection, Elixir dependency extraction
 - `services_test.go` - output capture, service manager, health checks
-- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism, refine prompt with/without PRD run state, buildRefinementStoryDetails
+- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism, generateRefinePrompt, buildRefinementStoryDetails
 - `loop_test.go` - marker detection (including REASON overwrite, whole-line matching, embedded marker rejection, whitespace tolerance), nil ProviderResult guard, provider result parsing, command timeout, runCommand
 - `feature_test.go` - directory parsing, timestamp formats, case-insensitive matching
 - `lock_test.go` - lock acquisition, stale detection (including age-based isLockStale)

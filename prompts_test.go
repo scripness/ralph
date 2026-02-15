@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -145,33 +147,46 @@ func TestGetPrompt_PrdFinalize(t *testing.T) {
 	}
 }
 
-func TestGetPrompt_PrdRefine(t *testing.T) {
-	prompt := getPrompt("prd-refine", map[string]string{
-		"feature":      "auth",
-		"prdContent":   "# Existing PRD content",
-		"outputPath":   "/path/to/prd.md",
-		"runState":     "",
-		"storyDetails": "",
-		"learnings":    "",
+func TestGetPrompt_Refine(t *testing.T) {
+	prompt := getPrompt("refine", map[string]string{
+		"feature":        "auth",
+		"prdMdContent":   "# Auth Feature\n\nUser stories...",
+		"prdJsonContent": "```json\n{}\n```",
+		"progress":       "2/5 stories complete",
+		"storyDetails":   "",
+		"learnings":      "",
+		"diffSummary":    "",
+		"codebaseContext": "",
+		"verifyCommands": "- bun run test",
+		"serviceURLs":    "",
+		"knowledgeFile":  "CLAUDE.md",
+		"branchName":     "ralph/auth",
+		"featureDir":     "/project/.ralph/2024-01-15-auth",
 	})
 
-	if !strings.Contains(prompt, "Existing PRD content") {
-		t.Error("prompt should contain existing PRD content")
+	if !strings.Contains(prompt, "auth") {
+		t.Error("prompt should contain feature name")
 	}
-	if !strings.Contains(prompt, "Story Sizing") {
-		t.Error("prompt should contain story sizing guidance")
+	if !strings.Contains(prompt, "Auth Feature") {
+		t.Error("prompt should contain prd.md content")
 	}
-	if !strings.Contains(prompt, "Dependency Order") {
-		t.Error("prompt should contain dependency guidance")
+	if !strings.Contains(prompt, "2/5 stories complete") {
+		t.Error("prompt should contain progress")
 	}
-	if !strings.Contains(prompt, "Typecheck passes") {
-		t.Error("prompt should enforce typecheck criterion")
+	if !strings.Contains(prompt, "ralph/auth") {
+		t.Error("prompt should contain branch name")
+	}
+	if !strings.Contains(prompt, "CLAUDE.md") {
+		t.Error("prompt should contain knowledge file")
+	}
+	if !strings.Contains(prompt, "ralph run") {
+		t.Error("prompt should mention ralph run for resuming")
 	}
 }
 
 func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 	// Verify prompts don't contain provider-specific references
-	prompts := []string{"run", "verify", "prd-create", "prd-finalize", "prd-refine"}
+	prompts := []string{"run", "verify", "prd-create", "prd-finalize", "refine"}
 	forbiddenTerms := []string{
 		"$AMP_CURRENT_THREAD_ID",
 		"read_thread",
@@ -203,13 +218,16 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"prdContent":         "Test",
 			"outputPath":         "/test",
 			"prdPath":            "/test/prd.json",
-			"runState":           "",
 			"storyDetails":       "",
 			"serviceURLs":        "",
 			"resourceVerificationInstructions": "",
 			"diffSummary":        "",
 			"verifySummary":      "",
 			"criteriaChecklist":  "",
+			"prdMdContent":       "Test",
+			"prdJsonContent":     "Test",
+			"codebaseContext":    "",
+			"featureDir":         "/test",
 		})
 
 		for _, term := range forbiddenTerms {
@@ -855,78 +873,114 @@ func TestGetPrompt_VerifyWithCriteriaChecklist(t *testing.T) {
 	}
 }
 
-func TestGeneratePrdRefinePrompt_WithPRD(t *testing.T) {
-	cfg := &ResolvedConfig{
-		Config: RalphConfig{
-			Provider: ProviderConfig{Command: "claude"},
-		},
+func TestGenerateRefinePrompt(t *testing.T) {
+	// Create temp dir with prd.md and prd.json
+	dir := t.TempDir()
+	featureDir := &FeatureDir{
+		Feature:    "auth",
+		Path:       dir,
+		HasPrdMd:   true,
+		HasPrdJson: true,
 	}
-	featureDir := &FeatureDir{Feature: "auth", Path: "/project/.ralph/2024-01-15-auth"}
+
+	prdMdContent := "# Auth Feature\n\nBuild login and logout."
+	if err := os.WriteFile(featureDir.PrdMdPath(), []byte(prdMdContent), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	prd := &PRD{
+		SchemaVersion: 2,
+		Project:       "MyApp",
+		BranchName:    "ralph/auth",
+		Description:   "Auth feature",
 		UserStories: []UserStory{
-			{ID: "US-001", Title: "Login", Passes: true, Retries: 1, LastResult: &LastResult{Summary: "Done"}},
-			{ID: "US-002", Title: "Logout", Blocked: true, Notes: "Depends on sessions"},
-			{ID: "US-003", Title: "Register", Retries: 2, Notes: "Type errors"},
+			{ID: "US-001", Title: "Login", Passes: true, AcceptanceCriteria: []string{"Works"}},
+			{ID: "US-002", Title: "Logout", Blocked: true, Notes: "Depends on sessions", Retries: 3, AcceptanceCriteria: []string{"Works"}},
+			{ID: "US-003", Title: "Register", Retries: 2, Notes: "Type errors", AcceptanceCriteria: []string{"Works"}},
 		},
 		Run: Run{
 			Learnings: []string{"Use bcrypt for passwords"},
 		},
 	}
 
-	prompt := generatePrdRefinePrompt(cfg, featureDir, "# Auth PRD", prd)
-
-	if !strings.Contains(prompt, "Run State") {
-		t.Error("prompt should contain run state section")
+	prdJSON, _ := json.Marshal(prd)
+	if err := os.WriteFile(featureDir.PrdJsonPath(), prdJSON, 0644); err != nil {
+		t.Fatal(err)
 	}
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:       "claude",
+				KnowledgeFile: "CLAUDE.md",
+			},
+			Verify: VerifyConfig{
+				Default: []string{"bun run typecheck", "bun run test"},
+			},
+			Services: []ServiceConfig{
+				{Name: "dev", Ready: "http://localhost:3000"},
+			},
+		},
+	}
+
+	prompt := generateRefinePrompt(cfg, featureDir, prd)
+
+	// Check prd.md content is included
+	if !strings.Contains(prompt, "Auth Feature") {
+		t.Error("prompt should contain prd.md content")
+	}
+	if !strings.Contains(prompt, "Build login and logout") {
+		t.Error("prompt should contain prd.md body")
+	}
+
+	// Check prd.json content is included
+	if !strings.Contains(prompt, "schemaVersion") {
+		t.Error("prompt should contain prd.json content")
+	}
+
+	// Check progress
 	if !strings.Contains(prompt, "1/3 stories complete (1 blocked)") {
 		t.Error("prompt should contain progress")
 	}
-	if !strings.Contains(prompt, "Story Execution Status") {
-		t.Error("prompt should contain story execution status")
-	}
+
+	// Check story details
 	if !strings.Contains(prompt, "US-001: Login** — PASSED") {
 		t.Error("prompt should show US-001 as PASSED")
 	}
 	if !strings.Contains(prompt, "US-002: Logout** — BLOCKED") {
 		t.Error("prompt should show US-002 as BLOCKED")
 	}
-	if !strings.Contains(prompt, "US-003: Register** — PENDING (2 retries)") {
-		t.Error("prompt should show US-003 as PENDING with retries")
-	}
 	if !strings.Contains(prompt, "Depends on sessions") {
 		t.Error("prompt should include story notes")
 	}
+
+	// Check learnings
 	if !strings.Contains(prompt, "bcrypt") {
 		t.Error("prompt should include learnings")
 	}
-	if !strings.Contains(prompt, "Learnings from Previous Runs") {
-		t.Error("prompt should include learnings heading")
-	}
-}
 
-func TestGeneratePrdRefinePrompt_NilPRD(t *testing.T) {
-	cfg := &ResolvedConfig{
-		Config: RalphConfig{
-			Provider: ProviderConfig{Command: "claude"},
-		},
+	// Check environment info
+	if !strings.Contains(prompt, "ralph/auth") {
+		t.Error("prompt should contain branch name")
 	}
-	featureDir := &FeatureDir{Feature: "auth", Path: "/project/.ralph/2024-01-15-auth"}
+	if !strings.Contains(prompt, "CLAUDE.md") {
+		t.Error("prompt should contain knowledge file")
+	}
 
-	prompt := generatePrdRefinePrompt(cfg, featureDir, "# Auth PRD", nil)
+	// Check verify commands
+	if !strings.Contains(prompt, "bun run typecheck") {
+		t.Error("prompt should contain verify commands")
+	}
 
-	if strings.Contains(prompt, "Run State") {
-		t.Error("prompt should NOT contain run state when PRD is nil")
+	// Check service URLs
+	if !strings.Contains(prompt, "localhost:3000") {
+		t.Error("prompt should contain service URLs")
 	}
-	if strings.Contains(prompt, "Story Execution Status") {
-		t.Error("prompt should NOT contain story details when PRD is nil")
-	}
-	if strings.Contains(prompt, "Learnings from Previous Runs") {
-		t.Error("prompt should NOT contain learnings when PRD is nil")
-	}
-	// Should still contain the standard refine content
-	if !strings.Contains(prompt, "Story Sizing") {
-		t.Error("prompt should still contain standard refine guidance")
+
+	// Check guidance
+	if !strings.Contains(prompt, "ralph run auth") {
+		t.Error("prompt should mention ralph run for resuming")
 	}
 }
 

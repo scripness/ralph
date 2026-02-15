@@ -34,6 +34,8 @@ func main() {
 		cmdVerify(args)
 	case "prd":
 		cmdPrd(args)
+	case "refine":
+		cmdRefine(args)
 	case "status":
 		cmdStatus(args)
 	case "next":
@@ -64,7 +66,8 @@ Commands:
   init [--force]       Initialize Ralph (creates ralph.config.json + .ralph/)
   run <feature>        Run the agent loop for a feature
   verify <feature>     Run verification only for a feature
-  prd <feature>        Create/refine/finalize a PRD for a feature
+  prd <feature>        Create/finalize a PRD for a feature
+  refine <feature>     Open interactive AI session with full feature context
   status [feature]     Show story status (all features or specific)
   next <feature>       Show the next story to work on
   validate <feature>   Validate prd.json schema
@@ -81,6 +84,7 @@ Examples:
   ralph init                    # Initialize Ralph in current project
   ralph prd auth                # Create/refine PRD for 'auth' feature
   ralph run auth                # Run the loop for 'auth' feature
+  ralph refine auth             # Interactive AI session for 'auth' feature
   ralph status                  # Show status of all features
   ralph status auth             # Show status of 'auth' feature
   ralph verify auth             # Verify 'auth' feature only

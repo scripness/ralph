@@ -72,20 +72,17 @@ func prdStateNew(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 func prdStateNeedsFinalize(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	fmt.Printf("PRD exists: %s\n\n", featureDir.PrdMdPath())
 	fmt.Println("What would you like to do?")
-	fmt.Println("  A) Keep refining")
-	fmt.Println("  B) Finalize for execution")
-	fmt.Println("  C) Edit manually ($EDITOR)")
+	fmt.Println("  A) Finalize for execution")
+	fmt.Println("  B) Edit prd.md ($EDITOR)")
 	fmt.Println("  Q) Quit")
 	fmt.Println()
 
-	choice := promptChoice("Choose", []string{"a", "b", "c", "q"})
+	choice := promptChoice("Choose", []string{"a", "b", "q"})
 
 	switch choice {
 	case "a":
-		return prdRefine(cfg, featureDir)
-	case "b":
 		return prdFinalize(cfg, featureDir)
-	case "c":
+	case "b":
 		return prdEditManual(featureDir.PrdMdPath())
 	case "q":
 		return nil
@@ -109,26 +106,21 @@ func prdStateFinalized(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	fmt.Println()
 	fmt.Println("What would you like to do?")
-	fmt.Println("  A) Refine further")
-	fmt.Println("  B) Regenerate prd.json from prd.md")
-	fmt.Println("  C) Edit prd.md ($EDITOR)")
-	fmt.Println("  D) Edit prd.json ($EDITOR)")
-	fmt.Println("  E) Start execution (ralph run)")
+	fmt.Println("  A) Edit prd.md ($EDITOR)")
+	fmt.Println("  B) Edit prd.json ($EDITOR)")
+	fmt.Println("  C) Start execution (ralph run)")
 	fmt.Println("  Q) Quit")
 	fmt.Println()
+	fmt.Printf("Tip: Use 'ralph refine %s' for AI-assisted work on this feature.\n\n", featureDir.Feature)
 
-	choice := promptChoice("Choose", []string{"a", "b", "c", "d", "e", "q"})
+	choice := promptChoice("Choose", []string{"a", "b", "c", "q"})
 
 	switch choice {
 	case "a":
-		return prdRefine(cfg, featureDir)
-	case "b":
-		return prdFinalize(cfg, featureDir)
-	case "c":
 		return prdEditManual(featureDir.PrdMdPath())
-	case "d":
+	case "b":
 		return prdEditManual(featureDir.PrdJsonPath())
-	case "e":
+	case "c":
 		fmt.Printf("\nRun: ralph run %s\n", featureDir.Feature)
 		return nil
 	case "q":
@@ -138,48 +130,9 @@ func prdStateFinalized(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	return nil
 }
 
-// prdRefine refines an existing PRD
-func prdRefine(cfg *ResolvedConfig, featureDir *FeatureDir) error {
-	fmt.Println("\nRefining PRD...")
-
-	// Read current PRD content
-	content, err := os.ReadFile(featureDir.PrdMdPath())
-	if err != nil {
-		return fmt.Errorf("failed to read prd.md: %w", err)
-	}
-
-	// Load prd.json for run state context (nil if not finalized yet)
-	var prd *PRD
-	if featureDir.HasPrdJson {
-		prd, _ = LoadPRD(featureDir.PrdJsonPath())
-	}
-
-	prompt := generatePrdRefinePrompt(cfg, featureDir, string(content), prd)
-	if err := runProviderInteractive(cfg, prompt); err != nil {
-		return err
-	}
-
-	fmt.Printf("\nUpdated %s\n", featureDir.PrdMdPath())
-
-	// Commit refined prd.md
-	commitPrdFile(cfg, featureDir.PrdMdPath(), "ralph: refine prd.md for "+featureDir.Feature)
-
-	if promptYesNo("Finalize for execution?") {
-		return prdFinalize(cfg, featureDir)
-	}
-
-	return nil
-}
-
 // prdFinalize converts prd.md to prd.json
 func prdFinalize(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	fmt.Println("\nFinalizing PRD...")
-
-	// Load existing prd.json before regeneration (for state preservation)
-	var oldPRD *PRD
-	if fileExists(featureDir.PrdJsonPath()) {
-		oldPRD, _ = LoadPRD(featureDir.PrdJsonPath())
-	}
 
 	content, err := os.ReadFile(featureDir.PrdMdPath())
 	if err != nil {
@@ -194,23 +147,10 @@ func prdFinalize(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	// Check if prd.json was created
 	if fileExists(featureDir.PrdJsonPath()) {
 		// Validate it
-		newPRD, err := LoadPRD(featureDir.PrdJsonPath())
-		if err != nil {
+		if _, err := LoadPRD(featureDir.PrdJsonPath()); err != nil {
 			fmt.Printf("\nWarning: prd.json validation failed: %v\n", err)
 			fmt.Println("Edit manually or run 'ralph prd " + featureDir.Feature + "' again.")
 			return nil
-		}
-
-		// Merge state from old PRD into new PRD
-		if oldPRD != nil {
-			summary := MergePRDStateSummary(oldPRD, newPRD)
-			MergePRDState(oldPRD, newPRD)
-			if summary != "" {
-				fmt.Printf("\n%s\n", summary)
-			}
-			if err := SavePRD(featureDir.PrdJsonPath(), newPRD); err != nil {
-				fmt.Printf("Warning: failed to save merged prd.json: %v\n", err)
-			}
 		}
 
 		// Commit both prd.md and prd.json

@@ -413,6 +413,75 @@ func cmdPrd(args []string) {
 	}
 }
 
+func cmdRefine(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: ralph refine <feature>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Opens an interactive AI session with full feature context.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Example: ralph refine auth")
+		os.Exit(1)
+	}
+
+	feature := args[0]
+	projectRoot := GetProjectRoot()
+
+	cfg, err := LoadConfig(projectRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	checkProviderAvailable(cfg)
+	checkGitAvailable()
+
+	featureDir, err := FindFeatureDir(projectRoot, feature, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !featureDir.HasPrdJson {
+		fmt.Fprintf(os.Stderr, "No prd.json found for feature '%s'\n", feature)
+		fmt.Fprintf(os.Stderr, "Run 'ralph prd %s' to create and finalize a PRD first.\n", feature)
+		os.Exit(1)
+	}
+
+	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Soft warnings (don't block interactive session)
+	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
+		}
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	// Ensure we're on the feature branch
+	git := NewGitOps(projectRoot)
+	if err := git.EnsureBranch(prd.BranchName); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to switch to branch %s: %v\n", prd.BranchName, err)
+		os.Exit(1)
+	}
+
+	// Show progress summary
+	fmt.Printf("Feature: %s\n", feature)
+	fmt.Printf("Branch: %s\n", prd.BranchName)
+	fmt.Printf("Progress: %s\n", buildProgress(prd))
+	fmt.Println()
+
+	// Generate prompt and open interactive session
+	prompt := generateRefinePrompt(cfg, featureDir, prd)
+	if err := runProviderInteractive(cfg, prompt); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func cmdStatus(args []string) {
 	projectRoot := GetProjectRoot()
 
