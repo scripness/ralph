@@ -11,12 +11,13 @@ import (
 
 // FeatureDir represents a feature directory in .ralph/
 type FeatureDir struct {
-	Name      string    // Full directory name (e.g., "2024-01-15-auth")
-	Feature   string    // Feature suffix (e.g., "auth")
-	Timestamp time.Time // Parsed datetime
-	Path      string    // Full path to directory
-	HasPrdMd  bool      // prd.md exists
-	HasPrdJson bool     // prd.json exists
+	Name        string    // Full directory name (e.g., "2024-01-15-auth")
+	Feature     string    // Feature suffix (e.g., "auth")
+	Timestamp   time.Time // Parsed datetime
+	Path        string    // Full path to directory
+	HasPrdMd    bool      // prd.md exists
+	HasPrdJson  bool      // prd.json exists
+	HasRunState bool      // run-state.json exists
 }
 
 // FindFeatureDir finds a feature directory by suffix match.
@@ -127,12 +128,13 @@ func parseFeatureDir(ralphDir, name string) *FeatureDir {
 			if t, err := time.Parse("20060102", dateStr); err == nil {
 				path := filepath.Join(ralphDir, name)
 				return &FeatureDir{
-					Name:       name,
-					Feature:    feature,
-					Timestamp:  t,
-					Path:       path,
-					HasPrdMd:   fileExists(filepath.Join(path, "prd.md")),
-					HasPrdJson: fileExists(filepath.Join(path, "prd.json")),
+					Name:        name,
+					Feature:     feature,
+					Timestamp:   t,
+					Path:        path,
+					HasPrdMd:    fileExists(filepath.Join(path, "prd.md")),
+					HasPrdJson:  fileExists(filepath.Join(path, "prd.json")),
+					HasRunState: fileExists(filepath.Join(path, "run-state.json")),
 				}
 			}
 		}
@@ -150,12 +152,13 @@ func parseFeatureDir(ralphDir, name string) *FeatureDir {
 
 	path := filepath.Join(ralphDir, name)
 	return &FeatureDir{
-		Name:       name,
-		Feature:    feature,
-		Timestamp:  t,
-		Path:       path,
-		HasPrdMd:   fileExists(filepath.Join(path, "prd.md")),
-		HasPrdJson: fileExists(filepath.Join(path, "prd.json")),
+		Name:        name,
+		Feature:     feature,
+		Timestamp:   t,
+		Path:        path,
+		HasPrdMd:    fileExists(filepath.Join(path, "prd.md")),
+		HasPrdJson:  fileExists(filepath.Join(path, "prd.json")),
+		HasRunState: fileExists(filepath.Join(path, "run-state.json")),
 	}
 }
 
@@ -183,6 +186,11 @@ func (fd *FeatureDir) PrdMdPath() string {
 // PrdJsonPath returns the path to prd.json
 func (fd *FeatureDir) PrdJsonPath() string {
 	return filepath.Join(fd.Path, "prd.json")
+}
+
+// RunStatePath returns the path to run-state.json
+func (fd *FeatureDir) RunStatePath() string {
+	return filepath.Join(fd.Path, "run-state.json")
 }
 
 // EnsureExists creates the feature directory if it doesn't exist

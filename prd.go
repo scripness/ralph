@@ -73,16 +73,19 @@ func prdStateNeedsFinalize(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	fmt.Printf("PRD exists: %s\n\n", featureDir.PrdMdPath())
 	fmt.Println("What would you like to do?")
 	fmt.Println("  A) Finalize for execution")
-	fmt.Println("  B) Edit prd.md ($EDITOR)")
+	fmt.Println("  B) Refine with AI")
+	fmt.Println("  C) Edit prd.md ($EDITOR)")
 	fmt.Println("  Q) Quit")
 	fmt.Println()
 
-	choice := promptChoice("Choose", []string{"a", "b", "q"})
+	choice := promptChoice("Choose", []string{"a", "b", "c", "q"})
 
 	switch choice {
 	case "a":
 		return prdFinalize(cfg, featureDir)
 	case "b":
+		return prdRefineDraft(cfg, featureDir)
+	case "c":
 		return prdEditManual(featureDir.PrdMdPath())
 	case "q":
 		return nil
@@ -96,7 +99,9 @@ func prdStateFinalized(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	fmt.Printf("PRD is ready: %s\n", featureDir.Path)
 
 	// Show progress if any stories have been worked on
-	if prd, err := LoadPRD(featureDir.PrdJsonPath()); err == nil {
+	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
+	if err == nil {
+		prd := wprd.PRD()
 		complete := CountComplete(prd)
 		blocked := CountBlocked(prd)
 		if complete > 0 || blocked > 0 {
@@ -106,23 +111,24 @@ func prdStateFinalized(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	fmt.Println()
 	fmt.Println("What would you like to do?")
-	fmt.Println("  A) Edit prd.md ($EDITOR)")
-	fmt.Println("  B) Edit prd.json ($EDITOR)")
-	fmt.Println("  C) Start execution (ralph run)")
+	fmt.Println("  A) Refine with AI")
+	fmt.Println("  B) Regenerate prd.json from prd.md")
+	fmt.Println("  C) Edit prd.md ($EDITOR)")
+	fmt.Println("  D) Edit prd.json ($EDITOR)")
 	fmt.Println("  Q) Quit")
 	fmt.Println()
-	fmt.Printf("Tip: Use 'ralph refine %s' for AI-assisted work on this feature.\n\n", featureDir.Feature)
 
-	choice := promptChoice("Choose", []string{"a", "b", "c", "q"})
+	choice := promptChoice("Choose", []string{"a", "b", "c", "d", "q"})
 
 	switch choice {
 	case "a":
-		return prdEditManual(featureDir.PrdMdPath())
+		return prdRefineInteractive(cfg, featureDir)
 	case "b":
-		return prdEditManual(featureDir.PrdJsonPath())
+		return prdRegenerateJson(cfg, featureDir)
 	case "c":
-		fmt.Printf("\nRun: ralph run %s\n", featureDir.Feature)
-		return nil
+		return prdEditManual(featureDir.PrdMdPath())
+	case "d":
+		return prdEditManual(featureDir.PrdJsonPath())
 	case "q":
 		return nil
 	}
@@ -146,12 +152,14 @@ func prdFinalize(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	// Check if prd.json was created
 	if fileExists(featureDir.PrdJsonPath()) {
-		// Validate it
-		if _, err := LoadPRD(featureDir.PrdJsonPath()); err != nil {
+		// Validate as v3 definition (no runtime fields expected)
+		if _, err := LoadPRDDefinition(featureDir.PrdJsonPath()); err != nil {
 			fmt.Printf("\nWarning: prd.json validation failed: %v\n", err)
 			fmt.Println("Edit manually or run 'ralph prd " + featureDir.Feature + "' again.")
 			return nil
 		}
+
+		featureDir.HasPrdJson = true
 
 		// Commit both prd.md and prd.json
 		commitPrdFile(cfg, featureDir.PrdMdPath(), "ralph: finalize prd.md for "+featureDir.Feature)
@@ -164,6 +172,85 @@ func prdFinalize(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	}
 
 	return nil
+}
+
+// prdRefineDraft opens an AI session for refining draft PRD (pre-finalization).
+// Re-runs the brainstorming prompt — provider sees existing prd.md and iterates on it.
+func prdRefineDraft(cfg *ResolvedConfig, featureDir *FeatureDir) error {
+	fmt.Printf("\nRefining PRD with AI...\n\n")
+
+	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
+	prompt := generatePrdCreatePrompt(cfg, featureDir, codebaseCtx)
+	if err := runProviderInteractive(cfg, prompt); err != nil {
+		return err
+	}
+
+	// Check if prd.md was updated
+	featureDir.HasPrdMd = fileExists(featureDir.PrdMdPath())
+	if featureDir.HasPrdMd {
+		commitPrdFile(cfg, featureDir.PrdMdPath(), "ralph: refine prd.md for "+featureDir.Feature)
+	}
+
+	fmt.Printf("\nRun 'ralph prd %s' to continue.\n", featureDir.Feature)
+	return nil
+}
+
+// prdRefineInteractive opens an interactive AI session with full feature context (post-finalization).
+// This is the former cmdRefine logic, now integrated into ralph prd.
+func prdRefineInteractive(cfg *ResolvedConfig, featureDir *FeatureDir) error {
+	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
+	if err != nil {
+		return fmt.Errorf("failed to load PRD: %w", err)
+	}
+	prd := wprd.PRD()
+
+	// Soft warnings (don't block interactive session)
+	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
+		}
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	// Ensure we're on the feature branch
+	git := NewGitOps(cfg.ProjectRoot)
+	if err := git.EnsureBranch(prd.BranchName); err != nil {
+		return fmt.Errorf("failed to switch to branch %s: %w", prd.BranchName, err)
+	}
+
+	// Show progress summary
+	fmt.Printf("\nFeature: %s\n", featureDir.Feature)
+	fmt.Printf("Branch: %s\n", prd.BranchName)
+	fmt.Printf("Progress: %s\n", buildProgress(prd))
+	fmt.Println()
+
+	// Generate prompt and open interactive session
+	prompt := generateRefinePrompt(cfg, featureDir, prd)
+	return runProviderInteractive(cfg, prompt)
+}
+
+// prdRegenerateJson re-runs finalization from prd.md. Safe because run-state.json is separate.
+func prdRegenerateJson(cfg *ResolvedConfig, featureDir *FeatureDir) error {
+	// Warn if stories have been worked on
+	if featureDir.HasRunState {
+		wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
+		if err == nil {
+			prd := wprd.PRD()
+			complete := CountComplete(prd)
+			blocked := CountBlocked(prd)
+			if complete > 0 || blocked > 0 {
+				fmt.Printf("\nWarning: %s\n", buildProgress(prd))
+				fmt.Println("Execution state (passes, retries, blocks) is preserved in run-state.json.")
+				fmt.Println("Story state will be matched by ID after regeneration.")
+				fmt.Println()
+				if !promptYesNo("Proceed with regeneration?") {
+					return nil
+				}
+			}
+		}
+	}
+
+	return prdFinalize(cfg, featureDir)
 }
 
 // prdEditManual opens a file in the user's editor

@@ -247,11 +247,12 @@ func cmdRun(args []string) {
 		os.Exit(1)
 	}
 
-	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	prd := wprd.PRD()
 
 	// Enforce codebase readiness
 	if issues := CheckReadiness(&cfg.Config, prd); len(issues) > 0 {
@@ -319,11 +320,12 @@ func cmdVerify(args []string) {
 		os.Exit(1)
 	}
 
-	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	prd := wprd.PRD()
 
 	// Enforce codebase readiness
 	if issues := CheckReadiness(&cfg.Config, prd); len(issues) > 0 {
@@ -413,75 +415,6 @@ func cmdPrd(args []string) {
 	}
 }
 
-func cmdRefine(args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: ralph refine <feature>")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Opens an interactive AI session with full feature context.")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Example: ralph refine auth")
-		os.Exit(1)
-	}
-
-	feature := args[0]
-	projectRoot := GetProjectRoot()
-
-	cfg, err := LoadConfig(projectRoot)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	checkProviderAvailable(cfg)
-	checkGitAvailable()
-
-	featureDir, err := FindFeatureDir(projectRoot, feature, false)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !featureDir.HasPrdJson {
-		fmt.Fprintf(os.Stderr, "No prd.json found for feature '%s'\n", feature)
-		fmt.Fprintf(os.Stderr, "Run 'ralph prd %s' to create and finalize a PRD first.\n", feature)
-		os.Exit(1)
-	}
-
-	prd, err := LoadPRD(featureDir.PrdJsonPath())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Soft warnings (don't block interactive session)
-	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
-		for _, w := range warnings {
-			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
-		}
-		fmt.Fprintln(os.Stderr, "")
-	}
-
-	// Ensure we're on the feature branch
-	git := NewGitOps(projectRoot)
-	if err := git.EnsureBranch(prd.BranchName); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to switch to branch %s: %v\n", prd.BranchName, err)
-		os.Exit(1)
-	}
-
-	// Show progress summary
-	fmt.Printf("Feature: %s\n", feature)
-	fmt.Printf("Branch: %s\n", prd.BranchName)
-	fmt.Printf("Progress: %s\n", buildProgress(prd))
-	fmt.Println()
-
-	// Generate prompt and open interactive session
-	prompt := generateRefinePrompt(cfg, featureDir, prd)
-	if err := runProviderInteractive(cfg, prompt); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
 func cmdStatus(args []string) {
 	projectRoot := GetProjectRoot()
 
@@ -503,8 +436,9 @@ func cmdStatus(args []string) {
 		for _, f := range features {
 			status := "○"
 			if f.HasPrdJson {
-				prd, err := LoadPRD(f.PrdJsonPath())
+				wprd, err := LoadWorkingPRD(f.PrdJsonPath(), f.RunStatePath())
 				if err == nil {
+					prd := wprd.PRD()
 					complete := CountComplete(prd)
 					total := len(prd.UserStories)
 					blocked := CountBlocked(prd)
@@ -554,11 +488,12 @@ func cmdStatus(args []string) {
 		return
 	}
 
-	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	prd := wprd.PRD()
 
 	fmt.Printf("Feature: %s\n", feature)
 	fmt.Printf("Project: %s\n", prd.Project)
@@ -621,11 +556,12 @@ func cmdNext(args []string) {
 		os.Exit(1)
 	}
 
-	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	prd := wprd.PRD()
 
 	next := GetNextStory(prd)
 	if next == nil {
@@ -680,15 +616,15 @@ func cmdValidate(args []string) {
 		os.Exit(1)
 	}
 
-	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Println("✓ prd.json is valid")
-	fmt.Printf("  - %d stories\n", len(prd.UserStories))
-	fmt.Printf("  - Schema version: %d\n", prd.SchemaVersion)
+	fmt.Printf("  - %d stories\n", len(def.UserStories))
+	fmt.Printf("  - Schema version: %d\n", def.SchemaVersion)
 }
 
 func cmdDoctor(args []string) {

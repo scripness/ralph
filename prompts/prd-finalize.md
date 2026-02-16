@@ -28,19 +28,14 @@ Stories must be ordered so no story depends on a later story.
 
 ## Output Format
 
-Create a valid JSON file with this structure:
+Create a valid JSON file with this structure. **Only include definition fields — no runtime state.** The CLI manages execution state separately in run-state.json.
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "project": "[project name from PRD]",
   "branchName": "ralph/{{feature}}",
   "description": "[feature description from PRD]",
-  "run": {
-    "startedAt": null,
-    "currentStoryId": null,
-    "learnings": []
-  },
   "userStories": [
     {
       "id": "US-001",
@@ -53,12 +48,7 @@ Create a valid JSON file with this structure:
         "Tests pass"
       ],
       "tags": [],
-      "priority": 1,
-      "passes": false,
-      "retries": 0,
-      "blocked": false,
-      "lastResult": null,
-      "notes": ""
+      "priority": 1
     }
   ]
 }
@@ -74,20 +64,7 @@ Create a valid JSON file with this structure:
 | `acceptanceCriteria` | Array of specific, testable criteria |
 | `tags` | `["ui"]` for stories needing browser verification |
 | `priority` | Integer, lower = higher priority (order of execution) |
-| `passes` | `false` (CLI will update) |
-| `retries` | `0` (CLI will update) |
-| `blocked` | `false` (CLI will update) |
-| `lastResult` | `null` (CLI will update) |
-| `notes` | `""` (CLI will update) |
 | `browserSteps` | Optional array of interactive browser verification steps |
-
-## Story ID Stability
-
-**IMPORTANT:** If the PRD markdown references existing story IDs (e.g., US-001, US-002), you MUST preserve those exact IDs in the output JSON. The CLI tracks execution state (passes, retries, blocked status, learnings) by story ID. Changing IDs destroys this state.
-
-- Keep existing `US-XXX` IDs for stories that are unchanged or only modified
-- Only assign new sequential IDs (continuing from the highest existing ID) to genuinely **new** stories
-- If a story was removed from the PRD, simply omit it — do not reuse its ID
 
 ## Browser Steps (for UI stories)
 
@@ -138,6 +115,7 @@ Before saving, verify:
 - [ ] Stories with testable logic have "Tests pass" as a criterion
 - [ ] No story depends on a later story
 - [ ] Stories are small enough for one implementation session
+- [ ] **No runtime fields** (passes, retries, blocked, lastResult, notes, run) — these belong in run-state.json
 
 ## After Saving
 

@@ -198,3 +198,46 @@ func TestFeatureDir_EnsureExists(t *testing.T) {
 		t.Error("directory should exist after EnsureExists")
 	}
 }
+
+func TestFeatureDir_RunStatePath(t *testing.T) {
+	fd := &FeatureDir{
+		Path: "/project/.ralph/2024-01-15-auth",
+	}
+
+	expected := "/project/.ralph/2024-01-15-auth/run-state.json"
+	if got := fd.RunStatePath(); got != expected {
+		t.Errorf("RunStatePath() = %q, want %q", got, expected)
+	}
+}
+
+func TestFeatureDir_HasRunState(t *testing.T) {
+	dir := t.TempDir()
+	ralphDir := filepath.Join(dir, ".ralph")
+	os.MkdirAll(ralphDir, 0755)
+
+	featureName := time.Now().Format("2006-01-02") + "-testrstate"
+	featureDir := filepath.Join(ralphDir, featureName)
+	os.MkdirAll(featureDir, 0755)
+
+	// Write prd.json so it's detected
+	os.WriteFile(filepath.Join(featureDir, "prd.json"), []byte("{}"), 0644)
+
+	// Before run-state.json exists
+	fd, err := FindFeatureDir(dir, "testrstate", false)
+	if err != nil {
+		t.Fatalf("FindFeatureDir failed: %v", err)
+	}
+	if fd.HasRunState {
+		t.Error("expected HasRunState=false before creating file")
+	}
+
+	// After creating run-state.json
+	os.WriteFile(filepath.Join(featureDir, "run-state.json"), []byte("{}"), 0644)
+	fd, err = FindFeatureDir(dir, "testrstate", false)
+	if err != nil {
+		t.Fatalf("FindFeatureDir failed: %v", err)
+	}
+	if !fd.HasRunState {
+		t.Error("expected HasRunState=true after creating file")
+	}
+}
