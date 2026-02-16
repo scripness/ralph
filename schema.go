@@ -59,60 +59,6 @@ type PRD struct {
 	UserStories   []UserStory `json:"userStories"`
 }
 
-// LoadPRD loads and validates a PRD from a file
-func LoadPRD(path string) (*PRD, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("PRD not found: %s", path)
-	}
-
-	var prd PRD
-	if err := json.Unmarshal(data, &prd); err != nil {
-		return nil, fmt.Errorf("invalid JSON in prd.json: %w", err)
-	}
-
-	if err := ValidatePRD(&prd); err != nil {
-		return nil, err
-	}
-
-	return &prd, nil
-}
-
-// SavePRD saves a PRD atomically
-func SavePRD(path string, prd *PRD) error {
-	return AtomicWriteJSON(path, prd)
-}
-
-// ValidatePRD validates a PRD structure
-func ValidatePRD(prd *PRD) error {
-	if prd.SchemaVersion != 2 {
-		return fmt.Errorf("invalid schemaVersion: expected 2, got %d", prd.SchemaVersion)
-	}
-	if prd.Project == "" {
-		return fmt.Errorf("missing required field: project")
-	}
-	if prd.BranchName == "" {
-		return fmt.Errorf("missing required field: branchName")
-	}
-	if len(prd.UserStories) == 0 {
-		return fmt.Errorf("userStories must have at least one story")
-	}
-
-	for i, story := range prd.UserStories {
-		if story.ID == "" {
-			return fmt.Errorf("userStories[%d]: missing id", i)
-		}
-		if story.Title == "" {
-			return fmt.Errorf("userStories[%d]: missing title", i)
-		}
-		if len(story.AcceptanceCriteria) == 0 {
-			return fmt.Errorf("userStories[%d]: missing acceptanceCriteria", i)
-		}
-	}
-
-	return nil
-}
-
 // GetNextStory returns the next story to work on (not passed, not blocked, by priority).
 // If CurrentStoryID is set (crash recovery), that story is returned first if still eligible.
 // The returned pointer references the original element in prd.UserStories.
@@ -340,6 +286,250 @@ func CountBlocked(prd *PRD) int {
 		}
 	}
 	return count
+}
+
+// --- v3 definition types (on-disk format, AI-authored, immutable during runs) ---
+
+// PRDDefinition is the v3 on-disk format for prd.json (no runtime fields).
+type PRDDefinition struct {
+	SchemaVersion int               `json:"schemaVersion"` // 3
+	Project       string            `json:"project"`
+	BranchName    string            `json:"branchName"`
+	Description   string            `json:"description"`
+	UserStories   []StoryDefinition `json:"userStories"`
+}
+
+// StoryDefinition contains only AI-authored story fields.
+type StoryDefinition struct {
+	ID                 string        `json:"id"`
+	Title              string        `json:"title"`
+	Description        string        `json:"description"`
+	AcceptanceCriteria []string      `json:"acceptanceCriteria"`
+	Tags               []string      `json:"tags,omitempty"`
+	Priority           int           `json:"priority"`
+	BrowserSteps       []BrowserStep `json:"browserSteps,omitempty"`
+}
+
+// --- Execution state types (on-disk, CLI-managed) ---
+
+// RunState is the execution state file written exclusively by the CLI.
+type RunState struct {
+	StartedAt      *string                `json:"startedAt"`
+	CurrentStoryID *string                `json:"currentStoryId"`
+	Learnings      []string               `json:"learnings"`
+	Stories        map[string]*StoryState `json:"stories"`
+}
+
+// StoryState contains CLI-managed runtime state for a single story.
+type StoryState struct {
+	Passes     bool        `json:"passes"`
+	Retries    int         `json:"retries"`
+	Blocked    bool        `json:"blocked"`
+	LastResult *LastResult `json:"lastResult"`
+	Notes      string      `json:"notes,omitempty"`
+}
+
+// --- WorkingPRD adapter ---
+
+// WorkingPRD loads from two files (prd.json v3 + run-state.json) and provides a merged *PRD.
+type WorkingPRD struct {
+	prd       *PRD   // merged working copy
+	prdPath   string // path to prd.json (for reference)
+	statePath string // path to run-state.json
+}
+
+// LoadWorkingPRD loads a PRD from prd.json (v3) and run-state.json, merging them into a working *PRD.
+func LoadWorkingPRD(prdPath, statePath string) (*WorkingPRD, error) {
+	def, err := LoadPRDDefinition(prdPath)
+	if err != nil {
+		return nil, err
+	}
+
+	state, err := LoadRunState(statePath)
+	if err != nil {
+		return nil, err
+	}
+
+	prd := mergeDefinitionAndState(def, state)
+
+	return &WorkingPRD{
+		prd:       prd,
+		prdPath:   prdPath,
+		statePath: statePath,
+	}, nil
+}
+
+// PRD returns the merged working PRD (same type as the old in-memory format).
+func (w *WorkingPRD) PRD() *PRD {
+	return w.prd
+}
+
+// SaveState extracts runtime state from the working PRD and writes run-state.json.
+func (w *WorkingPRD) SaveState() error {
+	state := extractState(w.prd)
+	return SaveRunState(w.statePath, state)
+}
+
+// StatePath returns the path to run-state.json.
+func (w *WorkingPRD) StatePath() string {
+	return w.statePath
+}
+
+// --- Load/Save/Validate helpers ---
+
+// LoadPRDDefinition loads and validates a v3 PRD definition from disk.
+func LoadPRDDefinition(path string) (*PRDDefinition, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("PRD not found: %s", path)
+	}
+
+	var def PRDDefinition
+	if err := json.Unmarshal(data, &def); err != nil {
+		return nil, fmt.Errorf("invalid JSON in prd.json: %w", err)
+	}
+
+	if err := ValidatePRDDefinition(&def); err != nil {
+		return nil, err
+	}
+
+	return &def, nil
+}
+
+// ValidatePRDDefinition validates a v3 PRD definition.
+func ValidatePRDDefinition(def *PRDDefinition) error {
+	if def.SchemaVersion != 3 {
+		return fmt.Errorf("invalid schemaVersion: expected 3, got %d", def.SchemaVersion)
+	}
+	if def.Project == "" {
+		return fmt.Errorf("missing required field: project")
+	}
+	if def.BranchName == "" {
+		return fmt.Errorf("missing required field: branchName")
+	}
+	if len(def.UserStories) == 0 {
+		return fmt.Errorf("userStories must have at least one story")
+	}
+	for i, story := range def.UserStories {
+		if story.ID == "" {
+			return fmt.Errorf("userStories[%d]: missing id", i)
+		}
+		if story.Title == "" {
+			return fmt.Errorf("userStories[%d]: missing title", i)
+		}
+		if len(story.AcceptanceCriteria) == 0 {
+			return fmt.Errorf("userStories[%d]: missing acceptanceCriteria", i)
+		}
+	}
+	return nil
+}
+
+// LoadRunState loads execution state from disk. Returns empty state if file doesn't exist.
+func LoadRunState(path string) (*RunState, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &RunState{
+				Stories: make(map[string]*StoryState),
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to read run-state.json: %w", err)
+	}
+
+	var state RunState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("invalid JSON in run-state.json: %w", err)
+	}
+	if state.Stories == nil {
+		state.Stories = make(map[string]*StoryState)
+	}
+	return &state, nil
+}
+
+// SaveRunState writes execution state atomically.
+func SaveRunState(path string, state *RunState) error {
+	return AtomicWriteJSON(path, state)
+}
+
+// --- Merge/Extract helpers ---
+
+// mergeDefinitionAndState combines a v3 definition + run state into a working *PRD.
+func mergeDefinitionAndState(def *PRDDefinition, state *RunState) *PRD {
+	prd := &PRD{
+		SchemaVersion: def.SchemaVersion,
+		Project:       def.Project,
+		BranchName:    def.BranchName,
+		Description:   def.Description,
+		Run: Run{
+			StartedAt:      state.StartedAt,
+			CurrentStoryID: state.CurrentStoryID,
+			Learnings:      state.Learnings,
+		},
+	}
+
+	for _, sd := range def.UserStories {
+		story := UserStory{
+			ID:                 sd.ID,
+			Title:              sd.Title,
+			Description:        sd.Description,
+			AcceptanceCriteria: sd.AcceptanceCriteria,
+			Tags:               sd.Tags,
+			Priority:           sd.Priority,
+			BrowserSteps:       sd.BrowserSteps,
+		}
+
+		// Overlay runtime state if it exists for this story
+		if ss, ok := state.Stories[sd.ID]; ok {
+			story.Passes = ss.Passes
+			story.Retries = ss.Retries
+			story.Blocked = ss.Blocked
+			story.LastResult = ss.LastResult
+			story.Notes = ss.Notes
+		}
+
+		prd.UserStories = append(prd.UserStories, story)
+	}
+
+	return prd
+}
+
+// extractState extracts runtime state from a working *PRD into a RunState.
+func extractState(prd *PRD) *RunState {
+	state := &RunState{
+		StartedAt:      prd.Run.StartedAt,
+		CurrentStoryID: prd.Run.CurrentStoryID,
+		Learnings:      prd.Run.Learnings,
+		Stories:        make(map[string]*StoryState),
+	}
+
+	for _, s := range prd.UserStories {
+		state.Stories[s.ID] = &StoryState{
+			Passes:     s.Passes,
+			Retries:    s.Retries,
+			Blocked:    s.Blocked,
+			LastResult: s.LastResult,
+			Notes:      s.Notes,
+		}
+	}
+
+	return state
+}
+
+// ReconcileState returns story IDs that are in state but not in definition (orphaned).
+func ReconcileState(def *PRDDefinition, state *RunState) []string {
+	defIDs := make(map[string]bool)
+	for _, s := range def.UserStories {
+		defIDs[s.ID] = true
+	}
+
+	var orphaned []string
+	for id := range state.Stories {
+		if !defIDs[id] {
+			orphaned = append(orphaned, id)
+		}
+	}
+	sort.Strings(orphaned)
+	return orphaned
 }
 
 // WarnPRDQuality returns warnings about PRD quality issues (not errors).

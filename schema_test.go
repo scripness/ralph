@@ -6,142 +6,6 @@ import (
 	"testing"
 )
 
-func TestValidatePRD_Valid(t *testing.T) {
-	prd := &PRD{
-		SchemaVersion: 2,
-		Project:       "TestProject",
-		BranchName:    "ralph/test",
-		Description:   "Test description",
-		Run: Run{
-			Learnings: []string{},
-		},
-		UserStories: []UserStory{
-			{
-				ID:                 "US-001",
-				Title:              "Test story",
-				Description:        "As a user...",
-				AcceptanceCriteria: []string{"Criterion 1"},
-				Priority:           1,
-				Passes:             false,
-				Retries:            0,
-			},
-		},
-	}
-
-	err := ValidatePRD(prd)
-	if err != nil {
-		t.Errorf("expected valid PRD, got error: %v", err)
-	}
-}
-
-func TestValidatePRD_WrongSchemaVersion(t *testing.T) {
-	prd := &PRD{
-		SchemaVersion: 1,
-		Project:       "Test",
-		BranchName:    "ralph/test",
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "Test", AcceptanceCriteria: []string{"x"}},
-		},
-	}
-
-	err := ValidatePRD(prd)
-	if err == nil {
-		t.Error("expected error for wrong schema version")
-	}
-}
-
-func TestValidatePRD_MissingProject(t *testing.T) {
-	prd := &PRD{
-		SchemaVersion: 2,
-		BranchName:    "ralph/test",
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "Test", AcceptanceCriteria: []string{"x"}},
-		},
-	}
-
-	err := ValidatePRD(prd)
-	if err == nil {
-		t.Error("expected error for missing project")
-	}
-}
-
-func TestValidatePRD_MissingBranchName(t *testing.T) {
-	prd := &PRD{
-		SchemaVersion: 2,
-		Project:       "Test",
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "Test", AcceptanceCriteria: []string{"x"}},
-		},
-	}
-
-	err := ValidatePRD(prd)
-	if err == nil {
-		t.Error("expected error for missing branchName")
-	}
-}
-
-func TestValidatePRD_EmptyUserStories(t *testing.T) {
-	prd := &PRD{
-		SchemaVersion: 2,
-		Project:       "Test",
-		BranchName:    "ralph/test",
-		UserStories:   []UserStory{},
-	}
-
-	err := ValidatePRD(prd)
-	if err == nil {
-		t.Error("expected error for empty userStories")
-	}
-}
-
-func TestValidatePRD_StoryMissingID(t *testing.T) {
-	prd := &PRD{
-		SchemaVersion: 2,
-		Project:       "Test",
-		BranchName:    "ralph/test",
-		UserStories: []UserStory{
-			{Title: "Test", AcceptanceCriteria: []string{"x"}},
-		},
-	}
-
-	err := ValidatePRD(prd)
-	if err == nil {
-		t.Error("expected error for story missing ID")
-	}
-}
-
-func TestValidatePRD_StoryMissingTitle(t *testing.T) {
-	prd := &PRD{
-		SchemaVersion: 2,
-		Project:       "Test",
-		BranchName:    "ralph/test",
-		UserStories: []UserStory{
-			{ID: "US-001", AcceptanceCriteria: []string{"x"}},
-		},
-	}
-
-	err := ValidatePRD(prd)
-	if err == nil {
-		t.Error("expected error for story missing title")
-	}
-}
-
-func TestValidatePRD_StoryMissingAcceptanceCriteria(t *testing.T) {
-	prd := &PRD{
-		SchemaVersion: 2,
-		Project:       "Test",
-		BranchName:    "ralph/test",
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "Test"},
-		},
-	}
-
-	err := ValidatePRD(prd)
-	if err == nil {
-		t.Error("expected error for story missing acceptanceCriteria")
-	}
-}
-
 func TestGetNextStory_PicksHighestPriority(t *testing.T) {
 	prd := &PRD{
 		UserStories: []UserStory{
@@ -247,49 +111,6 @@ func TestAllStoriesComplete_BlockedCountsAsComplete(t *testing.T) {
 	// Blocked stories don't prevent completion
 	if !AllStoriesComplete(prd) {
 		t.Error("expected all stories complete (blocked counts as done)")
-	}
-}
-
-func TestLoadPRD_ValidFile(t *testing.T) {
-	dir := t.TempDir()
-	prdPath := filepath.Join(dir, "prd.json")
-
-	content := `{
-		"schemaVersion": 2,
-		"project": "Test",
-		"branchName": "ralph/test",
-		"description": "Test",
-		"run": {"startedAt": null, "currentStoryId": null, "learnings": []},
-		"userStories": [
-			{"id": "US-001", "title": "Test", "description": "...", "acceptanceCriteria": ["x"], "priority": 1, "passes": false, "retries": 0, "blocked": false, "lastResult": null, "notes": ""}
-		]
-	}`
-	os.WriteFile(prdPath, []byte(content), 0644)
-
-	prd, err := LoadPRD(prdPath)
-	if err != nil {
-		t.Fatalf("failed to load PRD: %v", err)
-	}
-	if prd.Project != "Test" {
-		t.Errorf("expected project 'Test', got '%s'", prd.Project)
-	}
-}
-
-func TestLoadPRD_FileNotFound(t *testing.T) {
-	_, err := LoadPRD("/nonexistent/prd.json")
-	if err == nil {
-		t.Error("expected error for missing file")
-	}
-}
-
-func TestLoadPRD_InvalidJSON(t *testing.T) {
-	dir := t.TempDir()
-	prdPath := filepath.Join(dir, "prd.json")
-	os.WriteFile(prdPath, []byte("not json"), 0644)
-
-	_, err := LoadPRD(prdPath)
-	if err == nil {
-		t.Error("expected error for invalid JSON")
 	}
 }
 
@@ -525,7 +346,7 @@ func TestNormalizeLearning(t *testing.T) {
 
 func TestBrowserSteps_InUserStory(t *testing.T) {
 	prd := &PRD{
-		SchemaVersion: 2,
+		SchemaVersion: 3,
 		Project:       "Test",
 		BranchName:    "ralph/test",
 		UserStories: []UserStory{
@@ -543,11 +364,6 @@ func TestBrowserSteps_InUserStory(t *testing.T) {
 				},
 			},
 		},
-	}
-
-	err := ValidatePRD(prd)
-	if err != nil {
-		t.Errorf("expected valid PRD with browserSteps, got error: %v", err)
 	}
 
 	story := GetStoryByID(prd, "US-001")
@@ -787,93 +603,6 @@ func TestGetStoryByID(t *testing.T) {
 	}
 }
 
-func TestSavePRD_RoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	prdPath := filepath.Join(dir, "prd.json")
-
-	original := &PRD{
-		SchemaVersion: 2,
-		Project:       "RoundTrip",
-		BranchName:    "ralph/test",
-		Description:   "Test round trip",
-		Run:           Run{Learnings: []string{"learning1"}},
-		UserStories: []UserStory{
-			{
-				ID:                 "US-001",
-				Title:              "Test",
-				Description:        "Desc",
-				AcceptanceCriteria: []string{"works"},
-				Priority:           1,
-			},
-		},
-	}
-
-	if err := SavePRD(prdPath, original); err != nil {
-		t.Fatalf("SavePRD failed: %v", err)
-	}
-
-	loaded, err := LoadPRD(prdPath)
-	if err != nil {
-		t.Fatalf("LoadPRD failed: %v", err)
-	}
-
-	if loaded.Project != "RoundTrip" {
-		t.Errorf("expected project='RoundTrip', got '%s'", loaded.Project)
-	}
-	if len(loaded.Run.Learnings) != 1 || loaded.Run.Learnings[0] != "learning1" {
-		t.Errorf("expected learnings preserved, got %v", loaded.Run.Learnings)
-	}
-	if len(loaded.UserStories) != 1 || loaded.UserStories[0].ID != "US-001" {
-		t.Errorf("expected stories preserved, got %v", loaded.UserStories)
-	}
-}
-
-func TestLoadPRD_WithBrowserSteps(t *testing.T) {
-	dir := t.TempDir()
-	prdPath := filepath.Join(dir, "prd.json")
-
-	content := `{
-		"schemaVersion": 2,
-		"project": "Test",
-		"branchName": "ralph/test",
-		"description": "Test",
-		"run": {"startedAt": null, "currentStoryId": null, "learnings": []},
-		"userStories": [
-			{
-				"id": "US-001",
-				"title": "Test",
-				"description": "...",
-				"acceptanceCriteria": ["x"],
-				"tags": ["ui"],
-				"priority": 1,
-				"passes": false,
-				"retries": 0,
-				"blocked": false,
-				"lastResult": null,
-				"notes": "",
-				"browserSteps": [
-					{"action": "navigate", "url": "/test"},
-					{"action": "assertVisible", "selector": ".content"}
-				]
-			}
-		]
-	}`
-	os.WriteFile(prdPath, []byte(content), 0644)
-
-	prd, err := LoadPRD(prdPath)
-	if err != nil {
-		t.Fatalf("failed to load PRD: %v", err)
-	}
-
-	story := GetStoryByID(prd, "US-001")
-	if len(story.BrowserSteps) != 2 {
-		t.Errorf("expected 2 browser steps, got %d", len(story.BrowserSteps))
-	}
-	if story.BrowserSteps[0].URL != "/test" {
-		t.Errorf("expected URL='/test', got '%s'", story.BrowserSteps[0].URL)
-	}
-}
-
 func TestGetPendingStories(t *testing.T) {
 	prd := &PRD{
 		UserStories: []UserStory{
@@ -1040,4 +769,367 @@ func TestMarkStoryBlocked_ClearsPasses(t *testing.T) {
 		t.Error("expected blocked=true")
 	}
 }
+
+// --- v3 / WorkingPRD tests ---
+
+func writeV3PRD(t *testing.T, dir string) string {
+	t.Helper()
+	prdPath := filepath.Join(dir, "prd.json")
+	def := &PRDDefinition{
+		SchemaVersion: 3,
+		Project:       "TestProject",
+		BranchName:    "ralph/test",
+		Description:   "Test feature",
+		UserStories: []StoryDefinition{
+			{
+				ID:                 "US-001",
+				Title:              "First story",
+				Description:        "As a user...",
+				AcceptanceCriteria: []string{"Criterion 1"},
+				Priority:           1,
+			},
+			{
+				ID:                 "US-002",
+				Title:              "Second story",
+				Description:        "As a user...",
+				AcceptanceCriteria: []string{"Criterion 2"},
+				Tags:               []string{"ui"},
+				Priority:           2,
+			},
+		},
+	}
+	if err := AtomicWriteJSON(prdPath, def); err != nil {
+		t.Fatalf("failed to write v3 PRD: %v", err)
+	}
+	return prdPath
+}
+
+func TestLoadPRDDefinition_Valid(t *testing.T) {
+	dir := t.TempDir()
+	prdPath := writeV3PRD(t, dir)
+
+	def, err := LoadPRDDefinition(prdPath)
+	if err != nil {
+		t.Fatalf("LoadPRDDefinition failed: %v", err)
+	}
+	if def.SchemaVersion != 3 {
+		t.Errorf("expected schemaVersion=3, got %d", def.SchemaVersion)
+	}
+	if def.Project != "TestProject" {
+		t.Errorf("expected project='TestProject', got '%s'", def.Project)
+	}
+	if len(def.UserStories) != 2 {
+		t.Errorf("expected 2 stories, got %d", len(def.UserStories))
+	}
+}
+
+func TestLoadPRDDefinition_NotFound(t *testing.T) {
+	_, err := LoadPRDDefinition("/nonexistent/prd.json")
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestLoadPRDDefinition_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	prdPath := filepath.Join(dir, "prd.json")
+	os.WriteFile(prdPath, []byte("not json"), 0644)
+
+	_, err := LoadPRDDefinition(prdPath)
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestValidatePRDDefinition_WrongVersion(t *testing.T) {
+	def := &PRDDefinition{
+		SchemaVersion: 2,
+		Project:       "Test",
+		BranchName:    "ralph/test",
+		UserStories:   []StoryDefinition{{ID: "US-001", Title: "Test", AcceptanceCriteria: []string{"x"}}},
+	}
+	if err := ValidatePRDDefinition(def); err == nil {
+		t.Error("expected error for wrong schemaVersion")
+	}
+}
+
+func TestValidatePRDDefinition_MissingProject(t *testing.T) {
+	def := &PRDDefinition{
+		SchemaVersion: 3,
+		BranchName:    "ralph/test",
+		UserStories:   []StoryDefinition{{ID: "US-001", Title: "Test", AcceptanceCriteria: []string{"x"}}},
+	}
+	if err := ValidatePRDDefinition(def); err == nil {
+		t.Error("expected error for missing project")
+	}
+}
+
+func TestValidatePRDDefinition_EmptyStories(t *testing.T) {
+	def := &PRDDefinition{
+		SchemaVersion: 3,
+		Project:       "Test",
+		BranchName:    "ralph/test",
+		UserStories:   []StoryDefinition{},
+	}
+	if err := ValidatePRDDefinition(def); err == nil {
+		t.Error("expected error for empty stories")
+	}
+}
+
+func TestLoadRunState_NotFound(t *testing.T) {
+	state, err := LoadRunState("/nonexistent/run-state.json")
+	if err != nil {
+		t.Fatalf("expected no error for missing state file, got: %v", err)
+	}
+	if state == nil {
+		t.Fatal("expected non-nil state")
+	}
+	if len(state.Stories) != 0 {
+		t.Errorf("expected empty stories map, got %d entries", len(state.Stories))
+	}
+}
+
+func TestLoadRunState_Valid(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "run-state.json")
+
+	state := &RunState{
+		Learnings: []string{"learned something"},
+		Stories: map[string]*StoryState{
+			"US-001": {Passes: true, Retries: 1},
+		},
+	}
+	if err := SaveRunState(statePath, state); err != nil {
+		t.Fatalf("SaveRunState failed: %v", err)
+	}
+
+	loaded, err := LoadRunState(statePath)
+	if err != nil {
+		t.Fatalf("LoadRunState failed: %v", err)
+	}
+	if len(loaded.Learnings) != 1 || loaded.Learnings[0] != "learned something" {
+		t.Errorf("expected learnings preserved, got %v", loaded.Learnings)
+	}
+	if ss, ok := loaded.Stories["US-001"]; !ok || !ss.Passes {
+		t.Error("expected US-001 passes=true")
+	}
+}
+
+func TestLoadRunState_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "run-state.json")
+	os.WriteFile(statePath, []byte("not json"), 0644)
+
+	_, err := LoadRunState(statePath)
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestSaveRunState_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "run-state.json")
+
+	ts := "2024-01-15T10:00:00Z"
+	storyID := "US-002"
+	original := &RunState{
+		StartedAt:      &ts,
+		CurrentStoryID: &storyID,
+		Learnings:      []string{"l1", "l2"},
+		Stories: map[string]*StoryState{
+			"US-001": {Passes: true, Retries: 0, LastResult: &LastResult{Commit: "abc", Summary: "done"}},
+			"US-002": {Passes: false, Retries: 2, Blocked: true, Notes: "stuck"},
+		},
+	}
+
+	if err := SaveRunState(statePath, original); err != nil {
+		t.Fatalf("SaveRunState failed: %v", err)
+	}
+
+	loaded, err := LoadRunState(statePath)
+	if err != nil {
+		t.Fatalf("LoadRunState failed: %v", err)
+	}
+
+	if *loaded.StartedAt != ts {
+		t.Errorf("expected startedAt='%s', got '%s'", ts, *loaded.StartedAt)
+	}
+	if *loaded.CurrentStoryID != storyID {
+		t.Errorf("expected currentStoryId='%s', got '%s'", storyID, *loaded.CurrentStoryID)
+	}
+	if len(loaded.Learnings) != 2 {
+		t.Errorf("expected 2 learnings, got %d", len(loaded.Learnings))
+	}
+	if !loaded.Stories["US-001"].Passes {
+		t.Error("expected US-001 passes=true")
+	}
+	if !loaded.Stories["US-002"].Blocked {
+		t.Error("expected US-002 blocked=true")
+	}
+}
+
+func TestLoadWorkingPRD_BothFiles(t *testing.T) {
+	dir := t.TempDir()
+	prdPath := writeV3PRD(t, dir)
+	statePath := filepath.Join(dir, "run-state.json")
+
+	state := &RunState{
+		Learnings: []string{"l1"},
+		Stories: map[string]*StoryState{
+			"US-001": {Passes: true, Retries: 1, LastResult: &LastResult{Commit: "abc"}},
+		},
+	}
+	SaveRunState(statePath, state)
+
+	wprd, err := LoadWorkingPRD(prdPath, statePath)
+	if err != nil {
+		t.Fatalf("LoadWorkingPRD failed: %v", err)
+	}
+	prd := wprd.PRD()
+
+	if prd.Project != "TestProject" {
+		t.Errorf("expected project='TestProject', got '%s'", prd.Project)
+	}
+	if len(prd.Run.Learnings) != 1 {
+		t.Errorf("expected 1 learning, got %d", len(prd.Run.Learnings))
+	}
+
+	// US-001 should have merged state
+	s1 := GetStoryByID(prd, "US-001")
+	if !s1.Passes {
+		t.Error("expected US-001 passes=true from state")
+	}
+	if s1.Retries != 1 {
+		t.Errorf("expected US-001 retries=1, got %d", s1.Retries)
+	}
+
+	// US-002 should have zero state (no state entry)
+	s2 := GetStoryByID(prd, "US-002")
+	if s2.Passes {
+		t.Error("expected US-002 passes=false (no state)")
+	}
+}
+
+func TestLoadWorkingPRD_StateMissing(t *testing.T) {
+	dir := t.TempDir()
+	prdPath := writeV3PRD(t, dir)
+	statePath := filepath.Join(dir, "run-state.json") // does not exist
+
+	wprd, err := LoadWorkingPRD(prdPath, statePath)
+	if err != nil {
+		t.Fatalf("LoadWorkingPRD failed: %v", err)
+	}
+	prd := wprd.PRD()
+
+	if len(prd.UserStories) != 2 {
+		t.Errorf("expected 2 stories, got %d", len(prd.UserStories))
+	}
+	// All stories should be zero state
+	for _, s := range prd.UserStories {
+		if s.Passes || s.Blocked || s.Retries != 0 {
+			t.Errorf("expected zero state for %s, got passes=%v blocked=%v retries=%d", s.ID, s.Passes, s.Blocked, s.Retries)
+		}
+	}
+}
+
+func TestLoadWorkingPRD_SaveState(t *testing.T) {
+	dir := t.TempDir()
+	prdPath := writeV3PRD(t, dir)
+	statePath := filepath.Join(dir, "run-state.json")
+
+	wprd, err := LoadWorkingPRD(prdPath, statePath)
+	if err != nil {
+		t.Fatalf("LoadWorkingPRD failed: %v", err)
+	}
+	prd := wprd.PRD()
+
+	// Modify state through prd methods
+	prd.MarkStoryPassed("US-001", "commit123", "done")
+	prd.AddLearning("new learning")
+
+	if err := wprd.SaveState(); err != nil {
+		t.Fatalf("SaveState failed: %v", err)
+	}
+
+	// Verify run-state.json was written
+	loaded, err := LoadRunState(statePath)
+	if err != nil {
+		t.Fatalf("LoadRunState failed: %v", err)
+	}
+	if !loaded.Stories["US-001"].Passes {
+		t.Error("expected US-001 passes=true in saved state")
+	}
+	if len(loaded.Learnings) != 1 || loaded.Learnings[0] != "new learning" {
+		t.Errorf("expected learning saved, got %v", loaded.Learnings)
+	}
+
+	// Verify prd.json was NOT modified (still v3 definition only)
+	def, err := LoadPRDDefinition(prdPath)
+	if err != nil {
+		t.Fatalf("LoadPRDDefinition failed after SaveState: %v", err)
+	}
+	if def.SchemaVersion != 3 {
+		t.Errorf("expected prd.json still v3, got %d", def.SchemaVersion)
+	}
+}
+
+func TestReconcileState_OrphanedStory(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001"},
+			{ID: "US-002"},
+		},
+	}
+	state := &RunState{
+		Stories: map[string]*StoryState{
+			"US-001": {Passes: true},
+			"US-003": {Passes: true}, // orphaned — removed from PRD
+		},
+	}
+
+	orphaned := ReconcileState(def, state)
+	if len(orphaned) != 1 || orphaned[0] != "US-003" {
+		t.Errorf("expected orphaned=[US-003], got %v", orphaned)
+	}
+}
+
+func TestReconcileState_NoOrphans(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001"},
+			{ID: "US-002"},
+		},
+	}
+	state := &RunState{
+		Stories: map[string]*StoryState{
+			"US-001": {Passes: true},
+		},
+	}
+
+	orphaned := ReconcileState(def, state)
+	if len(orphaned) != 0 {
+		t.Errorf("expected no orphans, got %v", orphaned)
+	}
+}
+
+func TestReconcileState_NewStory(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001"},
+			{ID: "US-002"},
+			{ID: "US-003"}, // new story, no state yet
+		},
+	}
+	state := &RunState{
+		Stories: map[string]*StoryState{
+			"US-001": {Passes: true},
+		},
+	}
+
+	orphaned := ReconcileState(def, state)
+	if len(orphaned) != 0 {
+		t.Errorf("expected no orphans for new story, got %v", orphaned)
+	}
+}
+
 

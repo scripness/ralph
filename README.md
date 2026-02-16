@@ -112,7 +112,7 @@ stateDiagram-v2
    - Stories that fail but were previously marked passed are reset to pending (catches PRD changes)
 4. Creates/switches to `ralph/{feature}` branch
 5. Picks next story (highest priority, not passed, not blocked)
-6. Sets `currentStoryId` in prd.json (crash recovery)
+6. Sets `currentStoryId` in run-state.json (crash recovery)
 7. Sends prompt to provider subprocess (includes deduplicated learnings)
 8. Provider implements code, writes tests, commits
 9. Provider outputs `<ralph>DONE</ralph>` when finished
@@ -130,8 +130,7 @@ stateDiagram-v2
 
 ```bash
 ralph init [--force]           # Initialize Ralph (creates config + .ralph/)
-ralph prd <feature>            # Create/finalize a PRD
-ralph refine <feature>         # Interactive AI session with full feature context
+ralph prd <feature>            # Create, refine, or manage a PRD
 ralph run <feature>            # Run the agent loop (infinite until done)
 ralph verify <feature>         # Run verification only
 # Feature names are case-insensitive: "ralph run Auth" and "ralph run auth" find the same feature
@@ -275,19 +274,18 @@ Only `command` is required. Everything else is auto-detected from the provider n
 
 Setting `"args": []` explicitly opts out of default args.
 
-## PRD Schema (v2)
+## PRD Schema (v3)
+
+PRD data is split into two files: **prd.json** (definition) and **run-state.json** (execution state).
+
+### prd.json (AI-authored, immutable during runs)
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "project": "ProjectName",
   "branchName": "ralph/feature-name",
   "description": "Feature description",
-  "run": {
-    "startedAt": "2024-01-15T10:00:00Z",
-    "currentStoryId": null,
-    "learnings": ["accumulated insights from providers"]
-  },
   "userStories": [{
     "id": "US-001",
     "title": "Story title",
@@ -295,20 +293,34 @@ Setting `"args": []` explicitly opts out of default args.
     "acceptanceCriteria": ["Criterion 1", "Criterion 2"],
     "tags": ["ui"],
     "priority": 1,
-    "passes": false,
-    "retries": 0,
-    "blocked": false,
-    "lastResult": {
-      "completedAt": "2024-01-15T12:00:00Z",
-      "commit": "abc123",
-      "summary": "Implementation summary"
-    },
-    "notes": "Failed verification output for retries",
     "browserSteps": [
       {"action": "navigate", "url": "/path"},
       {"action": "click", "selector": "#button"}
     ]
   }]
+}
+```
+
+### run-state.json (CLI-managed execution state)
+
+```json
+{
+  "startedAt": "2024-01-15T10:00:00Z",
+  "currentStoryId": null,
+  "learnings": ["accumulated insights from providers"],
+  "stories": {
+    "US-001": {
+      "passes": false,
+      "retries": 0,
+      "blocked": false,
+      "lastResult": {
+        "completedAt": "2024-01-15T12:00:00Z",
+        "commit": "abc123",
+        "summary": "Implementation summary"
+      },
+      "notes": "Failed verification output for retries"
+    }
+  }
 }
 ```
 
@@ -400,7 +412,8 @@ project/
 └── .ralph/
     ├── 2024-01-15-auth/
     │   ├── prd.md                 # Human-readable PRD
-    │   ├── prd.json               # Finalized for execution
+    │   ├── prd.json               # Story definitions (v3, no runtime state)
+    │   ├── run-state.json         # Execution state (CLI-managed)
     │   └── logs/                  # Run history (JSONL)
     │       ├── run-001.jsonl
     │       └── run-002.jsonl
@@ -441,8 +454,9 @@ Ralph auto-detects these via `ralph prd` discovery:
 | **TypeScript/JavaScript** | `package.json`, `tsconfig.json` | bun, npm, yarn, pnpm |
 | **Python** | `pyproject.toml`, `requirements.txt`, `setup.py` | pip |
 | **Rust** | `Cargo.toml` | cargo |
+| **Elixir** | `mix.exs` | mix |
 
-Frameworks detected: React, Next.js, Vue, Svelte, Express, FastAPI, Gin, etc.
+Frameworks detected: React, Next.js, Vue, Svelte, Express, FastAPI, Gin, Phoenix, etc.
 
 ## Framework Source Caching
 
@@ -518,7 +532,7 @@ Break the refactor into atomic stories with clear verification:
 
 ### Continuing Work
 ```bash
-ralph refine user-auth       # Open AI session with full context
+ralph prd user-auth          # Select "Refine with AI" for interactive session
                               # Fix blocked stories, adjust scope, make changes
 ralph run user-auth          # Pre-verify catches changes, resumes loop
 ```
@@ -538,11 +552,11 @@ ralph run auth          # Working on US-003...
 ralph run auth          # Resumes from US-003 automatically
 ```
 
-State is preserved in prd.json:
+State is preserved in run-state.json (separate from prd.json):
 - `currentStoryId`: Story being worked on
-- `passes`: Whether story is complete
-- `retries`: Number of failed attempts
-- `blocked`: Story exceeded maxRetries
+- `stories[id].passes`: Whether story is complete
+- `stories[id].retries`: Number of failed attempts
+- `stories[id].blocked`: Story exceeded maxRetries
 
 ## Troubleshooting
 
@@ -681,7 +695,7 @@ v2 is a Go CLI that improves on v1:
 | **Provider support** | Amp or Claude only | Any AI CLI (provider-agnostic) |
 | **Story selection** | Agent decides | CLI decides (deterministic) |
 | **State management** | Agent updates prd.json | CLI manages all state |
-| **Memory** | progress.txt file | Learnings in prd.json |
+| **Memory** | progress.txt file | Learnings in run-state.json |
 | **Iteration limit** | Fixed (default 10) | Infinite until verified |
 | **Multi-feature** | Manual archive/switch | Built-in date-prefixed dirs |
 | **Crash recovery** | None | currentStoryId tracking |

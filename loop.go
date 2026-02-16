@@ -49,13 +49,15 @@ type ProviderResult struct {
 // runLoop runs the main implementation loop for a feature
 func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	prdPath := featureDir.PrdJsonPath()
+	statePath := featureDir.RunStatePath()
 	git := NewGitOps(cfg.ProjectRoot)
 
 	// Load PRD first
-	prd, err := LoadPRD(prdPath)
+	wprd, err := LoadWorkingPRD(prdPath, statePath)
 	if err != nil {
 		return err
 	}
+	prd := wprd.PRD()
 
 	// Create cleanup coordinator early for signal handling
 	cleanup := NewCleanupCoordinator()
@@ -156,19 +158,20 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	// Pre-verify all stories before implementation loop
 	// This catches: already implemented stories, PRD changes that invalidate previous work
-	if err := preVerifyStories(cfg, featureDir, prd, svcMgr, logger); err != nil {
+	if err := preVerifyStories(cfg, featureDir, wprd, svcMgr, logger); err != nil {
 		logger.Error("pre-verification failed", err)
 		logger.RunEnd(false, "pre-verification failed")
 		return err
 	}
 
 	// Reload PRD after pre-verification may have changed state
-	prd, err = LoadPRD(prdPath)
+	wprd, err = LoadWorkingPRD(prdPath, statePath)
 	if err != nil {
 		logger.Error("failed to reload PRD after pre-verify", err)
 		logger.RunEnd(false, "PRD reload failed")
 		return err
 	}
+	prd = wprd.PRD()
 
 	iteration := 0
 	for {
@@ -176,12 +179,13 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		logger.SetIteration(iteration)
 
 		// Reload PRD at start of each iteration
-		prd, err = LoadPRD(prdPath)
+		wprd, err = LoadWorkingPRD(prdPath, statePath)
 		if err != nil {
 			logger.Error("failed to load PRD", err)
 			logger.RunEnd(false, "PRD load failed")
 			return err
 		}
+		prd = wprd.PRD()
 
 		// Check if all stories complete
 		if AllStoriesComplete(prd) {
@@ -191,7 +195,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			fmt.Println(strings.Repeat("=", 60))
 
 			// Run final verification
-			verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr, logger, cleanup)
+			verified, err := runFinalVerification(cfg, featureDir, wprd, svcMgr, logger, cleanup)
 			if err != nil {
 				logger.Error("final verification error", err)
 				logger.RunEnd(false, "final verification error")
@@ -255,13 +259,13 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 		// Set current story
 		prd.SetCurrentStory(story.ID)
-		if err := SavePRD(prdPath, prd); err != nil {
+		if err := wprd.SaveState(); err != nil {
 			return fmt.Errorf("failed to save PRD: %w", err)
 		}
 
 		// Commit PRD state change
 		if cfg.Config.Commits.PrdChanges {
-			if err := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: start %s", story.ID)); err != nil {
+			if err := commitPrdOnly(cfg.ProjectRoot, statePath, fmt.Sprintf("ralph: start %s", story.ID)); err != nil {
 				fmt.Printf("Warning: failed to commit PRD: %v\n", err)
 			}
 		}
@@ -319,11 +323,11 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		if err != nil {
 			logger.Error("provider error", err)
 			prd.ClearCurrentStory()
-			if saveErr := SavePRD(prdPath, prd); saveErr != nil {
+			if saveErr := wprd.SaveState(); saveErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save PRD: %v\n", saveErr)
 			}
 			if cfg.Config.Commits.PrdChanges {
-				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s provider error", story.ID)); commitErr != nil {
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, statePath, fmt.Sprintf("ralph: %s provider error", story.ID)); commitErr != nil {
 					logger.Warning("failed to commit PRD state: " + commitErr.Error())
 				}
 			}
@@ -342,12 +346,12 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			logger.StateChange(story.ID, "pending", "failed", map[string]interface{}{"reason": reason})
 			prd.MarkStoryFailed(story.ID, reason, cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
-			if err := SavePRD(prdPath, prd); err != nil {
+			if err := wprd.SaveState(); err != nil {
 				logger.IterationEnd(false)
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 			if cfg.Config.Commits.PrdChanges {
-				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s stuck", story.ID)); commitErr != nil {
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, statePath, fmt.Sprintf("ralph: %s stuck", story.ID)); commitErr != nil {
 					logger.Warning("failed to commit PRD state: " + commitErr.Error())
 				}
 			}
@@ -361,12 +365,12 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			logger.Warning("provider did not signal completion")
 			prd.MarkStoryFailed(story.ID, "Provider did not signal completion", cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
-			if err := SavePRD(prdPath, prd); err != nil {
+			if err := wprd.SaveState(); err != nil {
 				logger.IterationEnd(false)
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 			if cfg.Config.Commits.PrdChanges {
-				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no completion signal", story.ID)); commitErr != nil {
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, statePath, fmt.Sprintf("ralph: %s no completion signal", story.ID)); commitErr != nil {
 					logger.Warning("failed to commit PRD state: " + commitErr.Error())
 				}
 			}
@@ -380,12 +384,12 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			logger.Warning("provider signaled DONE but made no new commit")
 			prd.MarkStoryFailed(story.ID, "No commit made — provider signaled DONE without committing code", cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
-			if err := SavePRD(prdPath, prd); err != nil {
+			if err := wprd.SaveState(); err != nil {
 				logger.IterationEnd(false)
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 			if cfg.Config.Commits.PrdChanges {
-				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s no commit", story.ID)); commitErr != nil {
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, statePath, fmt.Sprintf("ralph: %s no commit", story.ID)); commitErr != nil {
 					logger.Warning("failed to commit PRD state: " + commitErr.Error())
 				}
 			}
@@ -418,13 +422,13 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			logger.StateChange(story.ID, "pending", "failed", map[string]interface{}{"reason": verifyResult.reason})
 			prd.MarkStoryFailed(story.ID, verifyResult.reason, cfg.Config.MaxRetries)
 			prd.ClearCurrentStory()
-			if err := SavePRD(prdPath, prd); err != nil {
+			if err := wprd.SaveState(); err != nil {
 				logger.IterationEnd(false)
 				return fmt.Errorf("failed to save PRD: %w", err)
 			}
 
 			if cfg.Config.Commits.PrdChanges {
-				if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s failed verification", story.ID)); commitErr != nil {
+				if commitErr := commitPrdOnly(cfg.ProjectRoot, statePath, fmt.Sprintf("ralph: %s failed verification", story.ID)); commitErr != nil {
 					logger.Warning("failed to commit PRD state: " + commitErr.Error())
 				}
 			}
@@ -441,13 +445,13 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 		logger.StateChange(story.ID, "pending", "passed", map[string]interface{}{"commit": commit})
 
-		if err := SavePRD(prdPath, prd); err != nil {
+		if err := wprd.SaveState(); err != nil {
 			logger.IterationEnd(false)
 			return fmt.Errorf("failed to save PRD: %w", err)
 		}
 
 		if cfg.Config.Commits.PrdChanges {
-			if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, fmt.Sprintf("ralph: %s complete", story.ID)); commitErr != nil {
+			if commitErr := commitPrdOnly(cfg.ProjectRoot, statePath, fmt.Sprintf("ralph: %s complete", story.ID)); commitErr != nil {
 				logger.Warning("failed to commit PRD state: " + commitErr.Error())
 			}
 		}
@@ -901,8 +905,9 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *Us
 // preVerifyStories runs verification on all stories before the implementation loop.
 // This catches: already implemented stories, PRD changes that invalidate previous work.
 // Stories that pass are marked as passed (if not already). Stories that fail are reset to pending.
-func preVerifyStories(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svcMgr *ServiceManager, logger *RunLogger) error {
-	prdPath := featureDir.PrdJsonPath()
+func preVerifyStories(cfg *ResolvedConfig, featureDir *FeatureDir, wprd *WorkingPRD, svcMgr *ServiceManager, logger *RunLogger) error {
+	statePath := featureDir.RunStatePath()
+	prd := wprd.PRD()
 	git := NewGitOps(cfg.ProjectRoot)
 
 	// Skip pre-verify if no code files changed on the branch.
@@ -961,11 +966,11 @@ func preVerifyStories(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svc
 
 	// Save PRD if state changed
 	if stateChanged {
-		if err := SavePRD(prdPath, prd); err != nil {
+		if err := wprd.SaveState(); err != nil {
 			return fmt.Errorf("failed to save PRD after pre-verify: %w", err)
 		}
 		if cfg.Config.Commits.PrdChanges {
-			if err := commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: pre-verify state update"); err != nil {
+			if err := commitPrdOnly(cfg.ProjectRoot, statePath, "ralph: pre-verify state update"); err != nil {
 				fmt.Printf("Warning: failed to commit PRD: %v\n", err)
 			}
 		}
@@ -986,8 +991,9 @@ func preVerifyStories(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svc
 }
 
 // runFinalVerification runs final verification and handles story resets
-func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, svcMgr *ServiceManager, logger *RunLogger, cleanup *CleanupCoordinator) (bool, error) {
-	prdPath := featureDir.PrdJsonPath()
+func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, wprd *WorkingPRD, svcMgr *ServiceManager, logger *RunLogger, cleanup *CleanupCoordinator) (bool, error) {
+	statePath := featureDir.RunStatePath()
+	prd := wprd.PRD()
 
 	logger.VerifyStart()
 
@@ -1236,11 +1242,11 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 			prd.AddLearning(learning)
 			logger.Learning(learning)
 		}
-		if saveErr := SavePRD(prdPath, prd); saveErr != nil {
+		if saveErr := wprd.SaveState(); saveErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to save verification learnings: %v\n", saveErr)
 		}
 		if cfg.Config.Commits.PrdChanges {
-			if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: save verification learnings"); commitErr != nil {
+			if commitErr := commitPrdOnly(cfg.ProjectRoot, statePath, "ralph: save verification learnings"); commitErr != nil {
 				logger.Warning("failed to commit PRD state: " + commitErr.Error())
 			}
 		}
@@ -1273,13 +1279,13 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 			logger.StateChange(storyID, "passed", "reset", map[string]interface{}{"reason": result.Reason})
 		}
 
-		if err := SavePRD(prdPath, prd); err != nil {
+		if err := wprd.SaveState(); err != nil {
 			logger.VerifyEnd(false)
 			return false, fmt.Errorf("failed to save PRD: %w", err)
 		}
 
 		if cfg.Config.Commits.PrdChanges {
-			if commitErr := commitPrdOnly(cfg.ProjectRoot, prdPath, "ralph: reset stories after verification"); commitErr != nil {
+			if commitErr := commitPrdOnly(cfg.ProjectRoot, statePath, "ralph: reset stories after verification"); commitErr != nil {
 				logger.Warning("failed to commit PRD state: " + commitErr.Error())
 			}
 		}
@@ -1297,10 +1303,11 @@ func runFinalVerification(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 
 // runVerify runs verification only (no implementation)
 func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
-	prd, err := LoadPRD(featureDir.PrdJsonPath())
+	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
 	if err != nil {
 		return err
 	}
+	prd := wprd.PRD()
 
 	// Ensure we're on the correct branch before verifying
 	git := NewGitOps(cfg.ProjectRoot)
@@ -1363,10 +1370,13 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		}
 		logger.LogPrint("\nRun 'ralph run %s' to implement remaining stories first.\n", featureDir.Feature)
 		logger.RunEnd(false, "not all stories complete")
+		if len(pending) == 1 {
+			return fmt.Errorf("cannot verify: 1 story still pending")
+		}
 		return fmt.Errorf("cannot verify: %d stories still pending", len(pending))
 	}
 
-	verified, err := runFinalVerification(cfg, featureDir, prd, svcMgr, logger, cleanup)
+	verified, err := runFinalVerification(cfg, featureDir, wprd, svcMgr, logger, cleanup)
 	if err != nil {
 		logger.RunEnd(false, "verification error")
 		return err
@@ -1417,10 +1427,10 @@ func truncateOutput(output string, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-// commitPrdOnly commits only the PRD file using GitOps
-func commitPrdOnly(projectRoot, prdPath, message string) error {
+// commitPrdOnly commits a single file (typically run-state.json during runs)
+func commitPrdOnly(projectRoot, filePath, message string) error {
 	git := NewGitOps(projectRoot)
-	return git.CommitFile(prdPath, message)
+	return git.CommitFile(filePath, message)
 }
 
 // getLastCommit returns the last commit hash (short, for display)

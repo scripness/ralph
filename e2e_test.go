@@ -453,14 +453,16 @@ func runRalphInteractive(t *testing.T, dir string, timeout time.Duration,
 	}
 }
 
-// loadPRD loads and parses a prd.json file.
-func loadPRD(t *testing.T, path string) *PRD {
+// loadWorkingPRD loads a PRD from prd.json + run-state.json via the WorkingPRD adapter.
+func loadWorkingPRD(t *testing.T, featureDir string) *PRD {
 	t.Helper()
-	prd, err := LoadPRD(path)
+	prdPath := filepath.Join(featureDir, "prd.json")
+	statePath := filepath.Join(featureDir, "run-state.json")
+	wprd, err := LoadWorkingPRD(prdPath, statePath)
 	if err != nil {
-		t.Fatalf("Failed to load PRD from %s: %v", path, err)
+		t.Fatalf("Failed to load WorkingPRD from %s: %v", featureDir, err)
 	}
-	return prd
+	return wprd.PRD()
 }
 
 // loadConfig loads and parses a ralph.config.json file.
@@ -855,7 +857,10 @@ func phase1Setup(t *testing.T, env *testEnv) {
 				}
 			}
 			if prdJsonPath != "" {
-				if prd, err := LoadPRD(prdJsonPath); err == nil {
+				featureDirPath := filepath.Dir(prdJsonPath)
+				statePath := filepath.Join(featureDirPath, "run-state.json")
+				if wprd, err := LoadWorkingPRD(prdJsonPath, statePath); err == nil {
+					prd := wprd.PRD()
 					_, passed, _, _, _ := countStories(prd)
 					if passed == len(prd.UserStories) {
 						os.RemoveAll(env.projectDir)
@@ -1072,16 +1077,13 @@ Add Playwright e2e tests that verify search and filter functionality works corre
 		t.Fatalf("Failed to write prd.md: %v", err)
 	}
 
-	// Write prd.json
-	prd := &PRD{
-		SchemaVersion: 2,
+	// Write prd.json (v3 definition — no runtime fields)
+	def := &PRDDefinition{
+		SchemaVersion: 3,
 		Project:       "warrantycert",
 		BranchName:    "ralph/" + env.featureName,
 		Description:   "Add search and filtering to the certificates page so users can find certificates by name, product, or status.",
-		Run: Run{
-			Learnings: []string{},
-		},
-		UserStories: []UserStory{
+		UserStories: []StoryDefinition{
 			{
 				ID:          "US-001",
 				Title:       "Add search input to certificates page",
@@ -1144,7 +1146,7 @@ Add Playwright e2e tests that verify search and filter functionality works corre
 	}
 
 	prdJsonPath := filepath.Join(featureDir, "prd.json")
-	data, err := json.MarshalIndent(prd, "", "  ")
+	data, err := json.MarshalIndent(def, "", "  ")
 	if err != nil {
 		t.Fatalf("Failed to marshal prd.json: %v", err)
 	}
@@ -1157,15 +1159,26 @@ Add Playwright e2e tests that verify search and filter functionality works corre
 	copyArtifact(env, "prd.json", prdJsonPath)
 
 	// Validate by loading through ralph's own loader
-	loaded := loadPRD(t, prdJsonPath)
+	loaded, loadErr := LoadPRDDefinition(prdJsonPath)
+	if loadErr != nil {
+		t.Fatalf("Failed to load PRDDefinition: %v", loadErr)
+	}
 
-	if loaded.SchemaVersion != 2 {
-		t.Errorf("Expected schemaVersion=2, got %d", loaded.SchemaVersion)
+	if loaded.SchemaVersion != 3 {
+		t.Errorf("Expected schemaVersion=3, got %d", loaded.SchemaVersion)
 	}
 	if len(loaded.UserStories) != 3 {
 		t.Errorf("Expected 3 user stories, got %d", len(loaded.UserStories))
 	}
-	if !hasUIStory(loaded) {
+	hasUI := false
+	for _, s := range loaded.UserStories {
+		for _, tag := range s.Tags {
+			if strings.EqualFold(tag, "ui") {
+				hasUI = true
+			}
+		}
+	}
+	if !hasUI {
 		t.Error("No UI-tagged stories found")
 	}
 	expectedBranch := "ralph/" + env.featureName
@@ -1194,7 +1207,7 @@ func phase6PreRunChecks(t *testing.T, env *testEnv) {
 		if !strings.Contains(combined, "stories") {
 			t.Errorf("validate output missing story count: %s", combined)
 		}
-		if !strings.Contains(combined, "Schema version: 2") {
+		if !strings.Contains(combined, "Schema version: 3") {
 			t.Errorf("validate output missing schema version: %s", combined)
 		}
 	}
@@ -1296,7 +1309,7 @@ func phase8PostRunAnalysis(t *testing.T, env *testEnv) {
 	// Save current prd.json snapshot
 	copyArtifact(env, "prd-after-run1.json", prdJsonPath)
 
-	prd := loadPRD(t, prdJsonPath)
+	prd := loadWorkingPRD(t, featureDir)
 	total, passed, blocked, pending, withRetries := countStories(prd)
 
 	t.Logf("Post-run story status: %d total, %d passed, %d blocked, %d pending, %d with retries",
@@ -1418,7 +1431,12 @@ func phase9PrdRefine(t *testing.T, env *testEnv) {
 	featureDir := findFeatureDir(t, env.projectDir, env.featureName)
 	prdJsonPath := filepath.Join(featureDir, "prd.json")
 
-	prd := loadPRD(t, prdJsonPath)
+	statePath := filepath.Join(featureDir, "run-state.json")
+	wprd, wprdErr := LoadWorkingPRD(prdJsonPath, statePath)
+	if wprdErr != nil {
+		t.Fatalf("Failed to load WorkingPRD: %v", wprdErr)
+	}
+	prd := wprd.PRD()
 	_, passed, blocked, _, _ := countStories(prd)
 
 	if passed == len(prd.UserStories) {
@@ -1441,16 +1459,12 @@ func phase9PrdRefine(t *testing.T, env *testEnv) {
 	}
 
 	if modified {
-		data, err := json.MarshalIndent(prd, "", "  ")
-		if err != nil {
-			t.Fatalf("Failed to marshal prd.json: %v", err)
+		if err := wprd.SaveState(); err != nil {
+			t.Fatalf("Failed to save run-state.json: %v", err)
 		}
-		if err := os.WriteFile(prdJsonPath, data, 0o644); err != nil {
-			t.Fatalf("Failed to write prd.json: %v", err)
-		}
-		copyArtifact(env, "prd-refined.json", prdJsonPath)
+		copyArtifact(env, "prd-refined.json", statePath)
 
-		// Validate the modified PRD
+		// Validate the PRD definition is still valid
 		valResult := runRalph(t, env.projectDir, "validate", env.featureName)
 		savePhaseOutput(env, "09-validate-after-refine", valResult)
 		if !valResult.Success() {
@@ -1467,7 +1481,7 @@ func phase10SecondRun(t *testing.T, env *testEnv) {
 	featureDir := findFeatureDir(t, env.projectDir, env.featureName)
 	prdJsonPath := filepath.Join(featureDir, "prd.json")
 
-	prd := loadPRD(t, prdJsonPath)
+	prd := loadWorkingPRD(t, featureDir)
 	_, passed, _, pending, _ := countStories(prd)
 
 	if passed == len(prd.UserStories) {
@@ -1588,8 +1602,11 @@ func phase11StatusLogsResources(t *testing.T, env *testEnv) {
 	// --- ralph logs --story (first story ID) ---
 	featureDir := findFeatureDir(t, env.projectDir, env.featureName)
 	prdJsonPath := filepath.Join(featureDir, "prd.json")
-	if prd, err := LoadPRD(prdJsonPath); err == nil {
-		storyID := firstStoryID(prd)
+	if def, err := LoadPRDDefinition(prdJsonPath); err == nil {
+		storyID := ""
+		if len(def.UserStories) > 0 {
+			storyID = def.UserStories[0].ID
+		}
 		if storyID != "" {
 			result = runRalph(t, env.projectDir, "logs", env.featureName, "--story", storyID)
 			savePhaseOutput(env, "11-logs-story", result)
@@ -1623,9 +1640,8 @@ func phase11StatusLogsResources(t *testing.T, env *testEnv) {
 // phase12Verify runs ralph verify if all stories passed.
 func phase12Verify(t *testing.T, env *testEnv) {
 	featureDir := findFeatureDir(t, env.projectDir, env.featureName)
-	prdJsonPath := filepath.Join(featureDir, "prd.json")
 
-	prd := loadPRD(t, prdJsonPath)
+	prd := loadWorkingPRD(t, featureDir)
 	_, passed, _, _, _ := countStories(prd)
 
 	if passed != len(prd.UserStories) {
@@ -1745,8 +1761,9 @@ func writeReport(t *testing.T, env *testEnv) {
 		}
 		if featureDir != "" {
 			prdJsonPath := filepath.Join(featureDir, "prd.json")
-			if p, err := LoadPRD(prdJsonPath); err == nil {
-				prd = p
+			statePath := filepath.Join(featureDir, "run-state.json")
+			if wprd, err := LoadWorkingPRD(prdJsonPath, statePath); err == nil {
+				prd = wprd.PRD()
 			}
 		}
 	}
