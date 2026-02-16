@@ -472,13 +472,13 @@ func TestCheckReadiness_PlaceholderCommands(t *testing.T) {
 			Default: []string{"echo 'Add your test command'"},
 		},
 	}
-	prd := &PRD{
-		UserStories: []UserStory{
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
 			{ID: "US-001", Tags: []string{"backend"}},
 		},
 	}
 
-	issues := CheckReadiness(cfg, prd)
+	issues := CheckReadiness(cfg, def)
 	if len(issues) != 1 {
 		t.Fatalf("expected 1 issue, got %d: %v", len(issues), issues)
 	}
@@ -500,13 +500,13 @@ func TestCheckReadiness_UIStoriesNoVerifyUI(t *testing.T) {
 			Default: []string{"go version"},
 		},
 	}
-	prd := &PRD{
-		UserStories: []UserStory{
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
 			{ID: "US-001", Tags: []string{"ui"}},
 		},
 	}
 
-	issues := CheckReadiness(cfg, prd)
+	issues := CheckReadiness(cfg, def)
 	if len(issues) != 1 {
 		t.Fatalf("expected 1 issue, got %d: %v", len(issues), issues)
 	}
@@ -529,13 +529,13 @@ func TestCheckReadiness_AllGood(t *testing.T) {
 			UI:      []string{"go test ./..."},
 		},
 	}
-	prd := &PRD{
-		UserStories: []UserStory{
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
 			{ID: "US-001", Tags: []string{"ui"}},
 		},
 	}
 
-	issues := CheckReadiness(cfg, prd)
+	issues := CheckReadiness(cfg, def)
 	if len(issues) != 0 {
 		t.Errorf("expected no issues, got %v", issues)
 	}
@@ -554,13 +554,13 @@ func TestCheckReadiness_NoUIStories(t *testing.T) {
 			Default: []string{"go version"},
 		},
 	}
-	prd := &PRD{
-		UserStories: []UserStory{
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
 			{ID: "US-001", Tags: []string{"backend"}},
 		},
 	}
 
-	issues := CheckReadiness(cfg, prd)
+	issues := CheckReadiness(cfg, def)
 	if len(issues) != 0 {
 		t.Errorf("expected no issues for non-UI stories without verify.ui, got %v", issues)
 	}
@@ -1081,8 +1081,8 @@ func TestCheckReadiness_BrowserStepsButBrowserDisabled(t *testing.T) {
 		},
 		Browser: &BrowserConfig{Enabled: false},
 	}
-	prd := &PRD{
-		UserStories: []UserStory{
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
 			{
 				ID:   "US-001",
 				Tags: []string{"ui"},
@@ -1093,7 +1093,7 @@ func TestCheckReadiness_BrowserStepsButBrowserDisabled(t *testing.T) {
 		},
 	}
 
-	issues := CheckReadiness(cfg, prd)
+	issues := CheckReadiness(cfg, def)
 	found := false
 	for _, issue := range issues {
 		if strings.Contains(issue, "browserSteps") && strings.Contains(issue, "browser is disabled") {

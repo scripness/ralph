@@ -247,15 +247,14 @@ func cmdRun(args []string) {
 		os.Exit(1)
 	}
 
-	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
+	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	prd := wprd.PRD()
 
 	// Enforce codebase readiness
-	if issues := CheckReadiness(&cfg.Config, prd); len(issues) > 0 {
+	if issues := CheckReadiness(&cfg.Config, def); len(issues) > 0 {
 		fmt.Fprintln(os.Stderr, "Error: codebase is not ready for Ralph")
 		fmt.Fprintln(os.Stderr, "")
 		for _, issue := range issues {
@@ -269,14 +268,6 @@ func cmdRun(args []string) {
 
 	// Environment warnings (soft — warn but don't block)
 	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
-		for _, w := range warnings {
-			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
-		}
-		fmt.Fprintln(os.Stderr, "")
-	}
-
-	// PRD quality warnings (soft — warn but don't block)
-	if warnings := WarnPRDQuality(prd); len(warnings) > 0 {
 		for _, w := range warnings {
 			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
 		}
@@ -320,15 +311,14 @@ func cmdVerify(args []string) {
 		os.Exit(1)
 	}
 
-	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
+	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	prd := wprd.PRD()
 
 	// Enforce codebase readiness
-	if issues := CheckReadiness(&cfg.Config, prd); len(issues) > 0 {
+	if issues := CheckReadiness(&cfg.Config, def); len(issues) > 0 {
 		fmt.Fprintln(os.Stderr, "Error: codebase is not ready for Ralph")
 		fmt.Fprintln(os.Stderr, "")
 		for _, issue := range issues {
@@ -350,14 +340,14 @@ func cmdVerify(args []string) {
 
 	// Acquire lock to prevent concurrent run+verify
 	lock := NewLockFile(projectRoot)
-	if err := lock.Acquire(feature, prd.BranchName); err != nil {
+	if err := lock.Acquire(feature, def.BranchName); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	defer lock.Release()
 
 	fmt.Printf("Feature: %s\n", feature)
-	fmt.Printf("Project: %s\n", prd.Project)
+	fmt.Printf("Project: %s\n", def.Project)
 	fmt.Printf("Path: %s\n", featureDir.Path)
 	fmt.Println()
 
@@ -436,32 +426,32 @@ func cmdStatus(args []string) {
 		for _, f := range features {
 			status := "○"
 			if f.HasPrdJson {
-				wprd, err := LoadWorkingPRD(f.PrdJsonPath(), f.RunStatePath())
-				if err == nil {
-					prd := wprd.PRD()
-					complete := CountComplete(prd)
-					total := len(prd.UserStories)
-					blocked := CountBlocked(prd)
-					if complete == total {
+				def, defErr := LoadPRDDefinition(f.PrdJsonPath())
+				st, _ := LoadRunState(f.RunStatePath())
+				if defErr == nil {
+					passed := CountPassed(st)
+					total := len(def.UserStories)
+					skipped := CountSkipped(st)
+					if passed == total {
 						status = "✓"
-					} else if blocked > 0 {
+					} else if skipped > 0 {
 						status = "!"
 					}
-					fmt.Printf("  %s %s (%d/%d complete", status, f.Feature, complete, total)
-					if blocked > 0 {
-						fmt.Printf(", %d blocked", blocked)
+					fmt.Printf("  %s %s (%d/%d complete", status, f.Feature, passed, total)
+					if skipped > 0 {
+						fmt.Printf(", %d skipped", skipped)
 					}
 					fmt.Println(")")
 					continue
 				}
 			}
-			state := "draft"
+			st := "draft"
 			if f.HasPrdJson {
-				state = "ready"
+				st = "ready"
 			} else if f.HasPrdMd {
-				state = "needs finalize"
+				st = "needs finalize"
 			}
-			fmt.Printf("  %s %s (%s)\n", status, f.Feature, state)
+			fmt.Printf("  %s %s (%s)\n", status, f.Feature, st)
 		}
 		return
 	}
@@ -488,39 +478,39 @@ func cmdStatus(args []string) {
 		return
 	}
 
-	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
+	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	prd := wprd.PRD()
+	state, _ := LoadRunState(featureDir.RunStatePath())
 
 	fmt.Printf("Feature: %s\n", feature)
-	fmt.Printf("Project: %s\n", prd.Project)
-	fmt.Printf("Branch: %s\n", prd.BranchName)
-	fmt.Printf("Description: %s\n", prd.Description)
+	fmt.Printf("Project: %s\n", def.Project)
+	fmt.Printf("Branch: %s\n", def.BranchName)
+	fmt.Printf("Description: %s\n", def.Description)
 	fmt.Println()
 
-	complete := CountComplete(prd)
-	blocked := CountBlocked(prd)
-	fmt.Printf("Progress: %d/%d stories complete", complete, len(prd.UserStories))
-	if blocked > 0 {
-		fmt.Printf(" (%d blocked)", blocked)
+	passed := CountPassed(state)
+	skipped := CountSkipped(state)
+	fmt.Printf("Progress: %d/%d stories complete", passed, len(def.UserStories))
+	if skipped > 0 {
+		fmt.Printf(" (%d skipped)", skipped)
 	}
 	fmt.Println()
 	fmt.Println()
 
 	fmt.Println("Stories:")
-	for _, story := range prd.UserStories {
+	for _, story := range def.UserStories {
 		status := "○"
-		if story.Passes {
+		if state.IsPassed(story.ID) {
 			status = "✓"
-		} else if story.Blocked {
+		} else if state.IsSkipped(story.ID) {
 			status = "✗"
 		}
 		retries := ""
-		if story.Retries > 0 {
-			retries = fmt.Sprintf(" (retries: %d)", story.Retries)
+		if r := state.GetRetries(story.ID); r > 0 {
+			retries = fmt.Sprintf(" (retries: %d)", r)
 		}
 		tags := ""
 		if len(story.Tags) > 0 {
@@ -530,102 +520,12 @@ func cmdStatus(args []string) {
 			}
 		}
 		fmt.Printf("  %s %s: %s%s%s\n", status, story.ID, story.Title, tags, retries)
-		if story.Notes != "" {
-			fmt.Printf("    └─ Note: %s\n", story.Notes)
+		if note := state.GetLastFailure(story.ID); note != "" {
+			fmt.Printf("    └─ Note: %s\n", note)
 		}
 	}
 }
 
-func cmdNext(args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: ralph next <feature>")
-		os.Exit(1)
-	}
-
-	feature := args[0]
-	projectRoot := GetProjectRoot()
-
-	featureDir, err := FindFeatureDir(projectRoot, feature, false)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !featureDir.HasPrdJson {
-		fmt.Fprintf(os.Stderr, "No prd.json found for feature '%s'\n", feature)
-		os.Exit(1)
-	}
-
-	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	prd := wprd.PRD()
-
-	next := GetNextStory(prd)
-	if next == nil {
-		if HasBlockedStories(prd) {
-			fmt.Println("All remaining stories are blocked.")
-			fmt.Println("Blocked stories:")
-			for _, s := range GetBlockedStories(prd) {
-				fmt.Printf("  - %s: %s\n", s.ID, s.Title)
-				if s.Notes != "" {
-					fmt.Printf("    └─ %s\n", s.Notes)
-				}
-			}
-		} else {
-			fmt.Println("All stories complete!")
-		}
-		return
-	}
-
-	fmt.Printf("%s: %s\n", next.ID, next.Title)
-	fmt.Printf("Priority: %d\n", next.Priority)
-	if len(next.Tags) > 0 {
-		fmt.Printf("Tags: %v\n", next.Tags)
-	}
-	fmt.Printf("Retries: %d\n", next.Retries)
-	if next.Notes != "" {
-		fmt.Printf("Notes: %s\n", next.Notes)
-	}
-	fmt.Println()
-	fmt.Println("Acceptance Criteria:")
-	for _, criterion := range next.AcceptanceCriteria {
-		fmt.Printf("  - %s\n", criterion)
-	}
-}
-
-func cmdValidate(args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: ralph validate <feature>")
-		os.Exit(1)
-	}
-
-	feature := args[0]
-	projectRoot := GetProjectRoot()
-
-	featureDir, err := FindFeatureDir(projectRoot, feature, false)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !featureDir.HasPrdJson {
-		fmt.Fprintf(os.Stderr, "No prd.json found for feature '%s'\n", feature)
-		os.Exit(1)
-	}
-
-	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println("✓ prd.json is valid")
-	fmt.Printf("  - %d stories\n", len(def.UserStories))
-	fmt.Printf("  - Schema version: %d\n", def.SchemaVersion)
-}
 
 func cmdDoctor(args []string) {
 	projectRoot := GetProjectRoot()
@@ -743,29 +643,6 @@ func cmdDoctor(args []string) {
 		}
 	} else {
 		fmt.Println("Features: none")
-	}
-
-	// Check resources cache
-	if err == nil {
-		if cfg.Config.Resources == nil || cfg.Config.Resources.IsEnabled() {
-			codebaseCtx := DiscoverCodebase(projectRoot, &cfg.Config)
-			depNames := GetDependencyNames(codebaseCtx.Dependencies)
-			rm := NewResourceManager(cfg.Config.Resources, depNames)
-			cached, _ := rm.ListCached()
-			if len(cached) > 0 {
-				size, _ := rm.GetCacheSize()
-				fmt.Printf("✓ Resources: %d frameworks cached (%s)\n", len(cached), FormatSize(size))
-			} else {
-				detected := rm.ListDetected()
-				if len(detected) > 0 {
-					fmt.Printf("○ Resources: cache empty, %d detected (will sync on first run)\n", len(detected))
-				} else {
-					fmt.Println("○ Resources: cache empty (no matching frameworks detected)")
-				}
-			}
-		} else {
-			fmt.Println("○ Resources: disabled")
-		}
 	}
 
 	// Check lock status
@@ -937,7 +814,7 @@ func printRunSummary(logPath, feature string) {
 	if summary.Success != nil {
 		result := "FAILED"
 		if *summary.Success {
-			result = "VERIFIED"
+			result = "PASSED"
 		}
 		fmt.Printf("Result: %s\n", result)
 	}
@@ -1215,149 +1092,3 @@ func followLog(logPath, eventTypeFilter, storyFilter string, jsonOutput bool) {
 	}
 }
 
-func cmdResources(args []string) {
-	projectRoot := GetProjectRoot()
-
-	cfg, err := LoadConfig(projectRoot)
-	if err != nil {
-		// Config not required for resources command
-		cfg = &ResolvedConfig{
-			ProjectRoot: projectRoot,
-			Config:      RalphConfig{},
-		}
-	}
-
-	// Check if resources are disabled
-	if cfg.Config.Resources != nil && !cfg.Config.Resources.IsEnabled() {
-		fmt.Fprintln(os.Stderr, "Resources are disabled in ralph.config.json")
-		os.Exit(1)
-	}
-
-	// Detect dependencies
-	codebaseCtx := DiscoverCodebase(projectRoot, &cfg.Config)
-	depNames := GetDependencyNames(codebaseCtx.Dependencies)
-	rm := NewResourceManager(cfg.Config.Resources, depNames)
-
-	if len(args) == 0 {
-		// Default: show status
-		showResourcesStatus(rm)
-		return
-	}
-
-	subCmd := args[0]
-	subArgs := args[1:]
-
-	switch subCmd {
-	case "list":
-		showResourcesStatus(rm)
-
-	case "sync":
-		if len(subArgs) > 0 {
-			// Sync specific resource
-			name := subArgs[0]
-			fmt.Printf("Syncing %s...\n", name)
-			if err := rm.SyncResource(name); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Println("Done.")
-		} else {
-			// Sync all detected
-			detected := rm.ListDetected()
-			if len(detected) == 0 {
-				fmt.Println("No matching resources detected for this project's dependencies.")
-				return
-			}
-			fmt.Printf("Syncing %d detected resources...\n", len(detected))
-			if err := rm.EnsureResources(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Println("Done.")
-		}
-
-	case "clear":
-		fmt.Print("Clear all cached resources? (y/N): ")
-		var confirm string
-		fmt.Scanln(&confirm)
-		if confirm != "y" && confirm != "Y" {
-			fmt.Println("Cancelled.")
-			return
-		}
-		if err := rm.ClearCache(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Cache cleared.")
-
-	case "path":
-		if len(subArgs) == 0 {
-			fmt.Println(rm.GetCacheDir())
-		} else {
-			name := subArgs[0]
-			fmt.Println(rm.GetResourcePath(name))
-		}
-
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown resources subcommand: %s\n", subCmd)
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Usage: ralph resources [subcommand]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Subcommands:")
-		fmt.Fprintln(os.Stderr, "  list              Show cached and detected resources")
-		fmt.Fprintln(os.Stderr, "  sync              Sync all detected resources")
-		fmt.Fprintln(os.Stderr, "  sync <name>       Sync a specific resource")
-		fmt.Fprintln(os.Stderr, "  clear             Clear the resources cache")
-		fmt.Fprintln(os.Stderr, "  path              Print cache directory path")
-		fmt.Fprintln(os.Stderr, "  path <name>       Print path to specific cached resource")
-		os.Exit(1)
-	}
-}
-
-func showResourcesStatus(rm *ResourceManager) {
-	cached, _ := rm.ListCached()
-	detected := rm.ListDetected()
-
-	fmt.Printf("Cache directory: %s\n", rm.GetCacheDir())
-	fmt.Println()
-
-	if len(cached) > 0 {
-		fmt.Printf("Cached resources (%d):\n", len(cached))
-		for _, name := range cached {
-			info := rm.GetCachedRepoInfo(name)
-			if info != nil {
-				fmt.Printf("  - %s (%s, %s)\n", name, info.Commit, FormatSize(info.Size))
-			} else {
-				fmt.Printf("  - %s\n", name)
-			}
-		}
-		size, _ := rm.GetCacheSize()
-		fmt.Printf("\nTotal size: %s\n", FormatSize(size))
-	} else {
-		fmt.Println("No cached resources.")
-	}
-
-	// Show detected but not cached
-	var notCached []string
-	cachedSet := make(map[string]bool)
-	for _, c := range cached {
-		cachedSet[c] = true
-	}
-	for _, d := range detected {
-		if !cachedSet[d] {
-			notCached = append(notCached, d)
-		}
-	}
-	if len(notCached) > 0 {
-		fmt.Printf("\nDetected but not cached (%d):\n", len(notCached))
-		for _, name := range notCached {
-			fmt.Printf("  - %s\n", name)
-		}
-		fmt.Println("\nRun 'ralph resources sync' to clone detected resources.")
-	}
-
-	if len(cached) == 0 && len(detected) == 0 {
-		fmt.Println("\nNo matching frameworks detected for this project's dependencies.")
-		fmt.Println("Resources are cloned automatically on 'ralph run' for detected frameworks.")
-	}
-}

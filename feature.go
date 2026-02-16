@@ -11,13 +11,12 @@ import (
 
 // FeatureDir represents a feature directory in .ralph/
 type FeatureDir struct {
-	Name        string    // Full directory name (e.g., "2024-01-15-auth")
-	Feature     string    // Feature suffix (e.g., "auth")
-	Timestamp   time.Time // Parsed datetime
-	Path        string    // Full path to directory
-	HasPrdMd    bool      // prd.md exists
-	HasPrdJson  bool      // prd.json exists
-	HasRunState bool      // run-state.json exists
+	Name       string    // Full directory name (e.g., "2024-01-15-auth")
+	Feature    string    // Feature suffix (e.g., "auth")
+	Timestamp  time.Time // Parsed datetime
+	Path       string    // Full path to directory
+	HasPrdMd   bool      // prd.md exists
+	HasPrdJson bool      // prd.json exists
 }
 
 // FindFeatureDir finds a feature directory by suffix match.
@@ -128,13 +127,12 @@ func parseFeatureDir(ralphDir, name string) *FeatureDir {
 			if t, err := time.Parse("20060102", dateStr); err == nil {
 				path := filepath.Join(ralphDir, name)
 				return &FeatureDir{
-					Name:        name,
-					Feature:     feature,
-					Timestamp:   t,
-					Path:        path,
-					HasPrdMd:    fileExists(filepath.Join(path, "prd.md")),
-					HasPrdJson:  fileExists(filepath.Join(path, "prd.json")),
-					HasRunState: fileExists(filepath.Join(path, "run-state.json")),
+					Name:       name,
+					Feature:    feature,
+					Timestamp:  t,
+					Path:       path,
+					HasPrdMd:   fileExists(filepath.Join(path, "prd.md")),
+					HasPrdJson: fileExists(filepath.Join(path, "prd.json")),
 				}
 			}
 		}
@@ -152,13 +150,12 @@ func parseFeatureDir(ralphDir, name string) *FeatureDir {
 
 	path := filepath.Join(ralphDir, name)
 	return &FeatureDir{
-		Name:        name,
-		Feature:     feature,
-		Timestamp:   t,
-		Path:        path,
-		HasPrdMd:    fileExists(filepath.Join(path, "prd.md")),
-		HasPrdJson:  fileExists(filepath.Join(path, "prd.json")),
-		HasRunState: fileExists(filepath.Join(path, "run-state.json")),
+		Name:       name,
+		Feature:    feature,
+		Timestamp:  t,
+		Path:       path,
+		HasPrdMd:   fileExists(filepath.Join(path, "prd.md")),
+		HasPrdJson: fileExists(filepath.Join(path, "prd.json")),
 	}
 }
 

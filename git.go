@@ -221,19 +221,6 @@ func (g *GitOps) HasTestFileChanges() bool {
 	return false
 }
 
-// HasNonRalphChanges returns true if any files changed from the default branch
-// to HEAD are outside the .ralph/ directory. Used to guard pre-verification:
-// if only .ralph/ files changed (e.g., prd.md, prd.json), no code was implemented
-// and verification would produce false positives.
-func (g *GitOps) HasNonRalphChanges() bool {
-	for _, f := range g.GetChangedFiles() {
-		if !strings.HasPrefix(f, ".ralph/") {
-			return true
-		}
-	}
-	return false
-}
-
 // run executes a git command and returns the output
 func (g *GitOps) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)

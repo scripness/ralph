@@ -99,13 +99,13 @@ func prdStateFinalized(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	fmt.Printf("PRD is ready: %s\n", featureDir.Path)
 
 	// Show progress if any stories have been worked on
-	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
+	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
+	state, _ := LoadRunState(featureDir.RunStatePath())
 	if err == nil {
-		prd := wprd.PRD()
-		complete := CountComplete(prd)
-		blocked := CountBlocked(prd)
-		if complete > 0 || blocked > 0 {
-			fmt.Printf("Progress: %s\n", buildProgress(prd))
+		passed := CountPassed(state)
+		skipped := CountSkipped(state)
+		if passed > 0 || skipped > 0 {
+			fmt.Printf("Progress: %s\n", buildProgress(def, state))
 		}
 	}
 
@@ -198,11 +198,11 @@ func prdRefineDraft(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 // prdRefineInteractive opens an interactive AI session with full feature context (post-finalization).
 // This is the former cmdRefine logic, now integrated into ralph prd.
 func prdRefineInteractive(cfg *ResolvedConfig, featureDir *FeatureDir) error {
-	wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
+	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
 	if err != nil {
 		return fmt.Errorf("failed to load PRD: %w", err)
 	}
-	prd := wprd.PRD()
+	state, _ := LoadRunState(featureDir.RunStatePath())
 
 	// Soft warnings (don't block interactive session)
 	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
@@ -214,33 +214,33 @@ func prdRefineInteractive(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	// Ensure we're on the feature branch
 	git := NewGitOps(cfg.ProjectRoot)
-	if err := git.EnsureBranch(prd.BranchName); err != nil {
-		return fmt.Errorf("failed to switch to branch %s: %w", prd.BranchName, err)
+	if err := git.EnsureBranch(def.BranchName); err != nil {
+		return fmt.Errorf("failed to switch to branch %s: %w", def.BranchName, err)
 	}
 
 	// Show progress summary
 	fmt.Printf("\nFeature: %s\n", featureDir.Feature)
-	fmt.Printf("Branch: %s\n", prd.BranchName)
-	fmt.Printf("Progress: %s\n", buildProgress(prd))
+	fmt.Printf("Branch: %s\n", def.BranchName)
+	fmt.Printf("Progress: %s\n", buildProgress(def, state))
 	fmt.Println()
 
 	// Generate prompt and open interactive session
-	prompt := generateRefinePrompt(cfg, featureDir, prd)
+	prompt := generateRefinePrompt(cfg, featureDir, def, state)
 	return runProviderInteractive(cfg, prompt)
 }
 
 // prdRegenerateJson re-runs finalization from prd.md. Safe because run-state.json is separate.
 func prdRegenerateJson(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	// Warn if stories have been worked on
-	if featureDir.HasRunState {
-		wprd, err := LoadWorkingPRD(featureDir.PrdJsonPath(), featureDir.RunStatePath())
-		if err == nil {
-			prd := wprd.PRD()
-			complete := CountComplete(prd)
-			blocked := CountBlocked(prd)
-			if complete > 0 || blocked > 0 {
-				fmt.Printf("\nWarning: %s\n", buildProgress(prd))
-				fmt.Println("Execution state (passes, retries, blocks) is preserved in run-state.json.")
+	if fileExists(featureDir.RunStatePath()) {
+		rDef, rErr := LoadPRDDefinition(featureDir.PrdJsonPath())
+		rState, _ := LoadRunState(featureDir.RunStatePath())
+		if rErr == nil {
+			passed := CountPassed(rState)
+			skipped := CountSkipped(rState)
+			if passed > 0 || skipped > 0 {
+				fmt.Printf("\nWarning: %s\n", buildProgress(rDef, rState))
+				fmt.Println("Execution state (passes, retries, skips) is preserved in run-state.json.")
 				fmt.Println("Story state will be matched by ID after regeneration.")
 				fmt.Println()
 				if !promptYesNo("Proceed with regeneration?") {

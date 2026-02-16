@@ -38,7 +38,7 @@ func TestExtractURLs(t *testing.T) {
 		config: &BrowserConfig{Enabled: true},
 	}
 
-	story := &UserStory{
+	story := &StoryDefinition{
 		ID:    "US-001",
 		Title: "Dashboard page",
 		Tags:  []string{"ui"},
@@ -76,7 +76,7 @@ func TestExtractURLs_ExplicitURLs(t *testing.T) {
 		config: &BrowserConfig{Enabled: true},
 	}
 
-	story := &UserStory{
+	story := &StoryDefinition{
 		ID:    "US-001",
 		Title: "External API",
 		Tags:  []string{"ui"},
@@ -111,7 +111,7 @@ func TestExtractURLs_FallbackToBaseURL(t *testing.T) {
 		config: &BrowserConfig{Enabled: true},
 	}
 
-	story := &UserStory{
+	story := &StoryDefinition{
 		ID:    "US-001",
 		Title: "Home page",
 		Tags:  []string{"ui"},
@@ -134,7 +134,7 @@ func TestExtractURLs_NonUIStory(t *testing.T) {
 		config: &BrowserConfig{Enabled: true},
 	}
 
-	story := &UserStory{
+	story := &StoryDefinition{
 		ID:    "US-001",
 		Title: "Backend API",
 		Tags:  []string{}, // Not a UI story
@@ -391,9 +391,9 @@ func TestEnsureBrowser_Disabled(t *testing.T) {
 
 func TestEnsureBrowser_ExplicitPath(t *testing.T) {
 	cfg := &BrowserConfig{Enabled: true, ExecutablePath: "/usr/bin/chromium"}
-	prd := &PRD{UserStories: []UserStory{{Tags: []string{"ui"}}}}
+	def := &PRDDefinition{UserStories: []StoryDefinition{{Tags: []string{"ui"}}}}
 
-	EnsureBrowser(cfg, prd)
+	EnsureBrowser(cfg, def)
 
 	// Should not overwrite an explicit path
 	if cfg.ExecutablePath != "/usr/bin/chromium" {
@@ -403,12 +403,12 @@ func TestEnsureBrowser_ExplicitPath(t *testing.T) {
 
 func TestEnsureBrowser_NoUIStories(t *testing.T) {
 	cfg := &BrowserConfig{Enabled: true}
-	prd := &PRD{UserStories: []UserStory{
+	def := &PRDDefinition{UserStories: []StoryDefinition{
 		{Tags: []string{"backend"}},
 		{Tags: []string{"api"}},
 	}}
 
-	EnsureBrowser(cfg, prd)
+	EnsureBrowser(cfg, def)
 
 	// No UI stories → ExecutablePath should remain empty (no download attempted)
 	if cfg.ExecutablePath != "" {

@@ -51,7 +51,7 @@ func NewBrowserRunner(projectRoot string, config *BrowserConfig) *BrowserRunner 
 }
 
 // RunSteps runs interactive browser steps for a story
-func (br *BrowserRunner) RunSteps(story *UserStory, baseURL string) (*BrowserCheckResult, error) {
+func (br *BrowserRunner) RunSteps(story *StoryDefinition, baseURL string) (*BrowserCheckResult, error) {
 	if br.config == nil || !br.config.Enabled {
 		return nil, nil
 	}
@@ -211,7 +211,7 @@ func (br *BrowserRunner) executeStep(step BrowserStep, baseURL, storyID string) 
 }
 
 // RunChecks runs browser checks for a story's acceptance criteria (legacy/fallback)
-func (br *BrowserRunner) RunChecks(story *UserStory, baseURL string) ([]BrowserCheckResult, error) {
+func (br *BrowserRunner) RunChecks(story *StoryDefinition, baseURL string) ([]BrowserCheckResult, error) {
 	if br.config == nil || !br.config.Enabled {
 		return nil, nil
 	}
@@ -364,7 +364,7 @@ func aggregateBrowserResults(results []BrowserCheckResult) *BrowserCheckResult {
 }
 
 // extractURLs extracts URLs to check from acceptance criteria
-func (br *BrowserRunner) extractURLs(story *UserStory, baseURL string) []string {
+func (br *BrowserRunner) extractURLs(story *StoryDefinition, baseURL string) []string {
 	var urls []string
 	seen := make(map[string]bool)
 
@@ -595,16 +595,16 @@ func (browserLogger) Println(args ...interface{}) {
 // EnsureBrowser pre-resolves the browser binary, downloading Chromium if needed.
 // Mutates config in-place: sets ExecutablePath on success, sets Enabled=false on failure.
 // Skips entirely if browser is disabled, executablePath is already set, or no UI stories exist.
-func EnsureBrowser(config *BrowserConfig, prd *PRD) {
+func EnsureBrowser(config *BrowserConfig, def *PRDDefinition) {
 	if config == nil || !config.Enabled || config.ExecutablePath != "" {
 		return
 	}
 
 	// Gate: only download if PRD has UI stories
 	hasUI := false
-	if prd != nil {
-		for i := range prd.UserStories {
-			if IsUIStory(&prd.UserStories[i]) {
+	if def != nil {
+		for i := range def.UserStories {
+			if IsUIStory(&def.UserStories[i]) {
 				hasUI = true
 				break
 			}

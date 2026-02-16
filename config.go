@@ -331,7 +331,7 @@ func CheckReadinessWarnings(cfg *RalphConfig) []string {
 
 // CheckReadiness validates that the project is ready for Ralph.
 // Returns a list of issues. Empty list means ready.
-func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
+func CheckReadiness(cfg *RalphConfig, def *PRDDefinition) []string {
 	var issues []string
 
 	// sh is required to execute verify/service commands
@@ -407,10 +407,10 @@ func CheckReadiness(cfg *RalphConfig, prd *PRD) []string {
 	}
 
 	// UI stories require verify.ui commands; browserSteps require browser enabled
-	if prd != nil {
+	if def != nil {
 		hasUIStories := false
 		hasBrowserSteps := false
-		for _, s := range prd.UserStories {
+		for _, s := range def.UserStories {
 			if IsUIStory(&s) {
 				hasUIStories = true
 			}

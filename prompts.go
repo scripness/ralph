@@ -42,56 +42,36 @@ func buildLearnings(learnings []string, heading string) string {
 	return s
 }
 
-// buildProgress returns a one-line progress summary like "3/6 stories complete (1 blocked)"
-func buildProgress(prd *PRD) string {
-	total := len(prd.UserStories)
-	complete := CountComplete(prd)
-	blocked := CountBlocked(prd)
+// buildProgress returns a one-line progress summary like "3/6 stories complete (1 skipped)"
+func buildProgress(def *PRDDefinition, state *RunState) string {
+	total := len(def.UserStories)
+	passed := CountPassed(state)
+	skipped := CountSkipped(state)
 
-	s := fmt.Sprintf("%d/%d stories complete", complete, total)
-	if blocked > 0 {
-		s += fmt.Sprintf(" (%d blocked)", blocked)
+	s := fmt.Sprintf("%d/%d stories complete", passed, total)
+	if skipped > 0 {
+		s += fmt.Sprintf(" (%d skipped)", skipped)
 	}
 	return s
 }
 
 // buildStoryMap builds a formatted story map showing all stories with status icons.
-// The current story is marked with [CURRENT]. Completed stories show their commit summary.
-func buildStoryMap(prd *PRD, current *UserStory) string {
+// The current story is marked with [CURRENT].
+func buildStoryMap(def *PRDDefinition, state *RunState, current *StoryDefinition) string {
 	var lines []string
-	for _, s := range prd.UserStories {
+	for _, s := range def.UserStories {
 		var line string
 		switch {
 		case s.ID == current.ID:
 			line = fmt.Sprintf("→ %s: %s [CURRENT]", s.ID, s.Title)
-		case s.Passes:
+		case state.IsPassed(s.ID):
 			line = fmt.Sprintf("✓ %s: %s", s.ID, s.Title)
-			if s.LastResult != nil {
-				detail := ""
-				if s.LastResult.Summary != "" {
-					detail = s.LastResult.Summary
-				}
-				if s.LastResult.Commit != "" {
-					commit := s.LastResult.Commit
-					if len(commit) > 7 {
-						commit = commit[:7]
-					}
-					if detail != "" {
-						detail += " (" + commit + ")"
-					} else {
-						detail = commit
-					}
-				}
-				if detail != "" {
-					line += "\n  └─ " + detail
-				}
-			}
-		case s.Blocked:
+		case state.IsSkipped(s.ID):
 			line = fmt.Sprintf("✗ %s: %s", s.ID, s.Title)
-			if s.Notes != "" {
-				line += " (blocked: " + s.Notes + ")"
+			if reason := state.GetLastFailure(s.ID); reason != "" {
+				line += " (skipped: " + reason + ")"
 			} else {
-				line += " (blocked)"
+				line += " (skipped)"
 			}
 		default:
 			line = fmt.Sprintf("○ %s: %s", s.ID, s.Title)
@@ -103,7 +83,7 @@ func buildStoryMap(prd *PRD, current *UserStory) string {
 
 // buildBrowserSteps formats browser verification steps for the run prompt.
 // Returns an empty string if the story has no browser steps.
-func buildBrowserSteps(story *UserStory) string {
+func buildBrowserSteps(story *StoryDefinition) string {
 	if len(story.BrowserSteps) == 0 {
 		return ""
 	}
@@ -150,7 +130,7 @@ func buildBrowserSteps(story *UserStory) string {
 }
 
 // generateRunPrompt generates the prompt for story implementation
-func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, story *UserStory) string {
+func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, story *StoryDefinition) string {
 	// Build acceptance criteria list
 	var criteria []string
 	for _, c := range story.AcceptanceCriteria {
@@ -171,7 +151,7 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 	verifyStr := strings.Join(verifyLines, "\n")
 
 	// Build learnings (capped at maxLearningsInPrompt most recent)
-	learningsStr := buildLearnings(prd.Run.Learnings, "## Learnings from Previous Work")
+	learningsStr := buildLearnings(state.Learnings, "## Learnings from Previous Work")
 
 	// Build tags info
 	tagsStr := ""
@@ -181,11 +161,12 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 
 	// Build retry info with remaining retries context
 	retryStr := ""
-	if story.Retries > 0 {
-		remaining := cfg.Config.MaxRetries - story.Retries
-		retryStr = fmt.Sprintf("\n**Previous Attempts:** %d of %d (%d remaining before blocked)\n", story.Retries, cfg.Config.MaxRetries, remaining)
-		if story.Notes != "" {
-			retryStr += fmt.Sprintf("**Previous Issue:** %s\n", story.Notes)
+	retries := state.GetRetries(story.ID)
+	if retries > 0 {
+		remaining := cfg.Config.MaxRetries - retries
+		retryStr = fmt.Sprintf("\n**Previous Attempts:** %d of %d (%d remaining before skipped)\n", retries, cfg.Config.MaxRetries, remaining)
+		if lastFailure := state.GetLastFailure(story.ID); lastFailure != "" {
+			retryStr += fmt.Sprintf("**Previous Issue:** %s\n", lastFailure)
 		}
 	}
 
@@ -211,11 +192,11 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 		"verifyCommands":     verifyStr,
 		"learnings":          learningsStr,
 		"knowledgeFile":      cfg.Config.Provider.KnowledgeFile,
-		"project":            prd.Project,
-		"description":        prd.Description,
-		"branchName":         prd.BranchName,
-		"progress":           buildProgress(prd),
-		"storyMap":           buildStoryMap(prd, story),
+		"project":            def.Project,
+		"description":        def.Description,
+		"branchName":         def.BranchName,
+		"progress":           buildProgress(def, state),
+		"storyMap":           buildStoryMap(def, state, story),
 		"browserSteps":       buildBrowserSteps(story),
 		"serviceURLs":                      serviceURLsStr,
 		"timeout":                          fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
@@ -223,73 +204,9 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, st
 	})
 }
 
-// buildCriteriaChecklist builds a structured acceptance criteria checklist for the verify prompt.
-// Each story gets an explicit list of criteria the verify agent must confirm.
-func buildCriteriaChecklist(prd *PRD) string {
-	var lines []string
-	for _, s := range prd.UserStories {
-		if s.Blocked {
-			continue
-		}
-		if len(s.AcceptanceCriteria) == 0 {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("### %s: %s", s.ID, s.Title))
-		for _, c := range s.AcceptanceCriteria {
-			lines = append(lines, fmt.Sprintf("- [ ] %s", c))
-		}
-		lines = append(lines, "")
-	}
-	if len(lines) == 0 {
-		return ""
-	}
-	return strings.Join(lines, "\n")
-}
-
-// generateVerifyPrompt generates the prompt for final verification
-func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD, verifySummary string) string {
-	// Build story summaries with acceptance criteria
-	var summaries []string
-	for _, s := range prd.UserStories {
-		status := "✓"
-		if s.Blocked {
-			status = "✗ (blocked)"
-		} else if !s.Passes {
-			status = "○"
-		}
-		line := fmt.Sprintf("- %s %s: %s", status, s.ID, s.Title)
-
-		// Add compact acceptance criteria
-		if len(s.AcceptanceCriteria) > 0 {
-			line += "\n  Criteria: " + strings.Join(s.AcceptanceCriteria, " | ")
-		}
-
-		if s.LastResult != nil {
-			detail := ""
-			if s.LastResult.Commit != "" {
-				commit := s.LastResult.Commit
-				if len(commit) > 7 {
-					commit = commit[:7]
-				}
-				detail = commit
-			}
-			if s.LastResult.Summary != "" {
-				if detail != "" {
-					detail += ": " + s.LastResult.Summary
-				} else {
-					detail = s.LastResult.Summary
-				}
-			}
-			if detail != "" {
-				line += "\n  └─ " + detail
-			}
-		}
-
-		summaries = append(summaries, line)
-	}
-	summariesStr := strings.Join(summaries, "\n")
-
-	// Build verify commands
+// generateVerifyFixPrompt generates the prompt for an interactive fix session after verification failure.
+func generateVerifyFixPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, report *VerifyReport) string {
+	// Build verify commands list
 	var verifyLines []string
 	for _, cmd := range cfg.Config.Verify.Default {
 		verifyLines = append(verifyLines, "- "+cmd)
@@ -299,43 +216,43 @@ func generateVerifyPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD,
 	}
 	verifyStr := strings.Join(verifyLines, "\n")
 
-	// Build learnings (capped)
-	learningsStr := buildLearnings(prd.Run.Learnings, "## Learnings")
-
-	// Build service URLs for verify prompt
-	verifyServiceURLs := ""
-	if len(cfg.Config.Services) > 0 {
-		verifyServiceURLs = "\n**Services:**\n"
-		for _, svc := range cfg.Config.Services {
-			verifyServiceURLs += fmt.Sprintf("- %s: %s\n", svc.Name, svc.Ready)
-		}
-	}
+	// Build learnings
+	learningsStr := buildLearnings(state.Learnings, "## Learnings from Previous Runs")
 
 	// Build git diff summary
 	git := NewGitOps(cfg.ProjectRoot)
 	diffStat := git.GetDiffSummary()
 	diffStr := ""
 	if diffStat != "" {
-		diffStr = "## Changes Summary\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n\nFor full diff: `git diff " + git.DefaultBranch() + "...HEAD`\n"
+		diffStr = "## Changes on Branch\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n"
 	}
 
-	// Build resource verification instructions for verify context
-	resourceStr := buildResourceVerificationInstructionsForVerify(cfg)
+	// Build service URLs
+	serviceURLsStr := ""
+	if len(cfg.Config.Services) > 0 {
+		serviceURLsStr = "\n**Services:**\n"
+		for _, svc := range cfg.Config.Services {
+			serviceURLsStr += fmt.Sprintf("- %s: %s\n", svc.Name, svc.Ready)
+		}
+	}
 
-	return getPrompt("verify", map[string]string{
-		"project":                           prd.Project,
-		"description":                       prd.Description,
-		"storySummaries":                    summariesStr,
+	// Build resource verification instructions
+	resourceStr := buildResourceVerificationInstructions(cfg)
+
+	return getPrompt("verify-fix", map[string]string{
+		"project":                           def.Project,
+		"description":                       def.Description,
+		"branchName":                        def.BranchName,
+		"progress":                          buildProgress(def, state),
+		"storyDetails":                      buildRefinementStoryDetails(def, state),
+		"verifyResults":                     report.FormatForPrompt(),
 		"verifyCommands":                    verifyStr,
 		"learnings":                         learningsStr,
-		"knowledgeFile":                     cfg.Config.Provider.KnowledgeFile,
-		"prdPath":                           featureDir.PrdJsonPath(),
-		"branchName":                        prd.BranchName,
-		"serviceURLs":                       verifyServiceURLs,
 		"diffSummary":                       diffStr,
+		"serviceURLs":                       serviceURLsStr,
+		"knowledgeFile":                     cfg.Config.Provider.KnowledgeFile,
+		"featureDir":                        featureDir.Path,
 		"resourceVerificationInstructions":  resourceStr,
-		"verifySummary":                     verifySummary,
-		"criteriaChecklist":                 buildCriteriaChecklist(prd),
 	})
 }
 
@@ -350,7 +267,7 @@ func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, codeba
 
 // generateRefinePrompt generates the prompt for an interactive refine session.
 // Loads prd.md + prd.json content, discovers codebase context, builds git diff.
-func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD) string {
+func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState) string {
 	// Read prd.md content (expected to exist alongside prd.json)
 	prdMdContent := "(prd.md not found)"
 	if data, err := os.ReadFile(featureDir.PrdMdPath()); err == nil {
@@ -364,9 +281,9 @@ func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 	}
 
 	// Build progress and story details
-	progress := buildProgress(prd)
-	storyDetails := buildRefinementStoryDetails(prd)
-	learnings := buildLearnings(prd.Run.Learnings, "## Learnings from Previous Runs")
+	progress := buildProgress(def, state)
+	storyDetails := buildRefinementStoryDetails(def, state)
+	learnings := buildLearnings(state.Learnings, "## Learnings from Previous Runs")
 
 	// Build git diff summary
 	git := NewGitOps(cfg.ProjectRoot)
@@ -390,7 +307,7 @@ func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 	}
 	verifyStr := strings.Join(verifyLines, "\n")
 
-	// Build service URLs (leading \n matches generateRunPrompt/generateVerifyPrompt)
+	// Build service URLs (leading \n matches generateRunPrompt)
 	serviceURLsStr := ""
 	if len(cfg.Config.Services) > 0 {
 		serviceURLsStr = "\n**Services:**\n"
@@ -400,25 +317,25 @@ func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, prd *PRD)
 	}
 
 	return getPrompt("refine", map[string]string{
-		"feature":        featureDir.Feature,
-		"prdMdContent":   prdMdContent,
-		"prdJsonContent": prdJsonContent,
-		"progress":       progress,
-		"storyDetails":   storyDetails,
-		"learnings":      learnings,
-		"diffSummary":    diffStr,
+		"feature":         featureDir.Feature,
+		"prdMdContent":    prdMdContent,
+		"prdJsonContent":  prdJsonContent,
+		"progress":        progress,
+		"storyDetails":    storyDetails,
+		"learnings":       learnings,
+		"diffSummary":     diffStr,
 		"codebaseContext": codebaseStr,
-		"verifyCommands": verifyStr,
-		"serviceURLs":    serviceURLsStr,
-		"knowledgeFile":  cfg.Config.Provider.KnowledgeFile,
-		"branchName":     prd.BranchName,
-		"featureDir":     featureDir.Path,
+		"verifyCommands":  verifyStr,
+		"serviceURLs":     serviceURLsStr,
+		"knowledgeFile":   cfg.Config.Provider.KnowledgeFile,
+		"branchName":      def.BranchName,
+		"featureDir":      featureDir.Path,
 	})
 }
 
 // buildRefinementStoryDetails formats each story with execution status for the refine prompt.
-func buildRefinementStoryDetails(prd *PRD) string {
-	if len(prd.UserStories) == 0 {
+func buildRefinementStoryDetails(def *PRDDefinition, state *RunState) string {
+	if len(def.UserStories) == 0 {
 		return ""
 	}
 
@@ -426,25 +343,23 @@ func buildRefinementStoryDetails(prd *PRD) string {
 	lines = append(lines, "## Story Execution Status")
 	lines = append(lines, "")
 
-	for _, s := range prd.UserStories {
+	for _, s := range def.UserStories {
 		status := "PENDING"
-		if s.Passes {
+		if state.IsPassed(s.ID) {
 			status = "PASSED"
-		} else if s.Blocked {
-			status = "BLOCKED"
+		} else if state.IsSkipped(s.ID) {
+			status = "SKIPPED"
 		}
 
 		line := fmt.Sprintf("- **%s: %s** — %s", s.ID, s.Title, status)
-		if s.Retries > 0 {
-			line += fmt.Sprintf(" (%d retries)", s.Retries)
+		retries := state.GetRetries(s.ID)
+		if retries > 0 {
+			line += fmt.Sprintf(" (%d retries)", retries)
 		}
 		lines = append(lines, line)
 
-		if s.Notes != "" {
-			lines = append(lines, fmt.Sprintf("  Notes: %s", s.Notes))
-		}
-		if s.LastResult != nil && s.LastResult.Summary != "" {
-			lines = append(lines, fmt.Sprintf("  Last result: %s", s.LastResult.Summary))
+		if lastFailure := state.GetLastFailure(s.ID); lastFailure != "" {
+			lines = append(lines, fmt.Sprintf("  Notes: %s", lastFailure))
 		}
 	}
 
@@ -507,37 +422,6 @@ For frameworks not cached, use web search against official repos.
 `, resourceList, rm.GetCacheDir())
 }
 
-// buildResourceVerificationInstructionsForVerify returns verify-context instructions.
-func buildResourceVerificationInstructionsForVerify(cfg *ResolvedConfig) string {
-	if cfg.Config.Resources != nil && !cfg.Config.Resources.IsEnabled() {
-		return buildFallbackVerificationInstructionsForVerify()
-	}
-
-	// Detect dependencies from codebase
-	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
-	depNames := GetDependencyNames(codebaseCtx.Dependencies)
-	rm := NewResourceManager(cfg.Config.Resources, depNames)
-
-	cached, _ := rm.ListCached()
-	if len(cached) == 0 {
-		return buildFallbackVerificationInstructionsForVerify()
-	}
-
-	resourceList := strings.Join(cached, ", ")
-	return fmt.Sprintf(`### Documentation Compliance
-
-Framework source code is cached locally for: %s
-
-To verify implementations follow best practices:
-1. Check actual framework source code at %s/<framework>/
-2. Compare implementation patterns against framework tests and examples
-3. Verify API usage matches current framework conventions
-4. Check for deprecated patterns by reading framework source comments
-
-Deprecated patterns or incorrect API usage = RESET.
-`, resourceList, rm.GetCacheDir())
-}
-
 // buildFallbackVerificationInstructions returns web search instructions.
 func buildFallbackVerificationInstructions() string {
 	return `## Documentation Verification
@@ -550,19 +434,5 @@ Before committing, verify your implementation against current official documenta
 - Check security patterns (input validation, auth, etc.) are up to date
 
 Do not rely on memory alone — docs change between versions. Verify against the latest.
-`
-}
-
-// buildFallbackVerificationInstructionsForVerify returns web search instructions for verify.
-func buildFallbackVerificationInstructionsForVerify() string {
-	return `### Documentation Compliance
-
-Use web search to verify implementations follow current best practices:
-
-- Search official docs for each library/framework used in the implementation
-- Confirm API patterns are current and not deprecated
-- Verify security practices (auth, validation, etc.) are up to date
-
-Deprecated patterns or outdated API usage = RESET.
 `
 }

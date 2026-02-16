@@ -18,15 +18,6 @@ func TestProcessLine_DoneMarker(t *testing.T) {
 	}
 }
 
-func TestProcessLine_VerifiedMarker(t *testing.T) {
-	result := &ProviderResult{}
-	processLine("<ralph>VERIFIED</ralph>", result, nil)
-
-	if !result.Verified {
-		t.Error("expected Verified=true")
-	}
-}
-
 func TestProcessLine_LearningMarker(t *testing.T) {
 	result := &ProviderResult{}
 	processLine("<ralph>LEARNING:Always use escapeHtml for user data</ralph>", result, nil)
@@ -49,35 +40,11 @@ func TestProcessLine_MultipleLearnings(t *testing.T) {
 	}
 }
 
-func TestProcessLine_ResetMarker(t *testing.T) {
-	result := &ProviderResult{}
-	processLine("<ralph>RESET:US-001,US-003</ralph>", result, nil)
-
-	if len(result.Resets) != 2 {
-		t.Fatalf("expected 2 resets, got %d", len(result.Resets))
-	}
-	if result.Resets[0] != "US-001" {
-		t.Errorf("expected first reset='US-001', got '%s'", result.Resets[0])
-	}
-	if result.Resets[1] != "US-003" {
-		t.Errorf("expected second reset='US-003', got '%s'", result.Resets[1])
-	}
-}
-
-func TestProcessLine_ReasonMarker(t *testing.T) {
-	result := &ProviderResult{}
-	processLine("<ralph>REASON:Missing test coverage for auth module</ralph>", result, nil)
-
-	if result.Reason != "Missing test coverage for auth module" {
-		t.Errorf("unexpected reason: %s", result.Reason)
-	}
-}
-
 func TestProcessLine_NoMarkers(t *testing.T) {
 	result := &ProviderResult{}
 	processLine("Regular output without any markers", result, nil)
 
-	if result.Done || result.Verified || len(result.Learnings) > 0 || len(result.Resets) > 0 {
+	if result.Done || result.Stuck || len(result.Learnings) > 0 {
 		t.Error("expected no markers to be detected")
 	}
 }
@@ -117,28 +84,6 @@ func TestLearningPattern(t *testing.T) {
 	}
 }
 
-func TestResetPattern(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"<ralph>RESET:US-001</ralph>", "US-001"},
-		{"<ralph>RESET:US-001,US-002</ralph>", "US-001,US-002"},
-		{"<ralph>RESET:US-001, US-002, US-003</ralph>", "US-001, US-002, US-003"},
-	}
-
-	for _, tt := range tests {
-		matches := ResetPattern.FindStringSubmatch(tt.input)
-		if len(matches) < 2 {
-			t.Errorf("expected match for %s", tt.input)
-			continue
-		}
-		if matches[1] != tt.expected {
-			t.Errorf("for %s: expected '%s', got '%s'", tt.input, tt.expected, matches[1])
-		}
-	}
-}
-
 func TestProcessLine_StuckMarker(t *testing.T) {
 	result := &ProviderResult{}
 	processLine("<ralph>STUCK</ralph>", result, nil)
@@ -146,61 +91,42 @@ func TestProcessLine_StuckMarker(t *testing.T) {
 	if !result.Stuck {
 		t.Error("expected Stuck=true")
 	}
-}
-
-func TestProcessLine_BlockMarker(t *testing.T) {
-	result := &ProviderResult{}
-	processLine("<ralph>BLOCK:US-007</ralph>", result, nil)
-
-	if len(result.Blocks) != 1 {
-		t.Fatalf("expected 1 block, got %d", len(result.Blocks))
-	}
-	if result.Blocks[0] != "US-007" {
-		t.Errorf("expected block='US-007', got '%s'", result.Blocks[0])
+	if result.StuckNote != "" {
+		t.Errorf("expected empty StuckNote, got %q", result.StuckNote)
 	}
 }
 
-func TestProcessLine_BlockMarkerMultiple(t *testing.T) {
+func TestProcessLine_StuckMarkerWithNote(t *testing.T) {
 	result := &ProviderResult{}
-	processLine("<ralph>BLOCK:US-007,US-008</ralph>", result, nil)
+	processLine("<ralph>STUCK:Cannot resolve type errors in auth module</ralph>", result, nil)
 
-	if len(result.Blocks) != 2 {
-		t.Fatalf("expected 2 blocks, got %d", len(result.Blocks))
+	if !result.Stuck {
+		t.Error("expected Stuck=true")
 	}
-	if result.Blocks[0] != "US-007" || result.Blocks[1] != "US-008" {
-		t.Errorf("unexpected blocks: %v", result.Blocks)
+	if result.StuckNote != "Cannot resolve type errors in auth module" {
+		t.Errorf("expected note, got %q", result.StuckNote)
 	}
 }
 
-func TestProcessLine_SuggestNextMarker(t *testing.T) {
-	result := &ProviderResult{}
-	processLine("<ralph>SUGGEST_NEXT:US-012</ralph>", result, nil)
-
-	if result.SuggestNext != "US-012" {
-		t.Errorf("expected SuggestNext='US-012', got '%s'", result.SuggestNext)
+func TestStuckNotePattern(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"<ralph>STUCK:simple note</ralph>", "simple note"},
+		{"<ralph>STUCK:multi word reason text</ralph>", "multi word reason text"},
+		{"<ralph>STUCK: spaces around </ralph>", " spaces around "},
 	}
-}
 
-func TestProcessLine_ReasonMarkerOverwrite(t *testing.T) {
-	result := &ProviderResult{}
-	processLine("<ralph>REASON:First reason</ralph>", result, nil)
-	processLine("<ralph>REASON:Second reason</ralph>", result, nil)
-
-	if result.Reason != "Second reason" {
-		t.Errorf("expected last reason to win, got '%s'", result.Reason)
-	}
-}
-
-func TestProcessLine_CombinedMarkers(t *testing.T) {
-	result := &ProviderResult{}
-	processLine("<ralph>BLOCK:US-007</ralph>", result, nil)
-	processLine("<ralph>REASON:Depends on US-003 which isn't complete</ralph>", result, nil)
-
-	if len(result.Blocks) != 1 || result.Blocks[0] != "US-007" {
-		t.Errorf("expected block US-007, got %v", result.Blocks)
-	}
-	if result.Reason != "Depends on US-003 which isn't complete" {
-		t.Errorf("unexpected reason: %s", result.Reason)
+	for _, tt := range tests {
+		matches := StuckNotePattern.FindStringSubmatch(tt.input)
+		if len(matches) < 2 {
+			t.Errorf("expected match for %s", tt.input)
+			continue
+		}
+		if matches[1] != tt.expected {
+			t.Errorf("for %s: expected '%s', got '%s'", tt.input, tt.expected, matches[1])
+		}
 	}
 }
 
@@ -486,7 +412,7 @@ func TestTruncateOutput(t *testing.T) {
 
 func TestProviderEndNilResult_NoPanic(t *testing.T) {
 	// Verify that accessing fields on a nil *ProviderResult would panic,
-	// confirming the guard in runLoop/runFinalVerification is needed.
+	// confirming the guard in runLoop is needed.
 	var result *ProviderResult
 	defer func() {
 		if r := recover(); r == nil {

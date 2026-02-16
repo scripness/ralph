@@ -101,8 +101,7 @@ Only output this when:
 
 ### When you're stuck and need help
 ```
-<ralph>STUCK</ralph>
-<ralph>REASON:description of what's blocking you</ralph>
+<ralph>STUCK:description of what's blocking you</ralph>
 ```
 Use this when you cannot proceed. Examples:
 - External dependency unavailable
@@ -110,17 +109,7 @@ Use this when you cannot proceed. Examples:
 - Tests failing for unknown reasons
 - Environment issues
 
-### When a story is impossible or underspecified
-```
-<ralph>BLOCK:{{storyId}}</ralph>
-<ralph>REASON:why this story cannot be implemented</ralph>
-```
-You can also block multiple stories at once: `<ralph>BLOCK:US-001,US-003</ralph>`
-
-Use this when the story itself is problematic:
-- Missing dependencies from other stories
-- Contradictory requirements
-- Requires features that don't exist
+The reason text after STUCK: is saved for debugging. If you hit max retries, the story is automatically skipped.
 
 ### When you discover important patterns
 ```
@@ -133,15 +122,6 @@ These are saved and shown in future iterations. Good learnings are:
 - **Gotchas**: Non-obvious requirements (e.g., "Must restart dev server after schema changes")
 
 Do NOT emit trivial learnings like "I implemented the login form" or learnings that duplicate ones already shown above. Keep learnings specific, actionable, and non-obvious.
-
-### When you think a different story should be next (advisory)
-```
-<ralph>SUGGEST_NEXT:US-XXX</ralph>
-<ralph>REASON:why this order would be better</ralph>
-```
-The CLI may honor this suggestion if the story is valid.
-
-> **Note:** Only one REASON is captured per iteration. Place REASON immediately after the marker it applies to.
 
 {{learnings}}
 
@@ -168,5 +148,5 @@ After implementing the story, update documentation to reflect what you built:
 - **Single story only**: Implement ONLY this story. Do not refactor unrelated code.
 - **No broken commits**: Do not commit if tests/linters fail locally.
 - **No PRD changes**: Do NOT modify prd.json — the CLI manages story state.
-- **Signal honestly**: Use STUCK/BLOCK if you cannot complete; don't hope DONE works.
+- **Signal honestly**: Use STUCK if you cannot complete; don't hope DONE works.
 - **Follow conventions**: Match existing code style, patterns, and architecture.

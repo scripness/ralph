@@ -7,15 +7,16 @@ import (
 )
 
 func TestGetNextStory_PicksHighestPriority(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-003", Priority: 3, Passes: false},
-			{ID: "US-001", Priority: 1, Passes: false},
-			{ID: "US-002", Priority: 2, Passes: false},
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-003", Priority: 3},
+			{ID: "US-001", Priority: 1},
+			{ID: "US-002", Priority: 2},
 		},
 	}
+	state := NewRunState()
 
-	next := GetNextStory(prd)
+	next := GetNextStory(def, state)
 	if next == nil {
 		t.Fatal("expected next story, got nil")
 	}
@@ -24,16 +25,18 @@ func TestGetNextStory_PicksHighestPriority(t *testing.T) {
 	}
 }
 
-func TestGetNextStory_SkipsPassingStories(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Priority: 1, Passes: true},
-			{ID: "US-002", Priority: 2, Passes: false},
-			{ID: "US-003", Priority: 3, Passes: false},
+func TestGetNextStory_SkipsPassedStories(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Priority: 1},
+			{ID: "US-002", Priority: 2},
+			{ID: "US-003", Priority: 3},
 		},
 	}
+	state := NewRunState()
+	state.MarkPassed("US-001")
 
-	next := GetNextStory(prd)
+	next := GetNextStory(def, state)
 	if next == nil {
 		t.Fatal("expected next story, got nil")
 	}
@@ -42,16 +45,18 @@ func TestGetNextStory_SkipsPassingStories(t *testing.T) {
 	}
 }
 
-func TestGetNextStory_SkipsBlockedStories(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Priority: 1, Passes: false, Blocked: true},
-			{ID: "US-002", Priority: 2, Passes: false, Blocked: false},
-			{ID: "US-003", Priority: 3, Passes: false, Blocked: false},
+func TestGetNextStory_SkipsSkippedStories(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Priority: 1},
+			{ID: "US-002", Priority: 2},
+			{ID: "US-003", Priority: 3},
 		},
 	}
+	state := NewRunState()
+	state.MarkSkipped("US-001", "too hard")
 
-	next := GetNextStory(prd)
+	next := GetNextStory(def, state)
 	if next == nil {
 		t.Fatal("expected next story, got nil")
 	}
@@ -61,267 +66,208 @@ func TestGetNextStory_SkipsBlockedStories(t *testing.T) {
 }
 
 func TestGetNextStory_ReturnsNilWhenAllPass(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Priority: 1, Passes: true},
-			{ID: "US-002", Priority: 2, Passes: true},
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Priority: 1},
+			{ID: "US-002", Priority: 2},
 		},
 	}
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkPassed("US-002")
 
-	next := GetNextStory(prd)
+	next := GetNextStory(def, state)
 	if next != nil {
 		t.Errorf("expected nil, got %s", next.ID)
 	}
 }
 
-func TestAllStoriesComplete_True(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{Passes: true},
-			{Passes: true},
+func TestAllComplete_True(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001"},
+			{ID: "US-002"},
 		},
 	}
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkPassed("US-002")
 
-	if !AllStoriesComplete(prd) {
+	if !AllComplete(def, state) {
 		t.Error("expected all stories complete")
 	}
 }
 
-func TestAllStoriesComplete_False(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{Passes: true},
-			{Passes: false},
+func TestAllComplete_False(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001"},
+			{ID: "US-002"},
 		},
 	}
+	state := NewRunState()
+	state.MarkPassed("US-001")
 
-	if AllStoriesComplete(prd) {
+	if AllComplete(def, state) {
 		t.Error("expected not all stories complete")
 	}
 }
 
-func TestAllStoriesComplete_BlockedCountsAsComplete(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{Passes: true},
-			{Passes: false, Blocked: true},
+func TestAllComplete_SkippedCountsAsComplete(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001"},
+			{ID: "US-002"},
 		},
 	}
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkSkipped("US-002", "impossible")
 
-	// Blocked stories don't prevent completion
-	if !AllStoriesComplete(prd) {
-		t.Error("expected all stories complete (blocked counts as done)")
+	if !AllComplete(def, state) {
+		t.Error("expected all stories complete (skipped counts as done)")
 	}
 }
 
 func TestIsUIStory(t *testing.T) {
-	uiStory := &UserStory{Tags: []string{"ui"}}
+	uiStory := &StoryDefinition{Tags: []string{"ui"}}
 	if !IsUIStory(uiStory) {
 		t.Error("expected story with 'ui' tag to be UI story")
 	}
 
-	nonUIStory := &UserStory{Tags: []string{"backend"}}
+	nonUIStory := &StoryDefinition{Tags: []string{"backend"}}
 	if IsUIStory(nonUIStory) {
 		t.Error("expected story without 'ui' tag to not be UI story")
 	}
 
-	emptyTags := &UserStory{Tags: []string{}}
+	emptyTags := &StoryDefinition{Tags: []string{}}
 	if IsUIStory(emptyTags) {
 		t.Error("expected story with empty tags to not be UI story")
 	}
 }
 
-func TestMarkStoryFailed(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Retries: 0, Blocked: false},
-		},
-	}
+func TestMarkFailed(t *testing.T) {
+	state := NewRunState()
+	state.MarkFailed("US-001", "test failure", 3)
 
-	prd.MarkStoryFailed("US-001", "test failure", 3)
-
-	story := GetStoryByID(prd, "US-001")
-	if story.Retries != 1 {
-		t.Errorf("expected retries=1, got %d", story.Retries)
+	if state.GetRetries("US-001") != 1 {
+		t.Errorf("expected retries=1, got %d", state.GetRetries("US-001"))
 	}
-	if story.Notes != "test failure" {
-		t.Errorf("expected notes='test failure', got '%s'", story.Notes)
+	if state.GetLastFailure("US-001") != "test failure" {
+		t.Errorf("expected lastFailure='test failure', got '%s'", state.GetLastFailure("US-001"))
 	}
-	if story.Blocked {
-		t.Error("expected not blocked after first failure")
+	if state.IsSkipped("US-001") {
+		t.Error("expected not skipped after first failure")
 	}
 }
 
-func TestMarkStoryFailed_Blocked(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Retries: 2, Blocked: false},
-		},
-	}
+func TestMarkFailed_AutoSkip(t *testing.T) {
+	state := NewRunState()
+	state.Retries["US-001"] = 2
 
-	prd.MarkStoryFailed("US-001", "third failure", 3)
+	state.MarkFailed("US-001", "third failure", 3)
 
-	story := GetStoryByID(prd, "US-001")
-	if story.Retries != 3 {
-		t.Errorf("expected retries=3, got %d", story.Retries)
+	if state.GetRetries("US-001") != 3 {
+		t.Errorf("expected retries=3, got %d", state.GetRetries("US-001"))
 	}
-	if !story.Blocked {
-		t.Error("expected blocked after reaching maxRetries")
+	if !state.IsSkipped("US-001") {
+		t.Error("expected skipped after reaching maxRetries")
 	}
 }
 
-func TestResetStory(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: true, Retries: 0, LastResult: &LastResult{Commit: "abc123"}},
-		},
-	}
+func TestMarkPassed(t *testing.T) {
+	state := NewRunState()
+	state.MarkPassed("US-001")
 
-	prd.ResetStory("US-001", "needs rework", 3)
-
-	story := GetStoryByID(prd, "US-001")
-	if story.Passes {
-		t.Error("expected passes=false after reset")
-	}
-	if story.LastResult != nil {
-		t.Error("expected lastResult=nil after reset")
-	}
-	if story.Retries != 1 {
-		t.Errorf("expected retries=1, got %d", story.Retries)
-	}
-	if story.Notes != "needs rework" {
-		t.Errorf("expected notes='needs rework', got '%s'", story.Notes)
+	if !state.IsPassed("US-001") {
+		t.Error("expected passed=true")
 	}
 }
 
-func TestMarkStoryBlocked(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-007", Blocked: false, Notes: ""},
-		},
-	}
+func TestMarkPassed_RemovesFromSkipped(t *testing.T) {
+	state := NewRunState()
+	state.MarkSkipped("US-001", "was skipped")
 
-	prd.MarkStoryBlocked("US-007", "Depends on US-003 which isn't complete")
+	state.MarkPassed("US-001")
 
-	story := GetStoryByID(prd, "US-007")
-	if !story.Blocked {
-		t.Error("expected blocked=true")
+	if !state.IsPassed("US-001") {
+		t.Error("expected passed=true")
 	}
-	if story.Notes != "Depends on US-003 which isn't complete" {
-		t.Errorf("expected notes set, got '%s'", story.Notes)
+	if state.IsSkipped("US-001") {
+		t.Error("expected not skipped after marking passed")
 	}
 }
 
-func TestResetStoryForPreVerify(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: true, Retries: 2, LastResult: &LastResult{Commit: "abc123"}},
-		},
-	}
+func TestMarkSkipped(t *testing.T) {
+	state := NewRunState()
+	state.MarkSkipped("US-001", "impossible")
 
-	prd.ResetStoryForPreVerify("US-001", "pre-verify: acceptance criteria changed")
-
-	story := GetStoryByID(prd, "US-001")
-	if story.Passes {
-		t.Error("expected passes=false after pre-verify reset")
+	if !state.IsSkipped("US-001") {
+		t.Error("expected skipped=true")
 	}
-	if story.LastResult != nil {
-		t.Error("expected lastResult=nil after pre-verify reset")
-	}
-	// Key difference from ResetStory: retries should NOT be incremented
-	if story.Retries != 2 {
-		t.Errorf("expected retries=2 (unchanged), got %d", story.Retries)
-	}
-	if story.Notes != "pre-verify: acceptance criteria changed" {
-		t.Errorf("expected notes set, got '%s'", story.Notes)
-	}
-	if story.Blocked {
-		t.Error("expected not blocked (pre-verify reset doesn't block)")
+	if state.GetLastFailure("US-001") != "impossible" {
+		t.Errorf("expected lastFailure='impossible', got '%s'", state.GetLastFailure("US-001"))
 	}
 }
 
-func TestResetStoryForPreVerify_NotFound(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: true},
-		},
+func TestMarkSkipped_RemovesFromPassed(t *testing.T) {
+	state := NewRunState()
+	state.MarkPassed("US-001")
+
+	state.MarkSkipped("US-001", "regressed")
+
+	if state.IsPassed("US-001") {
+		t.Error("expected not passed after marking skipped")
 	}
-
-	// Should not panic
-	prd.ResetStoryForPreVerify("US-999", "reason")
-
-	story := GetStoryByID(prd, "US-001")
-	if !story.Passes {
-		t.Error("expected US-001 to remain passed")
+	if !state.IsSkipped("US-001") {
+		t.Error("expected skipped=true")
 	}
 }
 
-func TestMarkStoryBlocked_NonExistent(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Blocked: false},
-		},
-	}
+func TestUnmarkPassed(t *testing.T) {
+	state := NewRunState()
+	state.MarkPassed("US-001")
 
-	// Should not panic when blocking non-existent story
-	prd.MarkStoryBlocked("US-999", "reason")
+	state.UnmarkPassed("US-001")
 
-	story := GetStoryByID(prd, "US-001")
-	if story.Blocked {
-		t.Error("expected US-001 to remain unblocked")
+	if state.IsPassed("US-001") {
+		t.Error("expected not passed after unmark")
 	}
 }
 
 func TestAddLearning_Deduplication(t *testing.T) {
-	prd := &PRD{Run: Run{Learnings: []string{}}}
+	state := NewRunState()
 
-	prd.AddLearning("first learning")
-	prd.AddLearning("second learning")
-	prd.AddLearning("first learning") // duplicate
+	state.AddLearning("first learning")
+	state.AddLearning("second learning")
+	state.AddLearning("first learning") // duplicate
 
-	if len(prd.Run.Learnings) != 2 {
-		t.Errorf("expected 2 learnings (deduplicated), got %d: %v", len(prd.Run.Learnings), prd.Run.Learnings)
-	}
-	if prd.Run.Learnings[0] != "first learning" {
-		t.Errorf("expected first='first learning', got '%s'", prd.Run.Learnings[0])
-	}
-	if prd.Run.Learnings[1] != "second learning" {
-		t.Errorf("expected second='second learning', got '%s'", prd.Run.Learnings[1])
+	if len(state.Learnings) != 2 {
+		t.Errorf("expected 2 learnings (deduplicated), got %d: %v", len(state.Learnings), state.Learnings)
 	}
 }
 
 func TestAddLearning_UniqueAdded(t *testing.T) {
-	prd := &PRD{Run: Run{Learnings: []string{}}}
+	state := NewRunState()
 
-	prd.AddLearning("learning A")
-	prd.AddLearning("learning B")
-	prd.AddLearning("learning C")
+	state.AddLearning("learning A")
+	state.AddLearning("learning B")
+	state.AddLearning("learning C")
 
-	if len(prd.Run.Learnings) != 3 {
-		t.Errorf("expected 3 unique learnings, got %d", len(prd.Run.Learnings))
-	}
-}
-
-func TestAddLearning_NilLearnings(t *testing.T) {
-	prd := &PRD{Run: Run{Learnings: nil}}
-
-	prd.AddLearning("first")
-	prd.AddLearning("first") // duplicate
-
-	if len(prd.Run.Learnings) != 1 {
-		t.Errorf("expected 1 learning, got %d", len(prd.Run.Learnings))
+	if len(state.Learnings) != 3 {
+		t.Errorf("expected 3 unique learnings, got %d", len(state.Learnings))
 	}
 }
 
 func TestAddLearning_NormalizedDedup(t *testing.T) {
-	prd := &PRD{Run: Run{Learnings: []string{}}}
+	state := NewRunState()
 
-	prd.AddLearning("Must restart dev server after schema changes")
-	prd.AddLearning("must restart dev server after schema changes")  // case diff
-	prd.AddLearning("Must restart dev server after schema changes.") // trailing period
+	state.AddLearning("Must restart dev server after schema changes")
+	state.AddLearning("must restart dev server after schema changes")  // case diff
+	state.AddLearning("Must restart dev server after schema changes.") // trailing period
 
-	if len(prd.Run.Learnings) != 1 {
-		t.Errorf("expected 1 learning (normalized dedup), got %d: %v", len(prd.Run.Learnings), prd.Run.Learnings)
+	if len(state.Learnings) != 1 {
+		t.Errorf("expected 1 learning (normalized dedup), got %d: %v", len(state.Learnings), state.Learnings)
 	}
 }
 
@@ -344,12 +290,93 @@ func TestNormalizeLearning(t *testing.T) {
 	}
 }
 
-func TestBrowserSteps_InUserStory(t *testing.T) {
-	prd := &PRD{
+func TestCountPassed(t *testing.T) {
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkPassed("US-003")
+
+	if count := CountPassed(state); count != 2 {
+		t.Errorf("expected 2 passed, got %d", count)
+	}
+}
+
+func TestCountSkipped(t *testing.T) {
+	state := NewRunState()
+	state.MarkSkipped("US-002", "hard")
+	state.MarkSkipped("US-003", "impossible")
+
+	if count := CountSkipped(state); count != 2 {
+		t.Errorf("expected 2 skipped, got %d", count)
+	}
+}
+
+func TestGetStoryByID(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "First"},
+			{ID: "US-002", Title: "Second"},
+		},
+	}
+
+	story := GetStoryByID(def, "US-002")
+	if story == nil {
+		t.Fatal("expected story, got nil")
+	}
+	if story.Title != "Second" {
+		t.Errorf("expected title='Second', got '%s'", story.Title)
+	}
+
+	notFound := GetStoryByID(def, "US-999")
+	if notFound != nil {
+		t.Errorf("expected nil for non-existent ID, got %v", notFound)
+	}
+}
+
+func TestGetPendingStories(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001"},
+			{ID: "US-002"},
+			{ID: "US-003"},
+			{ID: "US-004"},
+		},
+	}
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkSkipped("US-003", "impossible")
+
+	pending := GetPendingStories(def, state)
+	if len(pending) != 2 {
+		t.Fatalf("expected 2 pending, got %d", len(pending))
+	}
+	if pending[0].ID != "US-002" || pending[1].ID != "US-004" {
+		t.Errorf("expected US-002 and US-004, got %s and %s", pending[0].ID, pending[1].ID)
+	}
+}
+
+func TestGetPendingStories_AllComplete(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001"},
+			{ID: "US-002"},
+		},
+	}
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkSkipped("US-002", "blocked")
+
+	pending := GetPendingStories(def, state)
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending, got %d", len(pending))
+	}
+}
+
+func TestBrowserSteps_InStoryDefinition(t *testing.T) {
+	def := &PRDDefinition{
 		SchemaVersion: 3,
 		Project:       "Test",
 		BranchName:    "ralph/test",
-		UserStories: []UserStory{
+		UserStories: []StoryDefinition{
 			{
 				ID:                 "US-001",
 				Title:              "Login form",
@@ -366,7 +393,7 @@ func TestBrowserSteps_InUserStory(t *testing.T) {
 		},
 	}
 
-	story := GetStoryByID(prd, "US-001")
+	story := GetStoryByID(def, "US-001")
 	if len(story.BrowserSteps) != 5 {
 		t.Errorf("expected 5 browser steps, got %d", len(story.BrowserSteps))
 	}
@@ -390,387 +417,7 @@ func TestBrowserStep_Timeout(t *testing.T) {
 	}
 }
 
-func TestWarnPRDQuality_MissingTypecheck(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", AcceptanceCriteria: []string{"Feature works correctly"}},
-			{ID: "US-002", AcceptanceCriteria: []string{"Typecheck passes", "UI renders"}},
-		},
-	}
-
-	warnings := WarnPRDQuality(prd)
-	if len(warnings) != 1 {
-		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
-	}
-	if warnings[0] != "US-001: missing 'Typecheck passes' criterion" {
-		t.Errorf("unexpected warning: %s", warnings[0])
-	}
-}
-
-func TestWarnPRDQuality_AllGood(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", AcceptanceCriteria: []string{"Typecheck passes", "Tests pass"}},
-			{ID: "US-002", AcceptanceCriteria: []string{"Typecheck passes", "UI renders"}},
-		},
-	}
-
-	warnings := WarnPRDQuality(prd)
-	if len(warnings) != 0 {
-		t.Errorf("expected no warnings, got %v", warnings)
-	}
-}
-
-func TestWarnPRDQuality_CaseInsensitive(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", AcceptanceCriteria: []string{"typecheck passes"}},
-			{ID: "US-002", AcceptanceCriteria: []string{"All TYPECHECK errors resolved"}},
-		},
-	}
-
-	warnings := WarnPRDQuality(prd)
-	if len(warnings) != 0 {
-		t.Errorf("expected no warnings for case-insensitive match, got %v", warnings)
-	}
-}
-
-func TestSetCurrentStory(t *testing.T) {
-	prd := &PRD{Run: Run{}}
-
-	prd.SetCurrentStory("US-001")
-
-	if prd.Run.CurrentStoryID == nil || *prd.Run.CurrentStoryID != "US-001" {
-		t.Errorf("expected currentStoryId='US-001', got %v", prd.Run.CurrentStoryID)
-	}
-	if prd.Run.StartedAt == nil {
-		t.Error("expected startedAt to be set")
-	}
-}
-
-func TestSetCurrentStory_PreservesStartedAt(t *testing.T) {
-	ts := "2024-01-15T10:00:00Z"
-	prd := &PRD{Run: Run{StartedAt: &ts}}
-
-	prd.SetCurrentStory("US-002")
-
-	if prd.Run.StartedAt == nil || *prd.Run.StartedAt != ts {
-		t.Errorf("expected startedAt preserved as '%s', got %v", ts, prd.Run.StartedAt)
-	}
-}
-
-func TestClearCurrentStory(t *testing.T) {
-	id := "US-001"
-	prd := &PRD{Run: Run{CurrentStoryID: &id}}
-
-	prd.ClearCurrentStory()
-
-	if prd.Run.CurrentStoryID != nil {
-		t.Errorf("expected currentStoryId=nil, got %v", prd.Run.CurrentStoryID)
-	}
-}
-
-func TestMarkStoryPassed(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: false},
-		},
-	}
-
-	prd.MarkStoryPassed("US-001", "abc123", "Implemented login")
-
-	story := GetStoryByID(prd, "US-001")
-	if !story.Passes {
-		t.Error("expected passes=true")
-	}
-	if story.LastResult == nil {
-		t.Fatal("expected lastResult to be set")
-	}
-	if story.LastResult.Commit != "abc123" {
-		t.Errorf("expected commit='abc123', got '%s'", story.LastResult.Commit)
-	}
-	if story.LastResult.Summary != "Implemented login" {
-		t.Errorf("expected summary='Implemented login', got '%s'", story.LastResult.Summary)
-	}
-	if story.LastResult.CompletedAt == "" {
-		t.Error("expected completedAt to be set")
-	}
-}
-
-func TestMarkStoryPassed_NotFound(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: false},
-		},
-	}
-
-	// Should not panic
-	prd.MarkStoryPassed("US-999", "abc", "summary")
-
-	story := GetStoryByID(prd, "US-001")
-	if story.Passes {
-		t.Error("expected US-001 to remain unpassed")
-	}
-}
-
-func TestHasBlockedStories(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Blocked: false},
-			{ID: "US-002", Blocked: true},
-		},
-	}
-
-	if !HasBlockedStories(prd) {
-		t.Error("expected HasBlockedStories=true")
-	}
-
-	prdNoBlocked := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Blocked: false},
-		},
-	}
-	if HasBlockedStories(prdNoBlocked) {
-		t.Error("expected HasBlockedStories=false")
-	}
-}
-
-func TestGetBlockedStories(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Blocked: false},
-			{ID: "US-002", Blocked: true},
-			{ID: "US-003", Blocked: true},
-		},
-	}
-
-	blocked := GetBlockedStories(prd)
-	if len(blocked) != 2 {
-		t.Fatalf("expected 2 blocked stories, got %d", len(blocked))
-	}
-	if blocked[0].ID != "US-002" || blocked[1].ID != "US-003" {
-		t.Errorf("unexpected blocked stories: %v", blocked)
-	}
-}
-
-func TestCountComplete(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: true},
-			{ID: "US-002", Passes: false},
-			{ID: "US-003", Passes: true},
-		},
-	}
-
-	if count := CountComplete(prd); count != 2 {
-		t.Errorf("expected 2 complete, got %d", count)
-	}
-}
-
-func TestCountBlocked(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Blocked: false},
-			{ID: "US-002", Blocked: true},
-			{ID: "US-003", Blocked: true},
-		},
-	}
-
-	if count := CountBlocked(prd); count != 2 {
-		t.Errorf("expected 2 blocked, got %d", count)
-	}
-}
-
-func TestGetStoryByID(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "First"},
-			{ID: "US-002", Title: "Second"},
-		},
-	}
-
-	story := GetStoryByID(prd, "US-002")
-	if story == nil {
-		t.Fatal("expected story, got nil")
-	}
-	if story.Title != "Second" {
-		t.Errorf("expected title='Second', got '%s'", story.Title)
-	}
-
-	notFound := GetStoryByID(prd, "US-999")
-	if notFound != nil {
-		t.Errorf("expected nil for non-existent ID, got %v", notFound)
-	}
-}
-
-func TestGetPendingStories(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: true},
-			{ID: "US-002", Passes: false, Blocked: false},
-			{ID: "US-003", Passes: false, Blocked: true},
-			{ID: "US-004", Passes: false, Blocked: false},
-		},
-	}
-
-	pending := GetPendingStories(prd)
-	if len(pending) != 2 {
-		t.Fatalf("expected 2 pending, got %d", len(pending))
-	}
-	if pending[0].ID != "US-002" || pending[1].ID != "US-004" {
-		t.Errorf("expected US-002 and US-004, got %s and %s", pending[0].ID, pending[1].ID)
-	}
-}
-
-func TestGetPendingStories_AllComplete(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: true},
-			{ID: "US-002", Passes: false, Blocked: true},
-		},
-	}
-
-	pending := GetPendingStories(prd)
-	if len(pending) != 0 {
-		t.Errorf("expected 0 pending, got %d", len(pending))
-	}
-}
-
-func TestGetNextStory_PrefersCurrentStoryID(t *testing.T) {
-	currentID := "US-003"
-	prd := &PRD{
-		Run: Run{CurrentStoryID: &currentID},
-		UserStories: []UserStory{
-			{ID: "US-001", Priority: 1, Passes: false},
-			{ID: "US-002", Priority: 2, Passes: false},
-			{ID: "US-003", Priority: 3, Passes: false}, // lower priority but current
-		},
-	}
-
-	next := GetNextStory(prd)
-	if next == nil {
-		t.Fatal("expected next story, got nil")
-	}
-	if next.ID != "US-003" {
-		t.Errorf("expected US-003 (currentStoryID), got %s", next.ID)
-	}
-}
-
-func TestGetNextStory_CurrentStoryID_PassedFallsThrough(t *testing.T) {
-	currentID := "US-001"
-	prd := &PRD{
-		Run: Run{CurrentStoryID: &currentID},
-		UserStories: []UserStory{
-			{ID: "US-001", Priority: 1, Passes: true}, // current but already passed
-			{ID: "US-002", Priority: 2, Passes: false},
-		},
-	}
-
-	next := GetNextStory(prd)
-	if next == nil {
-		t.Fatal("expected next story, got nil")
-	}
-	if next.ID != "US-002" {
-		t.Errorf("expected US-002 (fallthrough), got %s", next.ID)
-	}
-}
-
-func TestGetNextStory_CurrentStoryID_BlockedFallsThrough(t *testing.T) {
-	currentID := "US-001"
-	prd := &PRD{
-		Run: Run{CurrentStoryID: &currentID},
-		UserStories: []UserStory{
-			{ID: "US-001", Priority: 1, Passes: false, Blocked: true},
-			{ID: "US-002", Priority: 2, Passes: false},
-		},
-	}
-
-	next := GetNextStory(prd)
-	if next == nil {
-		t.Fatal("expected next story, got nil")
-	}
-	if next.ID != "US-002" {
-		t.Errorf("expected US-002 (fallthrough from blocked), got %s", next.ID)
-	}
-}
-
-func TestGetNextStory_CurrentStoryID_NonExistentFallsThrough(t *testing.T) {
-	currentID := "US-999"
-	prd := &PRD{
-		Run: Run{CurrentStoryID: &currentID},
-		UserStories: []UserStory{
-			{ID: "US-001", Priority: 1, Passes: false},
-			{ID: "US-002", Priority: 2, Passes: false},
-		},
-	}
-
-	next := GetNextStory(prd)
-	if next == nil {
-		t.Fatal("expected next story, got nil")
-	}
-	if next.ID != "US-001" {
-		t.Errorf("expected US-001 (fallthrough from nonexistent), got %s", next.ID)
-	}
-}
-
-func TestMarkStoryPassed_ClearsBlocked(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: false, Blocked: true},
-		},
-	}
-
-	prd.MarkStoryPassed("US-001", "abc123", "Implemented")
-
-	story := GetStoryByID(prd, "US-001")
-	if !story.Passes {
-		t.Error("expected passes=true")
-	}
-	if story.Blocked {
-		t.Error("expected blocked=false after marking passed")
-	}
-}
-
-func TestMarkStoryFailed_ClearsPasses(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: true, LastResult: &LastResult{Commit: "abc"}},
-		},
-	}
-
-	prd.MarkStoryFailed("US-001", "test failure", 3)
-
-	story := GetStoryByID(prd, "US-001")
-	if story.Passes {
-		t.Error("expected passes=false after marking failed")
-	}
-	if story.LastResult != nil {
-		t.Error("expected lastResult=nil after marking failed")
-	}
-}
-
-func TestMarkStoryBlocked_ClearsPasses(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Passes: true, LastResult: &LastResult{Commit: "abc"}},
-		},
-	}
-
-	prd.MarkStoryBlocked("US-001", "impossible to implement")
-
-	story := GetStoryByID(prd, "US-001")
-	if story.Passes {
-		t.Error("expected passes=false after marking blocked")
-	}
-	if story.LastResult != nil {
-		t.Error("expected lastResult=nil after marking blocked")
-	}
-	if !story.Blocked {
-		t.Error("expected blocked=true")
-	}
-}
-
-// --- v3 / WorkingPRD tests ---
+// --- v3 definition + flat RunState tests ---
 
 func writeV3PRD(t *testing.T, dir string) string {
 	t.Helper()
@@ -884,8 +531,8 @@ func TestLoadRunState_NotFound(t *testing.T) {
 	if state == nil {
 		t.Fatal("expected non-nil state")
 	}
-	if len(state.Stories) != 0 {
-		t.Errorf("expected empty stories map, got %d entries", len(state.Stories))
+	if len(state.Passed) != 0 {
+		t.Errorf("expected empty passed, got %d entries", len(state.Passed))
 	}
 }
 
@@ -893,12 +540,9 @@ func TestLoadRunState_Valid(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "run-state.json")
 
-	state := &RunState{
-		Learnings: []string{"learned something"},
-		Stories: map[string]*StoryState{
-			"US-001": {Passes: true, Retries: 1},
-		},
-	}
+	state := NewRunState()
+	state.Learnings = []string{"learned something"}
+	state.MarkPassed("US-001")
 	if err := SaveRunState(statePath, state); err != nil {
 		t.Fatalf("SaveRunState failed: %v", err)
 	}
@@ -910,8 +554,8 @@ func TestLoadRunState_Valid(t *testing.T) {
 	if len(loaded.Learnings) != 1 || loaded.Learnings[0] != "learned something" {
 		t.Errorf("expected learnings preserved, got %v", loaded.Learnings)
 	}
-	if ss, ok := loaded.Stories["US-001"]; !ok || !ss.Passes {
-		t.Error("expected US-001 passes=true")
+	if !loaded.IsPassed("US-001") {
+		t.Error("expected US-001 passed=true")
 	}
 }
 
@@ -930,17 +574,11 @@ func TestSaveRunState_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "run-state.json")
 
-	ts := "2024-01-15T10:00:00Z"
-	storyID := "US-002"
-	original := &RunState{
-		StartedAt:      &ts,
-		CurrentStoryID: &storyID,
-		Learnings:      []string{"l1", "l2"},
-		Stories: map[string]*StoryState{
-			"US-001": {Passes: true, Retries: 0, LastResult: &LastResult{Commit: "abc", Summary: "done"}},
-			"US-002": {Passes: false, Retries: 2, Blocked: true, Notes: "stuck"},
-		},
-	}
+	original := NewRunState()
+	original.Learnings = []string{"l1", "l2"}
+	original.MarkPassed("US-001")
+	original.MarkFailed("US-002", "stuck", 5)
+	original.MarkSkipped("US-003", "impossible")
 
 	if err := SaveRunState(statePath, original); err != nil {
 		t.Fatalf("SaveRunState failed: %v", err)
@@ -951,185 +589,79 @@ func TestSaveRunState_RoundTrip(t *testing.T) {
 		t.Fatalf("LoadRunState failed: %v", err)
 	}
 
-	if *loaded.StartedAt != ts {
-		t.Errorf("expected startedAt='%s', got '%s'", ts, *loaded.StartedAt)
-	}
-	if *loaded.CurrentStoryID != storyID {
-		t.Errorf("expected currentStoryId='%s', got '%s'", storyID, *loaded.CurrentStoryID)
-	}
 	if len(loaded.Learnings) != 2 {
 		t.Errorf("expected 2 learnings, got %d", len(loaded.Learnings))
 	}
-	if !loaded.Stories["US-001"].Passes {
-		t.Error("expected US-001 passes=true")
+	if !loaded.IsPassed("US-001") {
+		t.Error("expected US-001 passed=true")
 	}
-	if !loaded.Stories["US-002"].Blocked {
-		t.Error("expected US-002 blocked=true")
+	if loaded.GetRetries("US-002") != 1 {
+		t.Errorf("expected US-002 retries=1, got %d", loaded.GetRetries("US-002"))
+	}
+	if !loaded.IsSkipped("US-003") {
+		t.Error("expected US-003 skipped=true")
 	}
 }
 
-func TestLoadWorkingPRD_BothFiles(t *testing.T) {
+func TestLoadRunState_MigrateOldFormat(t *testing.T) {
 	dir := t.TempDir()
-	prdPath := writeV3PRD(t, dir)
 	statePath := filepath.Join(dir, "run-state.json")
 
-	state := &RunState{
-		Learnings: []string{"l1"},
-		Stories: map[string]*StoryState{
-			"US-001": {Passes: true, Retries: 1, LastResult: &LastResult{Commit: "abc"}},
-		},
-	}
-	SaveRunState(statePath, state)
-
-	wprd, err := LoadWorkingPRD(prdPath, statePath)
-	if err != nil {
-		t.Fatalf("LoadWorkingPRD failed: %v", err)
-	}
-	prd := wprd.PRD()
-
-	if prd.Project != "TestProject" {
-		t.Errorf("expected project='TestProject', got '%s'", prd.Project)
-	}
-	if len(prd.Run.Learnings) != 1 {
-		t.Errorf("expected 1 learning, got %d", len(prd.Run.Learnings))
-	}
-
-	// US-001 should have merged state
-	s1 := GetStoryByID(prd, "US-001")
-	if !s1.Passes {
-		t.Error("expected US-001 passes=true from state")
-	}
-	if s1.Retries != 1 {
-		t.Errorf("expected US-001 retries=1, got %d", s1.Retries)
-	}
-
-	// US-002 should have zero state (no state entry)
-	s2 := GetStoryByID(prd, "US-002")
-	if s2.Passes {
-		t.Error("expected US-002 passes=false (no state)")
-	}
-}
-
-func TestLoadWorkingPRD_StateMissing(t *testing.T) {
-	dir := t.TempDir()
-	prdPath := writeV3PRD(t, dir)
-	statePath := filepath.Join(dir, "run-state.json") // does not exist
-
-	wprd, err := LoadWorkingPRD(prdPath, statePath)
-	if err != nil {
-		t.Fatalf("LoadWorkingPRD failed: %v", err)
-	}
-	prd := wprd.PRD()
-
-	if len(prd.UserStories) != 2 {
-		t.Errorf("expected 2 stories, got %d", len(prd.UserStories))
-	}
-	// All stories should be zero state
-	for _, s := range prd.UserStories {
-		if s.Passes || s.Blocked || s.Retries != 0 {
-			t.Errorf("expected zero state for %s, got passes=%v blocked=%v retries=%d", s.ID, s.Passes, s.Blocked, s.Retries)
+	// Write old format with "stories" key
+	oldState := `{
+		"learnings": ["old learning"],
+		"stories": {
+			"US-001": {"passes": true, "retries": 0},
+			"US-002": {"passes": false, "retries": 2, "blocked": true, "notes": "stuck"}
 		}
-	}
-}
+	}`
+	os.WriteFile(statePath, []byte(oldState), 0644)
 
-func TestLoadWorkingPRD_SaveState(t *testing.T) {
-	dir := t.TempDir()
-	prdPath := writeV3PRD(t, dir)
-	statePath := filepath.Join(dir, "run-state.json")
-
-	wprd, err := LoadWorkingPRD(prdPath, statePath)
-	if err != nil {
-		t.Fatalf("LoadWorkingPRD failed: %v", err)
-	}
-	prd := wprd.PRD()
-
-	// Modify state through prd methods
-	prd.MarkStoryPassed("US-001", "commit123", "done")
-	prd.AddLearning("new learning")
-
-	if err := wprd.SaveState(); err != nil {
-		t.Fatalf("SaveState failed: %v", err)
-	}
-
-	// Verify run-state.json was written
 	loaded, err := LoadRunState(statePath)
 	if err != nil {
-		t.Fatalf("LoadRunState failed: %v", err)
-	}
-	if !loaded.Stories["US-001"].Passes {
-		t.Error("expected US-001 passes=true in saved state")
-	}
-	if len(loaded.Learnings) != 1 || loaded.Learnings[0] != "new learning" {
-		t.Errorf("expected learning saved, got %v", loaded.Learnings)
+		t.Fatalf("LoadRunState migration failed: %v", err)
 	}
 
-	// Verify prd.json was NOT modified (still v3 definition only)
-	def, err := LoadPRDDefinition(prdPath)
-	if err != nil {
-		t.Fatalf("LoadPRDDefinition failed after SaveState: %v", err)
+	if len(loaded.Learnings) != 1 || loaded.Learnings[0] != "old learning" {
+		t.Errorf("expected migrated learnings, got %v", loaded.Learnings)
 	}
-	if def.SchemaVersion != 3 {
-		t.Errorf("expected prd.json still v3, got %d", def.SchemaVersion)
+	if !loaded.IsPassed("US-001") {
+		t.Error("expected US-001 migrated to passed")
+	}
+	if !loaded.IsSkipped("US-002") {
+		t.Error("expected US-002 migrated to skipped (was blocked)")
+	}
+	if loaded.GetRetries("US-002") != 2 {
+		t.Errorf("expected US-002 retries=2, got %d", loaded.GetRetries("US-002"))
+	}
+	if loaded.GetLastFailure("US-002") != "stuck" {
+		t.Errorf("expected US-002 lastFailure='stuck', got '%s'", loaded.GetLastFailure("US-002"))
 	}
 }
 
-func TestReconcileState_OrphanedStory(t *testing.T) {
-	def := &PRDDefinition{
-		UserStories: []StoryDefinition{
-			{ID: "US-001"},
-			{ID: "US-002"},
-		},
+func TestNewRunState(t *testing.T) {
+	state := NewRunState()
+	if state == nil {
+		t.Fatal("expected non-nil state")
 	}
-	state := &RunState{
-		Stories: map[string]*StoryState{
-			"US-001": {Passes: true},
-			"US-003": {Passes: true}, // orphaned — removed from PRD
-		},
+	if state.Retries == nil {
+		t.Error("expected non-nil Retries map")
 	}
-
-	orphaned := ReconcileState(def, state)
-	if len(orphaned) != 1 || orphaned[0] != "US-003" {
-		t.Errorf("expected orphaned=[US-003], got %v", orphaned)
+	if state.LastFailure == nil {
+		t.Error("expected non-nil LastFailure map")
 	}
 }
 
-func TestReconcileState_NoOrphans(t *testing.T) {
-	def := &PRDDefinition{
-		UserStories: []StoryDefinition{
-			{ID: "US-001"},
-			{ID: "US-002"},
-		},
-	}
-	state := &RunState{
-		Stories: map[string]*StoryState{
-			"US-001": {Passes: true},
-		},
-	}
-
-	orphaned := ReconcileState(def, state)
-	if len(orphaned) != 0 {
-		t.Errorf("expected no orphans, got %v", orphaned)
+func TestGetRetries_ZeroForUnknown(t *testing.T) {
+	state := NewRunState()
+	if state.GetRetries("US-999") != 0 {
+		t.Errorf("expected 0 retries for unknown story")
 	}
 }
 
-func TestReconcileState_NewStory(t *testing.T) {
-	def := &PRDDefinition{
-		UserStories: []StoryDefinition{
-			{ID: "US-001"},
-			{ID: "US-002"},
-			{ID: "US-003"}, // new story, no state yet
-		},
-	}
-	state := &RunState{
-		Stories: map[string]*StoryState{
-			"US-001": {Passes: true},
-		},
-	}
-
-	orphaned := ReconcileState(def, state)
-	if len(orphaned) != 0 {
-		t.Errorf("expected no orphans for new story, got %v", orphaned)
+func TestGetLastFailure_EmptyForUnknown(t *testing.T) {
+	state := NewRunState()
+	if state.GetLastFailure("US-999") != "" {
+		t.Errorf("expected empty lastFailure for unknown story")
 	}
 }
-
-

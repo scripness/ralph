@@ -48,4 +48,4 @@ The user may ask you to:
 - You are on branch `{{branchName}}` — commit your work here
 - If you modify `prd.json`, preserve the schema (schemaVersion: 3) and valid story IDs
 - After making changes, the user can run `ralph run {{feature}}` to resume automated implementation
-- The run command's pre-verify phase will re-validate all stories, so don't worry about marking story state perfectly
+- The run command's verify-at-top-of-loop will re-check each story before implementation, so don't worry about marking story state perfectly

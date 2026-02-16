@@ -453,16 +453,20 @@ func runRalphInteractive(t *testing.T, dir string, timeout time.Duration,
 	}
 }
 
-// loadWorkingPRD loads a PRD from prd.json + run-state.json via the WorkingPRD adapter.
-func loadWorkingPRD(t *testing.T, featureDir string) *PRD {
+// loadPRDAndState loads a PRDDefinition and RunState from a feature directory.
+func loadPRDAndState(t *testing.T, featureDir string) (*PRDDefinition, *RunState) {
 	t.Helper()
 	prdPath := filepath.Join(featureDir, "prd.json")
 	statePath := filepath.Join(featureDir, "run-state.json")
-	wprd, err := LoadWorkingPRD(prdPath, statePath)
+	def, err := LoadPRDDefinition(prdPath)
 	if err != nil {
-		t.Fatalf("Failed to load WorkingPRD from %s: %v", featureDir, err)
+		t.Fatalf("Failed to load PRDDefinition from %s: %v", featureDir, err)
 	}
-	return wprd.PRD()
+	state, err := LoadRunState(statePath)
+	if err != nil {
+		t.Fatalf("Failed to load RunState from %s: %v", featureDir, err)
+	}
+	return def, state
 }
 
 // loadConfig loads and parses a ralph.config.json file.
@@ -609,19 +613,19 @@ func runCmd(t *testing.T, dir string, timeout time.Duration, name string, args .
 	}
 }
 
-// countStories returns (total, passed, blocked, pending, withRetries) from a PRD.
-func countStories(prd *PRD) (total, passed, blocked, pending, withRetries int) {
-	total = len(prd.UserStories)
-	for _, s := range prd.UserStories {
+// countStories returns (total, passed, skipped, pending, withRetries) from a PRDDefinition and RunState.
+func countStories(def *PRDDefinition, state *RunState) (total, passed, skipped, pending, withRetries int) {
+	total = len(def.UserStories)
+	for _, s := range def.UserStories {
 		switch {
-		case s.Passes:
+		case state.IsPassed(s.ID):
 			passed++
-		case s.Blocked:
-			blocked++
+		case state.IsSkipped(s.ID):
+			skipped++
 		default:
 			pending++
 		}
-		if s.Retries > 0 {
+		if state.GetRetries(s.ID) > 0 {
 			withRetries++
 		}
 	}
@@ -629,8 +633,8 @@ func countStories(prd *PRD) (total, passed, blocked, pending, withRetries int) {
 }
 
 // hasUIStory returns true if any story has a "ui" tag.
-func hasUIStory(prd *PRD) bool {
-	for _, s := range prd.UserStories {
+func hasUIStory(def *PRDDefinition) bool {
+	for _, s := range def.UserStories {
 		for _, tag := range s.Tags {
 			if strings.EqualFold(tag, "ui") {
 				return true
@@ -640,21 +644,21 @@ func hasUIStory(prd *PRD) bool {
 	return false
 }
 
-// storyStatus returns a human-readable status string.
-func storyStatus(s UserStory) string {
-	if s.Passes {
+// storyStatusStr returns a human-readable status string.
+func storyStatusStr(id string, state *RunState) string {
+	if state.IsPassed(id) {
 		return "PASSED"
 	}
-	if s.Blocked {
-		return "BLOCKED"
+	if state.IsSkipped(id) {
+		return "SKIPPED"
 	}
 	return "PENDING"
 }
 
 // firstStoryID returns the ID of the first story in the PRD, or "" if none.
-func firstStoryID(prd *PRD) string {
-	if len(prd.UserStories) > 0 {
-		return prd.UserStories[0].ID
+func firstStoryID(def *PRDDefinition) string {
+	if len(def.UserStories) > 0 {
+		return def.UserStories[0].ID
 	}
 	return ""
 }
@@ -859,10 +863,10 @@ func phase1Setup(t *testing.T, env *testEnv) {
 			if prdJsonPath != "" {
 				featureDirPath := filepath.Dir(prdJsonPath)
 				statePath := filepath.Join(featureDirPath, "run-state.json")
-				if wprd, err := LoadWorkingPRD(prdJsonPath, statePath); err == nil {
-					prd := wprd.PRD()
-					_, passed, _, _, _ := countStories(prd)
-					if passed == len(prd.UserStories) {
+				if def, err := LoadPRDDefinition(prdJsonPath); err == nil {
+					state, _ := LoadRunState(statePath)
+					_, passed, _, _, _ := countStories(def, state)
+					if passed == len(def.UserStories) {
 						os.RemoveAll(env.projectDir)
 						return
 					}
@@ -1192,28 +1196,10 @@ Add Playwright e2e tests that verify search and filter functionality works corre
 	}
 }
 
-// phase6PreRunChecks runs validate, status, and next commands.
+// phase6PreRunChecks runs status commands.
 func phase6PreRunChecks(t *testing.T, env *testEnv) {
-	// ralph validate
-	result := runRalph(t, env.projectDir, "validate", env.featureName)
-	savePhaseOutput(env, "06-validate", result)
-	if !result.Success() {
-		t.Errorf("ralph validate failed: %s", result.Combined())
-	} else {
-		combined := result.Combined()
-		if !strings.Contains(combined, "prd.json is valid") {
-			t.Errorf("validate output missing 'prd.json is valid': %s", combined)
-		}
-		if !strings.Contains(combined, "stories") {
-			t.Errorf("validate output missing story count: %s", combined)
-		}
-		if !strings.Contains(combined, "Schema version: 3") {
-			t.Errorf("validate output missing schema version: %s", combined)
-		}
-	}
-
 	// ralph status <feature>
-	result = runRalph(t, env.projectDir, "status", env.featureName)
+	result := runRalph(t, env.projectDir, "status", env.featureName)
 	savePhaseOutput(env, "06-status", result)
 	if !result.Success() {
 		t.Errorf("ralph status failed: %s", result.Combined())
@@ -1229,21 +1215,6 @@ func phase6PreRunChecks(t *testing.T, env *testEnv) {
 	} else if !strings.Contains(result.Combined(), env.featureName) {
 		t.Errorf("status (all features) missing feature name %q: %s",
 			env.featureName, result.Combined())
-	}
-
-	// ralph next
-	result = runRalph(t, env.projectDir, "next", env.featureName)
-	savePhaseOutput(env, "06-next", result)
-	if !result.Success() {
-		t.Errorf("ralph next failed: %s", result.Combined())
-	} else {
-		combined := result.Combined()
-		if !strings.Contains(combined, "US-") {
-			t.Errorf("next output missing story ID (US-*): %s", combined)
-		}
-		if !strings.Contains(combined, "Priority:") {
-			t.Errorf("next output missing 'Priority:': %s", combined)
-		}
 	}
 }
 
@@ -1309,43 +1280,32 @@ func phase8PostRunAnalysis(t *testing.T, env *testEnv) {
 	// Save current prd.json snapshot
 	copyArtifact(env, "prd-after-run1.json", prdJsonPath)
 
-	prd := loadWorkingPRD(t, featureDir)
-	total, passed, blocked, pending, withRetries := countStories(prd)
+	def, state := loadPRDAndState(t, featureDir)
+	total, passed, skipped, pending, withRetries := countStories(def, state)
 
-	t.Logf("Post-run story status: %d total, %d passed, %d blocked, %d pending, %d with retries",
-		total, passed, blocked, pending, withRetries)
+	t.Logf("Post-run story status: %d total, %d passed, %d skipped, %d pending, %d with retries",
+		total, passed, skipped, pending, withRetries)
 
-	runStarted := prd.Run.StartedAt != nil
-	if runStarted {
-		t.Logf("Run started at: %s", *prd.Run.StartedAt)
-	} else {
-		t.Error("run.startedAt not set — run may not have started properly")
-	}
-
-	stateChanged := false
-	for _, s := range prd.UserStories {
-		if s.Passes || s.Blocked || s.Retries > 0 {
-			stateChanged = true
+	// Check if run made any progress
+	runStarted := len(state.Passed) > 0 || len(state.Skipped) > 0 || len(state.Learnings) > 0
+	for _, r := range state.Retries {
+		if r > 0 {
+			runStarted = true
 			break
 		}
 	}
+
+	stateChanged := passed > 0 || skipped > 0 || withRetries > 0
 	if !stateChanged && runStarted {
 		t.Error("No story changed state during the run — nothing was attempted")
 	} else if !stateChanged {
 		t.Log("No story changed state (run did not start — check Phase 7 output)")
 	}
 
-	if len(prd.Run.Learnings) > 0 {
-		t.Logf("Learnings captured: %d", len(prd.Run.Learnings))
-		for i, l := range prd.Run.Learnings {
+	if len(state.Learnings) > 0 {
+		t.Logf("Learnings captured: %d", len(state.Learnings))
+		for i, l := range state.Learnings {
 			t.Logf("  Learning %d: %s", i+1, truncate(l, 120))
-		}
-	}
-
-	// Validate passed stories have commits
-	for _, s := range prd.UserStories {
-		if s.Passes && (s.LastResult == nil || s.LastResult.Commit == "") {
-			t.Errorf("Story %s is marked passed but has no commit in LastResult", s.ID)
 		}
 	}
 
@@ -1418,12 +1378,12 @@ func phase8PostRunAnalysis(t *testing.T, env *testEnv) {
 		t.Log("No log files found (run did not start)")
 	}
 
-	for _, s := range prd.UserStories {
-		t.Logf("  %s: %s [%s] retries=%d", s.ID, s.Title, storyStatus(s), s.Retries)
+	for _, s := range def.UserStories {
+		t.Logf("  %s: %s [%s] retries=%d", s.ID, s.Title, storyStatusStr(s.ID, state), state.GetRetries(s.ID))
 	}
 }
 
-// phase9PrdRefine resets failed/blocked stories so the second run can retry them.
+// phase9PrdRefine resets failed/skipped stories so the second run can retry them.
 // We skip interactive `ralph prd` refinement because it spawns Claude with inherited
 // stdin, which hangs in a pipe-based test environment. Instead, we directly reset
 // story state in prd.json — this is what a user would do before re-running.
@@ -1432,47 +1392,51 @@ func phase9PrdRefine(t *testing.T, env *testEnv) {
 	prdJsonPath := filepath.Join(featureDir, "prd.json")
 
 	statePath := filepath.Join(featureDir, "run-state.json")
-	wprd, wprdErr := LoadWorkingPRD(prdJsonPath, statePath)
-	if wprdErr != nil {
-		t.Fatalf("Failed to load WorkingPRD: %v", wprdErr)
+	def, defErr := LoadPRDDefinition(prdJsonPath)
+	if defErr != nil {
+		t.Fatalf("Failed to load PRDDefinition: %v", defErr)
 	}
-	prd := wprd.PRD()
-	_, passed, blocked, _, _ := countStories(prd)
+	state, stateErr := LoadRunState(statePath)
+	if stateErr != nil {
+		t.Fatalf("Failed to load RunState: %v", stateErr)
+	}
+	_, passed, skipped, _, _ := countStories(def, state)
 
-	if passed == len(prd.UserStories) {
+	if passed == len(def.UserStories) {
 		saveSkippedPhase(env, "09-refine", fmt.Sprintf("All %d stories passed — no refinement needed", passed))
 		t.Skip("All stories passed — skipping refinement")
 	}
 
-	t.Logf("Not all stories passed (%d/%d, %d blocked) — resetting for retry", passed, len(prd.UserStories), blocked)
+	t.Logf("Not all stories passed (%d/%d, %d skipped) — resetting for retry", passed, len(def.UserStories), skipped)
 
-	// Reset blocked stories so they can be retried
+	// Reset skipped stories so they can be retried
 	modified := false
-	for i := range prd.UserStories {
-		if prd.UserStories[i].Blocked {
-			prd.UserStories[i].Blocked = false
-			prd.UserStories[i].Retries = 0
-			prd.UserStories[i].Notes = ""
+	for _, s := range def.UserStories {
+		if state.IsSkipped(s.ID) {
+			state.UnmarkPassed(s.ID) // clear from skipped
+			// Remove from Skipped list
+			newSkipped := make([]string, 0, len(state.Skipped))
+			for _, id := range state.Skipped {
+				if id != s.ID {
+					newSkipped = append(newSkipped, id)
+				}
+			}
+			state.Skipped = newSkipped
+			delete(state.Retries, s.ID)
+			delete(state.LastFailure, s.ID)
 			modified = true
-			t.Logf("  Reset blocked story: %s", prd.UserStories[i].ID)
+			t.Logf("  Reset skipped story: %s", s.ID)
 		}
 	}
 
 	if modified {
-		if err := wprd.SaveState(); err != nil {
+		if err := SaveRunState(statePath, state); err != nil {
 			t.Fatalf("Failed to save run-state.json: %v", err)
 		}
 		copyArtifact(env, "prd-refined.json", statePath)
-
-		// Validate the PRD definition is still valid
-		valResult := runRalph(t, env.projectDir, "validate", env.featureName)
-		savePhaseOutput(env, "09-validate-after-refine", valResult)
-		if !valResult.Success() {
-			t.Errorf("ralph validate failed after PRD reset: %s", valResult.Combined())
-		}
 	} else {
-		savePhaseOutput(env, "09-refine", ralphResult{Stdout: "No blocked stories to reset"})
-		t.Log("No blocked stories to reset — second run will retry failed stories")
+		savePhaseOutput(env, "09-refine", ralphResult{Stdout: "No skipped stories to reset"})
+		t.Log("No skipped stories to reset — second run will retry failed stories")
 	}
 }
 
@@ -1481,16 +1445,16 @@ func phase10SecondRun(t *testing.T, env *testEnv) {
 	featureDir := findFeatureDir(t, env.projectDir, env.featureName)
 	prdJsonPath := filepath.Join(featureDir, "prd.json")
 
-	prd := loadWorkingPRD(t, featureDir)
-	_, passed, _, pending, _ := countStories(prd)
+	def, state := loadPRDAndState(t, featureDir)
+	_, passed, _, pending, _ := countStories(def, state)
 
-	if passed == len(prd.UserStories) {
+	if passed == len(def.UserStories) {
 		saveSkippedPhase(env, "10-second-run", fmt.Sprintf("All %d stories already passed", passed))
 		t.Skip("All stories already passed — skipping second run")
 	}
 	if pending == 0 {
-		saveSkippedPhase(env, "10-second-run", "No pending stories — all are passed or blocked")
-		t.Skip("No pending stories — all are passed or blocked")
+		saveSkippedPhase(env, "10-second-run", "No pending stories — all are passed or skipped")
+		t.Skip("No pending stories — all are passed or skipped")
 	}
 
 	t.Logf("Starting second run (%d pending stories, 20 min timeout)...", pending)
@@ -1616,38 +1580,19 @@ func phase11StatusLogsResources(t *testing.T, env *testEnv) {
 		}
 	}
 
-	// --- ralph resources list ---
-	result = runRalph(t, env.projectDir, "resources", "list")
-	savePhaseOutput(env, "11-resources-list", result)
-	if !result.Success() {
-		t.Logf("ralph resources list failed (exit %d): %s", result.ExitCode, result.Combined())
-	} else {
-		combined := result.Combined()
-		if !strings.Contains(combined, "Cache directory:") {
-			t.Errorf("resources list missing 'Cache directory:' in output")
-		}
-		t.Logf("Resources: %s", truncate(result.Stdout, 200))
-	}
-
-	// --- ralph resources path ---
-	result = runRalph(t, env.projectDir, "resources", "path")
-	savePhaseOutput(env, "11-resources-path", result)
-	if !result.Success() {
-		t.Logf("ralph resources path failed (exit %d)", result.ExitCode)
-	}
 }
 
 // phase12Verify runs ralph verify if all stories passed.
 func phase12Verify(t *testing.T, env *testEnv) {
 	featureDir := findFeatureDir(t, env.projectDir, env.featureName)
 
-	prd := loadWorkingPRD(t, featureDir)
-	_, passed, _, _, _ := countStories(prd)
+	def, state := loadPRDAndState(t, featureDir)
+	_, passed, _, _, _ := countStories(def, state)
 
-	if passed != len(prd.UserStories) {
+	if passed != len(def.UserStories) {
 		saveSkippedPhase(env, "12-verify",
-			fmt.Sprintf("Not all stories passed (%d/%d)", passed, len(prd.UserStories)))
-		t.Skipf("Not all stories passed (%d/%d) — skipping verify", passed, len(prd.UserStories))
+			fmt.Sprintf("Not all stories passed (%d/%d)", passed, len(def.UserStories)))
+		t.Skipf("Not all stories passed (%d/%d) — skipping verify", passed, len(def.UserStories))
 	}
 
 	t.Log("All stories passed — running final verification (10 min timeout)...")
@@ -1736,7 +1681,8 @@ func writeReport(t *testing.T, env *testEnv) {
 	}
 
 	// Try to load PRD — may not exist if early phases failed
-	var prd *PRD
+	var def *PRDDefinition
+	var state *RunState
 	var featureDir string
 	if env.projectDir != "" {
 		ralphDir := filepath.Join(env.projectDir, ".ralph")
@@ -1762,24 +1708,25 @@ func writeReport(t *testing.T, env *testEnv) {
 		if featureDir != "" {
 			prdJsonPath := filepath.Join(featureDir, "prd.json")
 			statePath := filepath.Join(featureDir, "run-state.json")
-			if wprd, err := LoadWorkingPRD(prdJsonPath, statePath); err == nil {
-				prd = wprd.PRD()
+			if d, err := LoadPRDDefinition(prdJsonPath); err == nil {
+				def = d
+				state, _ = LoadRunState(statePath)
 			}
 		}
 	}
 
-	if prd == nil {
+	if def == nil {
 		report.WriteString("## Result: INCOMPLETE\n\n")
 		report.WriteString("PRD was not created — test failed in early phases.\n")
 		report.WriteString("Check `phases/` directory for command output.\n")
 		saveArtifact(env, "report.md", report.String())
 		saveArtifact(env, "result.txt", "INCOMPLETE\n")
-		writeSummaryJSON(env, "INCOMPLETE", nil, cfg, nil, "", 0)
+		writeSummaryJSON(env, "INCOMPLETE", nil, nil, cfg, nil, "", 0)
 		t.Log(report.String())
 		return
 	}
 
-	total, passed, blocked, pending, _ := countStories(prd)
+	total, passed, skipped, pending, _ := countStories(def, state)
 
 	var result string
 	switch {
@@ -1792,10 +1739,10 @@ func writeReport(t *testing.T, env *testEnv) {
 	}
 
 	report.WriteString(fmt.Sprintf("## Result: %s\n\n", result))
-	report.WriteString(fmt.Sprintf("**Stories:** %d total, %d passed, %d blocked, %d pending\n",
-		total, passed, blocked, pending))
-	if prd.Description != "" {
-		report.WriteString(fmt.Sprintf("**Description:** %s\n", prd.Description))
+	report.WriteString(fmt.Sprintf("**Stories:** %d total, %d passed, %d skipped, %d pending\n",
+		total, passed, skipped, pending))
+	if def.Description != "" {
+		report.WriteString(fmt.Sprintf("**Description:** %s\n", def.Description))
 	}
 	report.WriteString("\n")
 
@@ -1958,14 +1905,14 @@ func writeReport(t *testing.T, env *testEnv) {
 	// ============================================================
 	report.WriteString("## Stories (Ideas)\n\n")
 
-	for _, s := range prd.UserStories {
-		status := storyStatus(s)
+	for _, s := range def.UserStories {
+		status := storyStatusStr(s.ID, state)
 		icon := "?"
 		switch status {
 		case "PASSED":
 			icon = "PASS"
-		case "BLOCKED":
-			icon = "BLOCK"
+		case "SKIPPED":
+			icon = "SKIP"
 		case "PENDING":
 			icon = "PEND"
 		}
@@ -1976,36 +1923,23 @@ func writeReport(t *testing.T, env *testEnv) {
 		if len(s.Tags) > 0 {
 			report.WriteString(fmt.Sprintf("**Tags:** %s\n", strings.Join(s.Tags, ", ")))
 		}
-		report.WriteString(fmt.Sprintf("**Priority:** %d | **Retries:** %d\n\n", s.Priority, s.Retries))
+		report.WriteString(fmt.Sprintf("**Priority:** %d | **Retries:** %d\n\n", s.Priority, state.GetRetries(s.ID)))
 
 		// Acceptance criteria as checklist
 		report.WriteString("**Acceptance Criteria:**\n")
 		for _, ac := range s.AcceptanceCriteria {
 			check := " "
-			if s.Passes {
+			if state.IsPassed(s.ID) {
 				check = "x"
 			}
 			report.WriteString(fmt.Sprintf("- [%s] %s\n", check, ac))
 		}
 		report.WriteString("\n")
 
-		if s.LastResult != nil {
-			if s.LastResult.Commit != "" {
-				report.WriteString(fmt.Sprintf("**Last commit:** `%s`\n", s.LastResult.Commit))
-			}
-			if s.LastResult.Summary != "" {
-				report.WriteString(fmt.Sprintf("**Summary:** %s\n", s.LastResult.Summary))
-			}
-			if s.LastResult.CompletedAt != "" {
-				report.WriteString(fmt.Sprintf("**Completed at:** %s\n", s.LastResult.CompletedAt))
-			}
-			report.WriteString("\n")
-		}
-
-		// Failed/blocked: include failure details inline
-		if !s.Passes && s.Notes != "" {
+		// Failed/skipped: include failure details inline
+		if !state.IsPassed(s.ID) && state.GetLastFailure(s.ID) != "" {
 			report.WriteString("**Failure Details:**\n```\n")
-			report.WriteString(s.Notes)
+			report.WriteString(state.GetLastFailure(s.ID))
 			report.WriteString("\n```\n\n")
 		}
 
@@ -2017,21 +1951,21 @@ func writeReport(t *testing.T, env *testEnv) {
 		report.WriteString("---\n\n")
 
 		// Write per-story artifacts
-		writeStoryArtifact(env, s, logEvents, screenshotsByStory[s.ID])
+		writeStoryArtifact(env, s, state, logEvents, screenshotsByStory[s.ID])
 	}
 
 	// ============================================================
 	// Learnings
 	// ============================================================
-	if len(prd.Run.Learnings) > 0 {
+	if len(state.Learnings) > 0 {
 		report.WriteString("## Learnings\n\n")
-		for _, l := range prd.Run.Learnings {
+		for _, l := range state.Learnings {
 			report.WriteString(fmt.Sprintf("- %s\n", l))
 		}
 		report.WriteString("\n")
 
 		var learningsBuf strings.Builder
-		for i, l := range prd.Run.Learnings {
+		for i, l := range state.Learnings {
 			fmt.Fprintf(&learningsBuf, "%d. %s\n\n", i+1, l)
 		}
 		saveArtifact(env, "learnings.txt", learningsBuf.String())
@@ -2056,28 +1990,30 @@ func writeReport(t *testing.T, env *testEnv) {
 	// ============================================================
 	saveArtifact(env, "report.md", report.String())
 	saveArtifact(env, "result.txt", result+"\n")
-	writeSummaryJSON(env, result, prd, cfg, logEvents, branch, runNumber)
+	writeSummaryJSON(env, result, def, state, cfg, logEvents, branch, runNumber)
 
 	// Print summary to test output
 	t.Log("============================================================")
 	t.Log(" E2E Test Report")
 	t.Log("============================================================")
 	t.Logf(" Result: %s", result)
-	t.Logf(" Stories: %d total, %d passed, %d blocked, %d pending", total, passed, blocked, pending)
+	t.Logf(" Stories: %d total, %d passed, %d skipped, %d pending", total, passed, skipped, pending)
 	t.Log("")
 
-	for _, s := range prd.UserStories {
-		t.Logf("   [%s] %s: %s (retries=%d)", storyStatus(s), s.ID, s.Title, s.Retries)
-		if !s.Passes && s.Notes != "" {
-			lines := strings.SplitN(s.Notes, "\n", 3)
-			for _, line := range lines[:min(len(lines), 2)] {
-				t.Logf("         %s", truncate(line, 120))
+	for _, s := range def.UserStories {
+		t.Logf("   [%s] %s: %s (retries=%d)", storyStatusStr(s.ID, state), s.ID, s.Title, state.GetRetries(s.ID))
+		if !state.IsPassed(s.ID) {
+			if failMsg := state.GetLastFailure(s.ID); failMsg != "" {
+				lines := strings.SplitN(failMsg, "\n", 3)
+				for _, line := range lines[:min(len(lines), 2)] {
+					t.Logf("         %s", truncate(line, 120))
+				}
 			}
 		}
 	}
 
-	if len(prd.Run.Learnings) > 0 {
-		t.Logf("\n Learnings: %d captured", len(prd.Run.Learnings))
+	if len(state.Learnings) > 0 {
+		t.Logf("\n Learnings: %d captured", len(state.Learnings))
 	}
 
 	absArtifactDir, _ := filepath.Abs(env.artifactDir)
@@ -2205,15 +2141,19 @@ func extractStoryBrowserOutput(events []Event, storyID string) string {
 }
 
 // writeStoryArtifact writes per-story files to stories/<id>/.
-func writeStoryArtifact(env *testEnv, s UserStory, logEvents []Event, screenshots []string) {
+func writeStoryArtifact(env *testEnv, s StoryDefinition, state *RunState, logEvents []Event, screenshots []string) {
 	dir := strings.ToLower(s.ID)
 	var buf strings.Builder
 
-	status := storyStatus(s)
+	status := storyStatusStr(s.ID, state)
+	retries := state.GetRetries(s.ID)
+	lastFailure := state.GetLastFailure(s.ID)
+	passed := state.IsPassed(s.ID)
+
 	fmt.Fprintf(&buf, "# %s: %s\n\n", s.ID, s.Title)
 	fmt.Fprintf(&buf, "**Status:** %s\n", status)
 	fmt.Fprintf(&buf, "**Priority:** %d\n", s.Priority)
-	fmt.Fprintf(&buf, "**Retries:** %d\n", s.Retries)
+	fmt.Fprintf(&buf, "**Retries:** %d\n", retries)
 	if len(s.Tags) > 0 {
 		fmt.Fprintf(&buf, "**Tags:** %s\n", strings.Join(s.Tags, ", "))
 	}
@@ -2224,7 +2164,7 @@ func writeStoryArtifact(env *testEnv, s UserStory, logEvents []Event, screenshot
 	buf.WriteString("## Acceptance Criteria\n\n")
 	for _, ac := range s.AcceptanceCriteria {
 		check := " "
-		if s.Passes {
+		if passed {
 			check = "x"
 		}
 		fmt.Fprintf(&buf, "- [%s] %s\n", check, ac)
@@ -2249,20 +2189,6 @@ func writeStoryArtifact(env *testEnv, s UserStory, logEvents []Event, screenshot
 		buf.WriteString("\n")
 	}
 
-	if s.LastResult != nil {
-		buf.WriteString("## Last Result\n\n")
-		if s.LastResult.Commit != "" {
-			fmt.Fprintf(&buf, "- **Commit:** `%s`\n", s.LastResult.Commit)
-		}
-		if s.LastResult.Summary != "" {
-			fmt.Fprintf(&buf, "- **Summary:** %s\n", s.LastResult.Summary)
-		}
-		if s.LastResult.CompletedAt != "" {
-			fmt.Fprintf(&buf, "- **Completed at:** %s\n", s.LastResult.CompletedAt)
-		}
-		buf.WriteString("\n")
-	}
-
 	if len(screenshots) > 0 {
 		buf.WriteString("## Screenshots\n\n")
 		for _, shot := range screenshots {
@@ -2272,27 +2198,18 @@ func writeStoryArtifact(env *testEnv, s UserStory, logEvents []Event, screenshot
 	}
 
 	// Failure info
-	if !s.Passes && s.Notes != "" {
+	if !passed && lastFailure != "" {
 		buf.WriteString("## Failure Details\n\n")
 		buf.WriteString("```\n")
-		buf.WriteString(s.Notes)
+		buf.WriteString(lastFailure)
 		buf.WriteString("\n```\n")
 	}
 
 	saveArtifact(env, filepath.Join("stories", dir, "summary.md"), buf.String())
 
 	// Save raw failure notes for easy grep
-	if !s.Passes && s.Notes != "" {
-		saveArtifact(env, filepath.Join("stories", dir, "failure.txt"), s.Notes)
-	}
-
-	// Save per-story git diff (from commit)
-	if s.LastResult != nil && s.LastResult.Commit != "" && env.projectDir != "" {
-		showCmd := exec.Command("git", "show", "--stat", "--patch", s.LastResult.Commit)
-		showCmd.Dir = env.projectDir
-		if out, err := showCmd.Output(); err == nil {
-			saveArtifact(env, filepath.Join("stories", dir, "commit-diff.txt"), string(out))
-		}
+	if !passed && lastFailure != "" {
+		saveArtifact(env, filepath.Join("stories", dir, "failure.txt"), lastFailure)
 	}
 
 	// Extract and save provider output for this story from JSONL logs
@@ -2339,7 +2256,7 @@ type summaryJSON struct {
 	VerifyUI       []string           `json:"verify_ui,omitempty"`
 	TotalStories   int                `json:"total_stories"`
 	PassedStories  int                `json:"passed_stories"`
-	BlockedStories int                `json:"blocked_stories"`
+	SkippedStories int                `json:"skipped_stories"`
 	PendingStories int                `json:"pending_stories"`
 	Stories        []storySummaryJSON `json:"stories"`
 	Learnings      []string           `json:"learnings,omitempty"`
@@ -2347,7 +2264,7 @@ type summaryJSON struct {
 }
 
 // writeSummaryJSON writes a machine-readable summary.json for AI agent consumption.
-func writeSummaryJSON(env *testEnv, result string, prd *PRD, cfg *RalphConfig, logEvents []Event, branch string, runNumber int) {
+func writeSummaryJSON(env *testEnv, result string, def *PRDDefinition, state *RunState, cfg *RalphConfig, logEvents []Event, branch string, runNumber int) {
 	s := summaryJSON{
 		Result:    result,
 		Feature:   env.featureName,
@@ -2356,28 +2273,29 @@ func writeSummaryJSON(env *testEnv, result string, prd *PRD, cfg *RalphConfig, l
 		RunNumber: runNumber,
 	}
 
-	if prd != nil {
-		s.Description = prd.Description
-		total, passed, blocked, pending, _ := countStories(prd)
+	if def != nil {
+		s.Description = def.Description
+		total, passed, skipped, pending, _ := countStories(def, state)
 		s.TotalStories = total
 		s.PassedStories = passed
-		s.BlockedStories = blocked
+		s.SkippedStories = skipped
 		s.PendingStories = pending
-		s.Learnings = prd.Run.Learnings
+		if state != nil {
+			s.Learnings = state.Learnings
+		}
 
-		for _, story := range prd.UserStories {
+		for _, story := range def.UserStories {
 			ss := storySummaryJSON{
 				ID:      story.ID,
 				Title:   story.Title,
-				Status:  storyStatus(story),
-				Retries: story.Retries,
+				Status:  storyStatusStr(story.ID, state),
+				Retries: state.GetRetries(story.ID),
 				Tags:    story.Tags,
 			}
-			if story.LastResult != nil {
-				ss.Commit = story.LastResult.Commit
-			}
-			if !story.Passes && story.Notes != "" {
-				ss.FailureReason = truncate(story.Notes, 500)
+			if !state.IsPassed(story.ID) {
+				if failure := state.GetLastFailure(story.ID); failure != "" {
+					ss.FailureReason = truncate(failure, 500)
+				}
 			}
 			s.Stories = append(s.Stories, ss)
 		}

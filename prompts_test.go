@@ -60,43 +60,6 @@ func TestGetPrompt_Run(t *testing.T) {
 	}
 }
 
-func TestGetPrompt_Verify(t *testing.T) {
-	prompt := getPrompt("verify", map[string]string{
-		"project":          "TestProject",
-		"description":      "Test description",
-		"storySummaries":   "- US-001: Complete",
-		"verifyCommands":   "- bun run test",
-		"learnings":        "",
-		"knowledgeFile":      "CLAUDE.md",
-		"prdPath":            "/project/.ralph/2024-01-15-auth/prd.json",
-		"branchName":         "ralph/test",
-		"serviceURLs":        "",
-		"diffSummary":        "",
-		"resourceVerificationInstructions": "",
-		"verifySummary":      "",
-		"criteriaChecklist":  "",
-	})
-
-	if !strings.Contains(prompt, "TestProject") {
-		t.Error("prompt should contain project name")
-	}
-	if !strings.Contains(prompt, "<ralph>VERIFIED</ralph>") {
-		t.Error("prompt should contain VERIFIED marker")
-	}
-	if !strings.Contains(prompt, "<ralph>RESET:") {
-		t.Error("prompt should contain RESET marker example")
-	}
-	if !strings.Contains(prompt, "CLAUDE.md") {
-		t.Error("prompt should contain knowledge file name")
-	}
-	if !strings.Contains(prompt, "prd.json") {
-		t.Error("prompt should contain prd.json pointer")
-	}
-	if !strings.Contains(prompt, "do NOT modify any code") {
-		t.Error("prompt should contain clarified report-only wording")
-	}
-}
-
 func TestGetPrompt_PrdCreate(t *testing.T) {
 	prompt := getPrompt("prd-create", map[string]string{
 		"feature":    "auth",
@@ -184,9 +147,37 @@ func TestGetPrompt_Refine(t *testing.T) {
 	}
 }
 
+func TestGetPrompt_VerifyFix(t *testing.T) {
+	prompt := getPrompt("verify-fix", map[string]string{
+		"project":                          "TestProject",
+		"description":                      "Test description",
+		"branchName":                       "ralph/test",
+		"progress":                         "3/5 stories complete",
+		"storyDetails":                     "",
+		"verifyResults":                    "FAIL: bun run test — exit code 1",
+		"verifyCommands":                   "- bun run test",
+		"learnings":                        "",
+		"diffSummary":                      "",
+		"serviceURLs":                      "",
+		"knowledgeFile":                    "CLAUDE.md",
+		"featureDir":                       "/project/.ralph/2024-01-15-auth",
+		"resourceVerificationInstructions": "",
+	})
+
+	if !strings.Contains(prompt, "TestProject") {
+		t.Error("prompt should contain project name")
+	}
+	if !strings.Contains(prompt, "FAIL: bun run test") {
+		t.Error("prompt should contain verify results")
+	}
+	if !strings.Contains(prompt, "CLAUDE.md") {
+		t.Error("prompt should contain knowledge file")
+	}
+}
+
 func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 	// Verify prompts don't contain provider-specific references
-	prompts := []string{"run", "verify", "prd-create", "prd-finalize", "refine"}
+	prompts := []string{"run", "prd-create", "prd-finalize", "refine", "verify-fix"}
 	forbiddenTerms := []string{
 		"$AMP_CURRENT_THREAD_ID",
 		"read_thread",
@@ -223,7 +214,7 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"resourceVerificationInstructions": "",
 			"diffSummary":        "",
 			"verifySummary":      "",
-			"criteriaChecklist":  "",
+			"verifyResults":      "",
 			"prdMdContent":       "Test",
 			"prdJsonContent":     "Test",
 			"codebaseContext":    "",
@@ -252,6 +243,7 @@ func TestGenerateRunPrompt(t *testing.T) {
 	cfg := &ResolvedConfig{
 		ProjectRoot: "/project",
 		Config: RalphConfig{
+			MaxRetries: 3,
 			Provider: ProviderConfig{
 				Command:       "amp",
 				KnowledgeFile: "AGENTS.md",
@@ -268,22 +260,24 @@ func TestGenerateRunPrompt(t *testing.T) {
 		Path:    "/project/.ralph/2024-01-15-auth",
 	}
 
-	prd := &PRD{
+	def := &PRDDefinition{
 		Project:     "MyApp",
 		Description: "Authentication feature",
 		BranchName:  "ralph/auth",
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "Login form", Passes: false, Tags: []string{"ui"}, Retries: 1, Notes: "Previous attempt failed"},
-			{ID: "US-002", Title: "Session handling", Passes: false},
-		},
-		Run: Run{
-			Learnings: []string{"Use bcrypt for passwords"},
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Login form", Tags: []string{"ui"}, AcceptanceCriteria: []string{"Form works"}},
+			{ID: "US-002", Title: "Session handling"},
 		},
 	}
 
-	story := &prd.UserStories[0]
+	state := NewRunState()
+	state.Retries = map[string]int{"US-001": 1}
+	state.LastFailure = map[string]string{"US-001": "Previous attempt failed"}
+	state.Learnings = []string{"Use bcrypt for passwords"}
 
-	prompt := generateRunPrompt(cfg, featureDir, prd, story)
+	story := &def.UserStories[0]
+
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story)
 
 	if !strings.Contains(prompt, "US-001") {
 		t.Error("prompt should contain story ID")
@@ -324,41 +318,29 @@ func TestGenerateRunPrompt_StoryMap(t *testing.T) {
 
 	featureDir := &FeatureDir{Feature: "test", Path: "/project/.ralph/test"}
 
-	prd := &PRD{
+	def := &PRDDefinition{
 		Project:     "Test",
 		Description: "Test feature",
 		BranchName:  "ralph/test",
-		UserStories: []UserStory{
-			{
-				ID: "US-001", Title: "Database setup", Passes: true,
-				LastResult: &LastResult{Commit: "abc1234def", Summary: "Added migration"},
-			},
-			{
-				ID: "US-002", Title: "API endpoint", Passes: false,
-				AcceptanceCriteria: []string{"Returns 200"},
-			},
-			{
-				ID: "US-003", Title: "UI component", Passes: false,
-			},
-			{
-				ID: "US-004", Title: "Broken feature", Blocked: true, Notes: "Missing dependency",
-			},
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Database setup"},
+			{ID: "US-002", Title: "API endpoint", AcceptanceCriteria: []string{"Returns 200"}},
+			{ID: "US-003", Title: "UI component"},
+			{ID: "US-004", Title: "Broken feature"},
 		},
 	}
 
-	story := &prd.UserStories[1] // US-002 is current
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkSkipped("US-004", "Missing dependency")
 
-	prompt := generateRunPrompt(cfg, featureDir, prd, story)
+	story := &def.UserStories[1] // US-002 is current
 
-	// Completed story with summary and short commit
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story)
+
+	// Completed story
 	if !strings.Contains(prompt, "✓ US-001: Database setup") {
 		t.Error("prompt should show completed story with checkmark")
-	}
-	if !strings.Contains(prompt, "Added migration") {
-		t.Error("prompt should show completed story summary")
-	}
-	if !strings.Contains(prompt, "abc1234") {
-		t.Error("prompt should show short commit hash")
 	}
 
 	// Current story
@@ -371,14 +353,14 @@ func TestGenerateRunPrompt_StoryMap(t *testing.T) {
 		t.Error("prompt should show pending story")
 	}
 
-	// Blocked story
-	if !strings.Contains(prompt, "✗ US-004: Broken feature (blocked: Missing dependency)") {
-		t.Error("prompt should show blocked story with notes")
+	// Skipped story
+	if !strings.Contains(prompt, "✗ US-004: Broken feature (skipped: Missing dependency)") {
+		t.Error("prompt should show skipped story with reason")
 	}
 
 	// Progress
-	if !strings.Contains(prompt, "1/4 stories complete (1 blocked)") {
-		t.Error("prompt should show progress with blocked count")
+	if !strings.Contains(prompt, "1/4 stories complete (1 skipped)") {
+		t.Error("prompt should show progress with skipped count")
 	}
 }
 
@@ -392,11 +374,11 @@ func TestGenerateRunPrompt_BrowserSteps(t *testing.T) {
 
 	featureDir := &FeatureDir{Feature: "test", Path: "/project/.ralph/test"}
 
-	prd := &PRD{
+	def := &PRDDefinition{
 		Project:     "Test",
 		Description: "Test",
 		BranchName:  "ralph/test",
-		UserStories: []UserStory{
+		UserStories: []StoryDefinition{
 			{
 				ID:                 "US-001",
 				Title:              "Login form",
@@ -412,9 +394,10 @@ func TestGenerateRunPrompt_BrowserSteps(t *testing.T) {
 		},
 	}
 
-	story := &prd.UserStories[0]
+	state := NewRunState()
+	story := &def.UserStories[0]
 
-	prompt := generateRunPrompt(cfg, featureDir, prd, story)
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story)
 
 	if !strings.Contains(prompt, "Browser Verification") {
 		t.Error("prompt should contain browser verification section")
@@ -446,120 +429,67 @@ func TestGenerateRunPrompt_NoBrowserSteps(t *testing.T) {
 
 	featureDir := &FeatureDir{Feature: "test", Path: "/project/.ralph/test"}
 
-	prd := &PRD{
+	def := &PRDDefinition{
 		Project:     "Test",
 		Description: "Test",
 		BranchName:  "ralph/test",
-		UserStories: []UserStory{
+		UserStories: []StoryDefinition{
 			{ID: "US-001", Title: "Backend task", AcceptanceCriteria: []string{"Works"}},
 		},
 	}
 
-	prompt := generateRunPrompt(cfg, featureDir, prd, &prd.UserStories[0])
+	state := NewRunState()
+	prompt := generateRunPrompt(cfg, featureDir, def, state, &def.UserStories[0])
 
 	if strings.Contains(prompt, "Browser Verification") {
 		t.Error("prompt should NOT contain browser verification for non-UI stories")
 	}
 }
 
-func TestGenerateVerifyPrompt(t *testing.T) {
-	cfg := &ResolvedConfig{
-		ProjectRoot: "/project",
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				KnowledgeFile: "CLAUDE.md",
-			},
-			Verify: VerifyConfig{
-				Default: []string{"bun run test"},
-			},
-		},
-	}
-
-	featureDir := &FeatureDir{
-		Feature: "auth",
-		Path:    "/project/.ralph/2024-01-15-auth",
-	}
-
-	prd := &PRD{
-		Project:     "MyProject",
-		Description: "Authentication feature",
-		Run: Run{
-			Learnings: []string{"Learned something"},
-		},
-		UserStories: []UserStory{
-			{
-				ID: "US-001", Title: "Login", Passes: true,
-				AcceptanceCriteria: []string{"Form validates", "Token returned"},
-				LastResult:         &LastResult{Commit: "abc1234", Summary: "Login form done"},
-			},
-			{
-				ID: "US-002", Title: "Logout", Passes: true,
-				AcceptanceCriteria: []string{"Session cleared"},
-			},
-		},
-	}
-
-	prompt := generateVerifyPrompt(cfg, featureDir, prd, "")
-
-	if !strings.Contains(prompt, "MyProject") {
-		t.Error("prompt should contain project name")
-	}
-	if !strings.Contains(prompt, "US-001") {
-		t.Error("prompt should contain story IDs")
-	}
-	if !strings.Contains(prompt, "CLAUDE.md") {
-		t.Error("prompt should contain knowledge file")
-	}
-	// Verify acceptance criteria appear
-	if !strings.Contains(prompt, "Form validates") {
-		t.Error("prompt should contain acceptance criteria")
-	}
-	if !strings.Contains(prompt, "Token returned") {
-		t.Error("prompt should contain all criteria")
-	}
-	// Verify commit info appears
-	if !strings.Contains(prompt, "abc1234") {
-		t.Error("prompt should contain commit hash")
-	}
-	if !strings.Contains(prompt, "Login form done") {
-		t.Error("prompt should contain commit summary")
-	}
-	// Verify prd.json pointer
-	if !strings.Contains(prompt, "prd.json") {
-		t.Error("prompt should contain prd.json pointer")
-	}
-}
-
 func TestBuildProgress(t *testing.T) {
 	tests := []struct {
 		name   string
-		prd    *PRD
+		def    *PRDDefinition
+		state  *RunState
 		expect string
 	}{
 		{
 			"no stories",
-			&PRD{UserStories: []UserStory{}},
+			&PRDDefinition{UserStories: []StoryDefinition{}},
+			NewRunState(),
 			"0/0 stories complete",
 		},
 		{
 			"some complete",
-			&PRD{UserStories: []UserStory{
-				{Passes: true}, {Passes: false}, {Passes: true},
+			&PRDDefinition{UserStories: []StoryDefinition{
+				{ID: "US-001"}, {ID: "US-002"}, {ID: "US-003"},
 			}},
+			func() *RunState {
+				s := NewRunState()
+				s.MarkPassed("US-001")
+				s.MarkPassed("US-003")
+				return s
+			}(),
 			"2/3 stories complete",
 		},
 		{
-			"with blocked",
-			&PRD{UserStories: []UserStory{
-				{Passes: true}, {Blocked: true}, {Passes: false},
+			"with skipped",
+			&PRDDefinition{UserStories: []StoryDefinition{
+				{ID: "US-001"}, {ID: "US-002"}, {ID: "US-003"},
 			}},
-			"1/3 stories complete (1 blocked)",
+			func() *RunState {
+				s := NewRunState()
+				s.MarkPassed("US-001")
+				s.MarkSkipped("US-002", "too hard")
+				return s
+			}(),
+			"1/3 stories complete (1 skipped)",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildProgress(tt.prd)
+			result := buildProgress(tt.def, tt.state)
 			if result != tt.expect {
 				t.Errorf("expected %q, got %q", tt.expect, result)
 			}
@@ -568,23 +498,24 @@ func TestBuildProgress(t *testing.T) {
 }
 
 func TestBuildStoryMap(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "Done", Passes: true, LastResult: &LastResult{Commit: "abcdef1234567", Summary: "Finished"}},
-			{ID: "US-002", Title: "Current", Passes: false},
-			{ID: "US-003", Title: "Pending", Passes: false},
-			{ID: "US-004", Title: "Stuck", Blocked: true, Notes: "Need API"},
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Done"},
+			{ID: "US-002", Title: "Current"},
+			{ID: "US-003", Title: "Pending"},
+			{ID: "US-004", Title: "Stuck"},
 		},
 	}
 
-	current := &UserStory{ID: "US-002"}
-	result := buildStoryMap(prd, current)
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkSkipped("US-004", "Need API")
+
+	current := &StoryDefinition{ID: "US-002"}
+	result := buildStoryMap(def, state, current)
 
 	if !strings.Contains(result, "✓ US-001: Done") {
 		t.Error("should show completed story")
-	}
-	if !strings.Contains(result, "Finished (abcdef1)") {
-		t.Error("should show summary with truncated commit hash")
 	}
 	if !strings.Contains(result, "→ US-002: Current [CURRENT]") {
 		t.Error("should mark current story")
@@ -592,13 +523,13 @@ func TestBuildStoryMap(t *testing.T) {
 	if !strings.Contains(result, "○ US-003: Pending") {
 		t.Error("should show pending story")
 	}
-	if !strings.Contains(result, "✗ US-004: Stuck (blocked: Need API)") {
-		t.Error("should show blocked story with notes")
+	if !strings.Contains(result, "✗ US-004: Stuck (skipped: Need API)") {
+		t.Error("should show skipped story with reason")
 	}
 }
 
 func TestBuildBrowserSteps(t *testing.T) {
-	story := &UserStory{
+	story := &StoryDefinition{
 		BrowserSteps: []BrowserStep{
 			{Action: "navigate", URL: "/page"},
 			{Action: "click", Selector: "#btn"},
@@ -636,7 +567,7 @@ func TestBuildBrowserSteps(t *testing.T) {
 }
 
 func TestBuildBrowserSteps_Empty(t *testing.T) {
-	story := &UserStory{}
+	story := &StoryDefinition{}
 	result := buildBrowserSteps(story)
 	if result != "" {
 		t.Errorf("expected empty string for no browser steps, got %q", result)
@@ -681,47 +612,6 @@ func TestBuildLearnings_Capped(t *testing.T) {
 	}
 	if strings.Contains(result, "- learning 0\n") {
 		t.Error("expected oldest learning to be truncated")
-	}
-}
-
-func TestGetPrompt_VerifyWithSummary(t *testing.T) {
-	summary := "PASS: bun run typecheck\nFAIL: bun run test\nPASS: service health"
-	prompt := getPrompt("verify", map[string]string{
-		"project":            "TestProject",
-		"description":        "Test description",
-		"storySummaries":     "- US-001: Complete",
-		"verifyCommands":     "- bun run typecheck\n- bun run test",
-		"learnings":          "",
-		"knowledgeFile":      "CLAUDE.md",
-		"prdPath":            "/project/.ralph/2024-01-15-auth/prd.json",
-		"branchName":         "ralph/test",
-		"serviceURLs":        "",
-		"diffSummary":        "## Changes Summary\n\n```\n 3 files changed, 50 insertions(+)\n```\n",
-		"resourceVerificationInstructions": "",
-		"verifySummary":      summary,
-		"criteriaChecklist":  "### US-001: Login\n- [ ] Form validates\n- [ ] Token returned\n",
-	})
-
-	if !strings.Contains(prompt, "PASS: bun run typecheck") {
-		t.Error("prompt should contain passing verification result")
-	}
-	if !strings.Contains(prompt, "FAIL: bun run test") {
-		t.Error("prompt should contain failing verification result")
-	}
-	if !strings.Contains(prompt, "PASS: service health") {
-		t.Error("prompt should contain service health result")
-	}
-	if !strings.Contains(prompt, "3 files changed") {
-		t.Error("prompt should contain diff summary")
-	}
-	if !strings.Contains(prompt, "Changes Summary") {
-		t.Error("prompt should contain changes summary heading")
-	}
-	if !strings.Contains(prompt, "### US-001: Login") {
-		t.Error("prompt should contain criteria checklist story header")
-	}
-	if !strings.Contains(prompt, "- [ ] Form validates") {
-		t.Error("prompt should contain criteria checkbox items")
 	}
 }
 
@@ -784,95 +674,6 @@ func TestGetPrompt_RunWithoutResourcesCache(t *testing.T) {
 	}
 }
 
-func TestBuildCriteriaChecklist(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{
-				ID:                 "US-001",
-				Title:              "Login form",
-				AcceptanceCriteria: []string{"Form validates email", "Token returned on success"},
-			},
-			{
-				ID:                 "US-002",
-				Title:              "Logout",
-				AcceptanceCriteria: []string{"Session cleared"},
-			},
-			{
-				ID:      "US-003",
-				Title:   "Broken",
-				Blocked: true,
-				AcceptanceCriteria: []string{"Should not appear"},
-			},
-		},
-	}
-
-	result := buildCriteriaChecklist(prd)
-
-	if !strings.Contains(result, "### US-001: Login form") {
-		t.Error("expected US-001 header")
-	}
-	if !strings.Contains(result, "- [ ] Form validates email") {
-		t.Error("expected US-001 criterion checkbox")
-	}
-	if !strings.Contains(result, "- [ ] Token returned on success") {
-		t.Error("expected US-001 second criterion checkbox")
-	}
-	if !strings.Contains(result, "### US-002: Logout") {
-		t.Error("expected US-002 header")
-	}
-	if !strings.Contains(result, "- [ ] Session cleared") {
-		t.Error("expected US-002 criterion checkbox")
-	}
-	if strings.Contains(result, "US-003") {
-		t.Error("blocked story should not appear in checklist")
-	}
-	if strings.Contains(result, "Should not appear") {
-		t.Error("blocked story criteria should not appear")
-	}
-}
-
-func TestBuildCriteriaChecklist_Empty(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "No criteria"},
-		},
-	}
-
-	result := buildCriteriaChecklist(prd)
-	if result != "" {
-		t.Errorf("expected empty string for stories without criteria, got %q", result)
-	}
-}
-
-func TestGetPrompt_VerifyWithCriteriaChecklist(t *testing.T) {
-	checklist := "### US-001: Login\n- [ ] Form validates\n- [ ] Token returned\n"
-	prompt := getPrompt("verify", map[string]string{
-		"project":            "TestProject",
-		"description":        "Test description",
-		"storySummaries":     "- US-001: Complete",
-		"verifyCommands":     "- bun run test",
-		"learnings":          "",
-		"knowledgeFile":      "CLAUDE.md",
-		"prdPath":            "/test/prd.json",
-		"branchName":         "ralph/test",
-		"serviceURLs":        "",
-		"diffSummary":        "",
-		"resourceVerificationInstructions": "",
-		"verifySummary":      "",
-		"criteriaChecklist":  checklist,
-	})
-
-	if !strings.Contains(prompt, "### US-001: Login") {
-		t.Error("prompt should contain criteria checklist story header")
-	}
-	if !strings.Contains(prompt, "- [ ] Form validates") {
-		t.Error("prompt should contain criteria checkbox")
-	}
-	if !strings.Contains(prompt, "Acceptance Criteria Checklist") {
-		t.Error("prompt should contain acceptance criteria checklist heading")
-	}
-}
-
 func TestGenerateRefinePrompt(t *testing.T) {
 	// Create temp dir with prd.md and prd.json
 	dir := t.TempDir()
@@ -888,22 +689,25 @@ func TestGenerateRefinePrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prd := &PRD{
-		SchemaVersion: 2,
+	def := &PRDDefinition{
+		SchemaVersion: 3,
 		Project:       "MyApp",
 		BranchName:    "ralph/auth",
 		Description:   "Auth feature",
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "Login", Passes: true, AcceptanceCriteria: []string{"Works"}},
-			{ID: "US-002", Title: "Logout", Blocked: true, Notes: "Depends on sessions", Retries: 3, AcceptanceCriteria: []string{"Works"}},
-			{ID: "US-003", Title: "Register", Retries: 2, Notes: "Type errors", AcceptanceCriteria: []string{"Works"}},
-		},
-		Run: Run{
-			Learnings: []string{"Use bcrypt for passwords"},
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Works"}},
+			{ID: "US-002", Title: "Logout", AcceptanceCriteria: []string{"Works"}},
+			{ID: "US-003", Title: "Register", AcceptanceCriteria: []string{"Works"}},
 		},
 	}
 
-	prdJSON, _ := json.Marshal(prd)
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkSkipped("US-002", "Depends on sessions")
+	state.Retries = map[string]int{"US-002": 3, "US-003": 2}
+	state.Learnings = []string{"Use bcrypt for passwords"}
+
+	prdJSON, _ := json.Marshal(def)
 	if err := os.WriteFile(featureDir.PrdJsonPath(), prdJSON, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -924,7 +728,7 @@ func TestGenerateRefinePrompt(t *testing.T) {
 		},
 	}
 
-	prompt := generateRefinePrompt(cfg, featureDir, prd)
+	prompt := generateRefinePrompt(cfg, featureDir, def, state)
 
 	// Check prd.md content is included
 	if !strings.Contains(prompt, "Auth Feature") {
@@ -940,7 +744,7 @@ func TestGenerateRefinePrompt(t *testing.T) {
 	}
 
 	// Check progress
-	if !strings.Contains(prompt, "1/3 stories complete (1 blocked)") {
+	if !strings.Contains(prompt, "1/3 stories complete (1 skipped)") {
 		t.Error("prompt should contain progress")
 	}
 
@@ -948,8 +752,8 @@ func TestGenerateRefinePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "US-001: Login** — PASSED") {
 		t.Error("prompt should show US-001 as PASSED")
 	}
-	if !strings.Contains(prompt, "US-002: Logout** — BLOCKED") {
-		t.Error("prompt should show US-002 as BLOCKED")
+	if !strings.Contains(prompt, "US-002: Logout** — SKIPPED") {
+		t.Error("prompt should show US-002 as SKIPPED")
 	}
 	if !strings.Contains(prompt, "Depends on sessions") {
 		t.Error("prompt should include story notes")
@@ -985,15 +789,20 @@ func TestGenerateRefinePrompt(t *testing.T) {
 }
 
 func TestBuildRefinementStoryDetails(t *testing.T) {
-	prd := &PRD{
-		UserStories: []UserStory{
-			{ID: "US-001", Title: "Login", Passes: true, LastResult: &LastResult{Summary: "Implemented"}},
-			{ID: "US-002", Title: "Logout", Blocked: true, Retries: 3, Notes: "Cannot implement"},
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Login"},
+			{ID: "US-002", Title: "Logout"},
 			{ID: "US-003", Title: "Register"},
 		},
 	}
 
-	result := buildRefinementStoryDetails(prd)
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkSkipped("US-002", "Cannot implement")
+	state.Retries = map[string]int{"US-002": 3}
+
+	result := buildRefinementStoryDetails(def, state)
 
 	if !strings.Contains(result, "Story Execution Status") {
 		t.Error("expected heading")
@@ -1001,11 +810,8 @@ func TestBuildRefinementStoryDetails(t *testing.T) {
 	if !strings.Contains(result, "US-001: Login** — PASSED") {
 		t.Error("expected PASSED status for US-001")
 	}
-	if !strings.Contains(result, "Last result: Implemented") {
-		t.Error("expected last result for US-001")
-	}
-	if !strings.Contains(result, "US-002: Logout** — BLOCKED (3 retries)") {
-		t.Error("expected BLOCKED with retries for US-002")
+	if !strings.Contains(result, "US-002: Logout** — SKIPPED (3 retries)") {
+		t.Error("expected SKIPPED with retries for US-002")
 	}
 	if !strings.Contains(result, "Notes: Cannot implement") {
 		t.Error("expected notes for US-002")
@@ -1016,8 +822,9 @@ func TestBuildRefinementStoryDetails(t *testing.T) {
 }
 
 func TestBuildRefinementStoryDetails_Empty(t *testing.T) {
-	prd := &PRD{UserStories: []UserStory{}}
-	result := buildRefinementStoryDetails(prd)
+	def := &PRDDefinition{UserStories: []StoryDefinition{}}
+	state := NewRunState()
+	result := buildRefinementStoryDetails(def, state)
 	if result != "" {
 		t.Errorf("expected empty string for no stories, got %q", result)
 	}

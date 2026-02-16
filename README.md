@@ -42,45 +42,35 @@ The core idea: break work into small, atomic user stories, spawn fresh AI instan
 flowchart TD
     Start[ralph run feature] --> Readiness{Readiness Checks}
     Readiness -->|Fail| Exit1[Exit with error]
-    Readiness -->|Pass| Init[Initialize: Load PRD, Acquire Lock, Start Services]
+    Readiness -->|Pass| Init[Initialize: Load PRD + RunState, Acquire Lock, Start Services]
 
-    Init --> PreVerify[Pre-Verify Phase: Test all stories]
-    PreVerify --> MainLoop{All Stories Complete?}
+    Init --> MainLoop{Pick Next Story}
 
-    MainLoop -->|Yes| FinalVerify[Final Verification]
-    MainLoop -->|No| CheckBlocked{All Remaining Blocked?}
+    MainLoop -->|None left| Success[Print Summary, Exit]
+    MainLoop -->|Got story| VerifyFirst{Verify-at-top: already passes?}
 
-    CheckBlocked -->|Yes| Exit2[Exit with error]
-    CheckBlocked -->|No| SelectStory[Select Next Story by Priority]
+    VerifyFirst -->|Yes| MarkPassed1[MarkPassed, skip to next]
+    VerifyFirst -->|No| RunProvider[Run Provider Subprocess]
 
-    SelectStory --> RunProvider[Run Provider Subprocess]
     RunProvider --> CheckSTUCK{STUCK marker?}
-
-    CheckSTUCK -->|Yes| MarkFailed1[MarkStoryFailed]
+    CheckSTUCK -->|Yes| MarkFailed1[MarkFailed]
     CheckSTUCK -->|No| CheckDONE{DONE marker?}
 
-    CheckDONE -->|No| MarkFailed2[MarkStoryFailed]
+    CheckDONE -->|No| MarkFailed2[MarkFailed]
     CheckDONE -->|Yes| CheckCommit{New commit made?}
 
-    CheckCommit -->|No| MarkFailed3[MarkStoryFailed]
+    CheckCommit -->|No| MarkFailed3[MarkFailed]
     CheckCommit -->|Yes| StoryVerify[Run Story Verification]
 
-    StoryVerify -->|Pass| MarkPassed[MarkStoryPassed]
-    StoryVerify -->|Fail| MarkFailed4[MarkStoryFailed]
+    StoryVerify -->|Pass| MarkPassed2[MarkPassed]
+    StoryVerify -->|Fail| MarkFailed4[MarkFailed]
 
+    MarkPassed1 --> MainLoop
+    MarkPassed2 --> MainLoop
     MarkFailed1 --> MainLoop
     MarkFailed2 --> MainLoop
     MarkFailed3 --> MainLoop
     MarkFailed4 --> MainLoop
-    MarkPassed --> MainLoop
-
-    FinalVerify --> CheckVERIFIED{VERIFIED marker + all checks pass?}
-    CheckVERIFIED -->|Yes| Success[SUCCESS EXIT]
-    CheckVERIFIED -->|No| CheckRESET{RESET marker?}
-
-    CheckRESET -->|Yes| ResetStories[Reset specified stories]
-    ResetStories --> MainLoop
-    CheckRESET -->|No| MainLoop
 ```
 
 ### Story State Machine
@@ -91,38 +81,32 @@ stateDiagram-v2
 
     Pending --> Passed: Verification succeeds
     Pending --> Failed: STUCK/no DONE/no commit/verify fails
-    Pending --> Blocked: BLOCK marker from provider
 
     Failed --> Pending: retries < maxRetries
-    Failed --> Blocked: retries >= maxRetries
+    Failed --> Skipped: retries >= maxRetries
 
-    Passed --> Pending: Pre-verify fails (PRD changed)
-    Passed --> Pending: RESET marker in final verify
+    Passed --> Pending: Verify-at-top detects regression
 
-    Passed --> [*]: All stories pass + VERIFIED
-    Blocked --> [*]: Skipped (doesn't block completion)
+    Passed --> [*]: All stories done
+    Skipped --> [*]: Doesn't block completion
 ```
 
 ## How It Works
 
-1. Ralph loads `.ralph/*-[feature]/prd.json`
+1. Ralph loads `.ralph/*-[feature]/prd.json` + `run-state.json`
 2. **Readiness check**: refuses to run if `.ralph/` is missing, verify commands are placeholder, binaries missing from PATH, not inside a git repo, or `.ralph/` is not writable
-3. **Pre-verify phase**: runs verification on ALL non-blocked stories before implementation
-   - Stories that pass are marked as passed (catches already-implemented work)
-   - Stories that fail but were previously marked passed are reset to pending (catches PRD changes)
-4. Creates/switches to `ralph/{feature}` branch
-5. Picks next story (highest priority, not passed, not blocked)
-6. Sets `currentStoryId` in run-state.json (crash recovery)
-7. Sends prompt to provider subprocess (includes deduplicated learnings)
-8. Provider implements code, writes tests, commits
-9. Provider outputs `<ralph>DONE</ralph>` when finished
-10. Ralph runs `verify.default` commands
-11. If UI story: restarts services, runs browser verification (console errors = hard fail), runs `verify.ui` commands
-12. Service health check: verifies services still respond
-13. Pass → mark story complete, next story
-14. Fail → increment retries, retry or block
-15. All stories pass → final verification (verify commands + browser checks for all UI stories + service health) → provider reviews → `VERIFIED` or `RESET`
-16. Complete → "Ready to merge"
+3. Creates/switches to `ralph/{feature}` branch
+4. Picks next story (highest priority, not passed, not skipped)
+5. **Verify-at-top**: runs verification first — if story already passes, marks passed and skips implementation
+6. Sends prompt to provider subprocess (includes deduplicated learnings)
+7. Provider implements code, writes tests, commits
+8. Provider outputs `<ralph>DONE</ralph>` when finished
+9. Ralph runs `verify.default` commands
+10. If UI story: restarts services, runs browser verification (console errors = hard fail), runs `verify.ui` commands
+11. Service health check: verifies services still respond
+12. Pass → mark story complete, next story
+13. Fail → increment retries, retry or auto-skip at maxRetries
+14. All stories passed or skipped → print summary, exit
 
 ## Commands
 
@@ -141,22 +125,7 @@ ralph verify <feature>         # Run verification only
 ```bash
 ralph status                   # Show all features
 ralph status <feature>         # Show specific feature status
-ralph next <feature>           # Show next story to work on
-ralph validate <feature>       # Validate prd.json schema
 ```
-
-### Resource Commands
-
-```bash
-ralph resources list           # Show cached framework source code
-ralph resources sync           # Sync all detected dependencies
-ralph resources sync <name>    # Sync specific resource (e.g., "next")
-ralph resources clear          # Clear all cached resources (prompts for confirmation)
-ralph resources path           # Print cache directory path
-ralph resources path <name>    # Print path to specific cached resource
-```
-
-Ralph auto-detects project dependencies and caches their source code repositories locally. This allows AI agents to verify implementations against actual framework source code, tests, and examples.
 
 ### Observability Commands
 
@@ -305,22 +274,11 @@ PRD data is split into two files: **prd.json** (definition) and **run-state.json
 
 ```json
 {
-  "startedAt": "2024-01-15T10:00:00Z",
-  "currentStoryId": null,
-  "learnings": ["accumulated insights from providers"],
-  "stories": {
-    "US-001": {
-      "passes": false,
-      "retries": 0,
-      "blocked": false,
-      "lastResult": {
-        "completedAt": "2024-01-15T12:00:00Z",
-        "commit": "abc123",
-        "summary": "Implementation summary"
-      },
-      "notes": "Failed verification output for retries"
-    }
-  }
+  "passed": ["US-001", "US-003"],
+  "skipped": ["US-005"],
+  "retries": { "US-002": 2 },
+  "lastFailure": { "US-002": "typecheck failed: ..." },
+  "learnings": ["accumulated insights from providers"]
 }
 ```
 
@@ -333,9 +291,9 @@ PRD data is split into two files: **prd.json** (definition) and **run-state.json
 ### Story Lifecycle
 
 ```
-pending (passes=false) → provider implements → CLI verifies → passed (passes=true)
-                                                           → retry (retries++)
-                                                           → blocked (blocked=true)
+pending → provider implements → CLI verifies → passed (added to passed[])
+                                             → retry (retries[id]++)
+                                             → skipped (auto at maxRetries, added to skipped[])
 ```
 
 ## Provider Signal Protocol
@@ -345,13 +303,8 @@ Providers communicate with Ralph via markers in stdout or stderr:
 | Signal | Purpose | Example |
 |--------|---------|---------|
 | `<ralph>DONE</ralph>` | Story implementation complete | `<ralph>DONE</ralph>` |
-| `<ralph>STUCK</ralph>` | Provider can't proceed (counts as failed) | `<ralph>STUCK</ralph>` |
-| `<ralph>BLOCK:US-XXX</ralph>` | Mark story as blocked permanently | `<ralph>BLOCK:US-001,US-003</ralph>` |
+| `<ralph>STUCK:reason</ralph>` | Provider can't proceed (counts as failed, auto-skips at maxRetries) | `<ralph>STUCK:Cannot resolve type errors</ralph>` |
 | `<ralph>LEARNING:text</ralph>` | Add learning for future context | `<ralph>LEARNING:Use bun instead of npm</ralph>` |
-| `<ralph>SUGGEST_NEXT:US-XXX</ralph>` | Advisory: suggest next story | `<ralph>SUGGEST_NEXT:US-002</ralph>` |
-| `<ralph>VERIFIED</ralph>` | Final verification passed | `<ralph>VERIFIED</ralph>` |
-| `<ralph>RESET:US-XXX</ralph>` | Reset stories for reimplementation | `<ralph>RESET:US-001,US-003</ralph>` |
-| `<ralph>REASON:text</ralph>` | Explanation for STUCK/BLOCK/RESET | `<ralph>REASON:API endpoint missing</ralph>` |
 
 ## Browser Automation
 
@@ -511,7 +464,7 @@ Typical shallow clones:
 - React: ~280MB
 - Smaller libs (Zod, Hono): ~10-30MB
 
-Use `ralph resources clear` to free space when needed.
+Delete the `~/.ralph/resources/` directory to free space when needed.
 
 ## Use Cases
 
@@ -533,8 +486,8 @@ Break the refactor into atomic stories with clear verification:
 ### Continuing Work
 ```bash
 ralph prd user-auth          # Select "Refine with AI" for interactive session
-                              # Fix blocked stories, adjust scope, make changes
-ralph run user-auth          # Pre-verify catches changes, resumes loop
+                              # Fix skipped stories, adjust scope, make changes
+ralph run user-auth          # Verify-at-top catches already-done work, resumes loop
 ```
 
 ### UI Changes
@@ -553,10 +506,12 @@ ralph run auth          # Resumes from US-003 automatically
 ```
 
 State is preserved in run-state.json (separate from prd.json):
-- `currentStoryId`: Story being worked on
-- `stories[id].passes`: Whether story is complete
-- `stories[id].retries`: Number of failed attempts
-- `stories[id].blocked`: Story exceeded maxRetries
+- `passed[]`: Completed story IDs
+- `skipped[]`: Auto-skipped story IDs (exceeded maxRetries)
+- `retries{}`: Failed attempt counts per story
+- `learnings[]`: Accumulated insights from providers
+
+On restart, verify-at-top-of-loop re-checks each story before spawning a provider.
 
 ## Troubleshooting
 
@@ -698,7 +653,7 @@ v2 is a Go CLI that improves on v1:
 | **Memory** | progress.txt file | Learnings in run-state.json |
 | **Iteration limit** | Fixed (default 10) | Infinite until verified |
 | **Multi-feature** | Manual archive/switch | Built-in date-prefixed dirs |
-| **Crash recovery** | None | currentStoryId tracking |
+| **Crash recovery** | None | Verify-at-top-of-loop re-checks on restart |
 | **Verification** | Agent runs commands | CLI runs commands |
 | **Browser testing** | Provider skill (dev-browser) | Built-in rod (auto-downloads Chromium) |
 | **Service management** | None | Built-in start/ready/restart |
