@@ -163,6 +163,23 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			fmt.Println(strings.Repeat("=", 60))
 			logger.LogPrintln(" All stories complete!")
 			fmt.Println(strings.Repeat("=", 60))
+
+			// Print captured learnings summary
+			if len(state.Learnings) > 0 {
+				logger.LogPrintln()
+				logger.LogPrint("Learnings captured (%d):\n", len(state.Learnings))
+				for i, l := range state.Learnings {
+					logger.LogPrint("  %d. %s\n", i+1, l)
+				}
+			}
+
+			// Check if knowledge file was updated
+			knowledgeFile := cfg.Config.Provider.KnowledgeFile
+			if knowledgeFile != "" && !git.HasFileChanged(knowledgeFile) {
+				logger.LogPrintln()
+				logger.LogPrint("! %s was not updated. Consider adding discovered patterns for future features.\n", knowledgeFile)
+			}
+
 			logger.LogPrintln()
 			logger.LogPrintln("Run 'ralph verify " + featureDir.Feature + "' for comprehensive verification.")
 			logger.RunEnd(true, "all stories complete")
@@ -352,6 +369,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			logger.Error("verification error", err)
 			logger.VerifyEnd(false)
 			logger.IterationEnd(false)
+			_ = SaveRunState(statePath, state) // preserve learnings
 			logger.RunEnd(false, "verification error")
 			return fmt.Errorf("verification error: %w", err)
 		}

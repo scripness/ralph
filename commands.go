@@ -524,6 +524,11 @@ func cmdStatus(args []string) {
 			fmt.Printf("    └─ Note: %s\n", note)
 		}
 	}
+
+	if len(state.Learnings) > 0 {
+		fmt.Println()
+		fmt.Printf("Learnings: %d captured\n", len(state.Learnings))
+	}
 }
 
 
@@ -849,6 +854,9 @@ func printRunSummary(logPath string) {
 	fmt.Println()
 	if len(summary.Learnings) > 0 {
 		fmt.Printf("Learnings captured: %d\n", len(summary.Learnings))
+		for _, l := range summary.Learnings {
+			fmt.Printf("  - %s\n", l)
+		}
 	}
 	fmt.Printf("Warnings: %d\n", summary.Warnings)
 	fmt.Printf("Errors: %d\n", summary.Errors)

@@ -533,3 +533,105 @@ func TestVerifyFailPattern(t *testing.T) {
 		t.Errorf("expected 'test reason', got '%s'", matches[1])
 	}
 }
+
+// --- VerifyReport tests ---
+
+func TestVerifyReport_FormatForConsole(t *testing.T) {
+	r := &VerifyReport{}
+	r.AddPass("go vet ./...")
+	r.AddFail("go test ./...", "exit code 1\nFAIL main_test.go")
+	r.AddWarn("CLAUDE.md", "was NOT modified on this branch")
+	r.Finalize()
+
+	output := r.FormatForConsole()
+
+	if !strings.Contains(output, "✓ go vet") {
+		t.Error("expected pass item with checkmark")
+	}
+	if !strings.Contains(output, "✗ go test") {
+		t.Error("expected fail item with cross")
+	}
+	if !strings.Contains(output, "⚠ CLAUDE.md") {
+		t.Error("expected warn item with warning symbol")
+	}
+	if !strings.Contains(output, "1 passed, 1 failed, 1 warnings") {
+		t.Error("expected summary counts")
+	}
+}
+
+func TestVerifyReport_FormatForPrompt(t *testing.T) {
+	r := &VerifyReport{}
+	r.AddPass("go vet ./...")
+	r.AddFail("go test ./...", "FAIL main_test.go:42")
+	r.AddWarn("test files", "no test files modified")
+	r.Finalize()
+
+	output := r.FormatForPrompt()
+
+	if !strings.Contains(output, "PASS: go vet") {
+		t.Error("expected PASS prefix")
+	}
+	if !strings.Contains(output, "FAIL: go test") {
+		t.Error("expected FAIL prefix")
+	}
+	if !strings.Contains(output, "FAIL main_test.go:42") {
+		t.Error("expected failure output details")
+	}
+	if !strings.Contains(output, "WARN: test files") {
+		t.Error("expected WARN prefix")
+	}
+}
+
+func TestVerifyReport_Finalize(t *testing.T) {
+	// All pass
+	r := &VerifyReport{}
+	r.AddPass("check1")
+	r.AddPass("check2")
+	r.AddWarn("info", "some info")
+	r.Finalize()
+
+	if !r.AllPassed {
+		t.Error("expected AllPassed=true when only passes and warns")
+	}
+	if r.FailCount != 0 {
+		t.Errorf("expected FailCount=0, got %d", r.FailCount)
+	}
+	if r.WarnCount != 1 {
+		t.Errorf("expected WarnCount=1, got %d", r.WarnCount)
+	}
+
+	// With failure
+	r2 := &VerifyReport{}
+	r2.AddPass("check1")
+	r2.AddFail("check2", "broken")
+	r2.Finalize()
+
+	if r2.AllPassed {
+		t.Error("expected AllPassed=false when there are failures")
+	}
+	if r2.FailCount != 1 {
+		t.Errorf("expected FailCount=1, got %d", r2.FailCount)
+	}
+}
+
+func TestVerifyReport_AddWarn(t *testing.T) {
+	r := &VerifyReport{}
+	r.AddWarn("knowledge file", "was not modified")
+
+	if len(r.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(r.Items))
+	}
+	item := r.Items[0]
+	if !item.Warning {
+		t.Error("expected Warning=true")
+	}
+	if item.Passed {
+		t.Error("expected Passed=false for warn item")
+	}
+	if item.Name != "knowledge file" {
+		t.Errorf("expected name 'knowledge file', got %q", item.Name)
+	}
+	if item.Output != "was not modified" {
+		t.Errorf("expected output 'was not modified', got %q", item.Output)
+	}
+}

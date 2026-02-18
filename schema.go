@@ -257,11 +257,8 @@ func LoadPRDDefinition(path string) (*PRDDefinition, error) {
 		return nil, fmt.Errorf("invalid JSON in prd.json: %w", err)
 	}
 
-	if def.SchemaVersion < 3 {
-		return nil, fmt.Errorf("prd.json is schema version %d (expected 3)\n\n"+
-			"To upgrade: run 'ralph prd <feature>' and select 'Regenerate prd.json'.\n"+
-			"Your prd.md will be preserved and re-finalized into v3 format.",
-			def.SchemaVersion)
+	if def.SchemaVersion != 3 {
+		return nil, fmt.Errorf("unsupported prd.json schema version %d (expected 3); re-run 'ralph prd <feature>' to create a new PRD", def.SchemaVersion)
 	}
 
 	if err := ValidatePRDDefinition(&def); err != nil {
@@ -300,7 +297,6 @@ func ValidatePRDDefinition(def *PRDDefinition) error {
 }
 
 // LoadRunState loads execution state from disk. Returns empty state if file doesn't exist.
-// Auto-detects old v3 format (with "stories" key) and migrates.
 func LoadRunState(path string) (*RunState, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -310,17 +306,6 @@ func LoadRunState(path string) (*RunState, error) {
 		return nil, fmt.Errorf("failed to read run-state.json: %w", err)
 	}
 
-	// Detect old format: has "stories" key with object value
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("invalid JSON in run-state.json: %w", err)
-	}
-
-	if _, hasStories := raw["stories"]; hasStories {
-		return migrateOldRunState(data)
-	}
-
-	// New flat format
 	var state RunState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("invalid JSON in run-state.json: %w", err)
@@ -338,43 +323,6 @@ func LoadRunState(path string) (*RunState, error) {
 		state.LastFailure = make(map[string]string)
 	}
 	return &state, nil
-}
-
-// migrateOldRunState converts old v3 run-state.json (with "stories" map) to new flat format.
-func migrateOldRunState(data []byte) (*RunState, error) {
-	var old struct {
-		Learnings []string `json:"learnings"`
-		Stories   map[string]struct {
-			Passes  bool   `json:"passes"`
-			Retries int    `json:"retries"`
-			Blocked bool   `json:"blocked"`
-			Notes   string `json:"notes"`
-		} `json:"stories"`
-	}
-	if err := json.Unmarshal(data, &old); err != nil {
-		return nil, fmt.Errorf("failed to parse old run-state.json: %w", err)
-	}
-
-	state := NewRunState()
-	state.Learnings = old.Learnings
-	for id, ss := range old.Stories {
-		if ss.Passes {
-			state.Passed = append(state.Passed, id)
-		}
-		if ss.Blocked {
-			state.Skipped = append(state.Skipped, id)
-		}
-		if ss.Retries > 0 {
-			state.Retries[id] = ss.Retries
-		}
-		if ss.Notes != "" {
-			state.LastFailure[id] = ss.Notes
-		}
-	}
-	// Sort for deterministic output
-	sort.Strings(state.Passed)
-	sort.Strings(state.Skipped)
-	return state, nil
 }
 
 // SaveRunState writes execution state atomically.

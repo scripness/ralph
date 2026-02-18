@@ -552,30 +552,6 @@ func gitCommitCount(t *testing.T, dir string) int {
 	return count
 }
 
-// gitDiff returns the full diff from main to HEAD.
-func gitDiff(t *testing.T, dir string) string {
-	t.Helper()
-	cmd := exec.Command("git", "diff", "main...HEAD")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Sprintf("(git diff failed: %v)", err)
-	}
-	return string(out)
-}
-
-// gitDiffStat returns the diff stat from main to HEAD.
-func gitDiffStat(t *testing.T, dir string) string {
-	t.Helper()
-	cmd := exec.Command("git", "diff", "--stat", "main...HEAD")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Sprintf("(git diff --stat failed: %v)", err)
-	}
-	return string(out)
-}
-
 // gitWorkingTreeStatus returns the output of git status --short.
 func gitWorkingTreeStatus(t *testing.T, dir string) string {
 	t.Helper()

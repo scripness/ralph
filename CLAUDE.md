@@ -17,7 +17,7 @@ prompts.go        Prompt template loading + variable substitution (//go:embed pr
 loop.go           Main agent loop, provider subprocess management, verify-at-top-of-loop
 logger.go         JSONL event logging, run history, timestamped console output
 prd.go            Interactive PRD state machine (create/refine/finalize/regenerate)
-feature.go        Date-prefixed feature directory management (.ralph/YYYY-MM-DD-feature/)
+feature.go        Date-prefixed feature directory management, cross-feature learnings aggregation
 services.go       Dev server lifecycle, output capture, health checks
 git.go            Git operations (branch, commit, status, working tree checks, test file detection)
 lock.go           Concurrency lock file (.ralph/ralph.lock)
@@ -67,7 +67,7 @@ Go version: 1.25.6. Key dependency: `github.com/creativeprojects/go-selfupdate` 
    - When all stories are passed or skipped -> print summary, exit
    - Learnings are saved on every path (including timeout/error)
 4. `ralph verify <feature>` runs all verification checks (verify commands + services + AI deep analysis), prints a structured report. On failures, offers an interactive AI session to fix issues.
-6. `ralph logs <feature>` views run history and logs:
+5. `ralph logs <feature>` views run history and logs:
    - `--list` shows all runs with timestamps and outcomes
    - `--summary` shows detailed summary of latest run (stories, durations, verification results)
    - `--run N` views a specific run number
@@ -282,6 +282,7 @@ Story lifecycle: `pending` -> provider implements -> CLI verifies -> `passed` or
 - **Service health checks**: `CheckServiceHealth()` polls service ready URLs during verification to detect crashed/unresponsive services.
 - **Readiness gates**: `CheckReadiness()` in config.go validates: `sh` is in PATH, project is inside a git repository, `.ralph/` directory exists and is writable, QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`), service `start` commands are available (placeholder service commands are flagged separately). UI stories with no `verify.ui` commands generate a warning. Called before `ralph run` and `ralph verify`. `CheckReadinessWarnings(cfg)` returns soft warnings (e.g., unknown provider defaults).
 - **Learning deduplication**: `AddLearning()` normalizes (case-insensitive, trimmed) before checking for duplicates. Learnings are saved on all code paths: success, timeout, error, STUCK, and no-DONE. Prompt delivery caps at 50 most recent learnings to prevent context overflow.
+- **Cross-feature learnings**: `CollectCrossFeatureLearnings(projectRoot, excludeFeature)` in feature.go aggregates learnings from other features' run-state.json files at prompt time. Skips the current feature (case-insensitive), features with zero passed stories, and deduplicates using `normalizeLearning()`. Returns most-recent-feature first. Injected into `generateRunPrompt()` only (not verify-fix or refine). Read-only — does not modify any feature's run-state.json.
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
 - **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h (falls back to `/tmp/ralph-update-check.json` if home directory is unavailable). Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`. Cache uses `isNewerVersion()` for proper semver comparison (not just string inequality) to avoid suggesting downgrades after upgrades.
 - **Resources module**: `ResourceManager` auto-detects project dependencies via `ExtractDependencies()`, maps them to source repos via `MapDependencyToResource()`, and caches full repos in `~/.ralph/resources/`. Shallow clones (`--depth 1 --single-branch`) minimize disk usage. `EnsureResources()` is called before the story loop to sync detected frameworks. Cache metadata is stored in `registry.json`. `ralph doctor` shows cache status.
@@ -289,7 +290,6 @@ Story lifecycle: `pending` -> provider implements -> CLI verifies -> `passed` or
 - **VerifyReport**: `runVerifyChecks()` runs all verification gates (verify commands, service health, AI deep analysis) and returns a structured `*VerifyReport` with PASS/FAIL/WARN items. `FormatForConsole()` renders a colored summary table; `FormatForPrompt()` renders detailed output for the AI verify-fix session.
 - **AI deep verification**: `ralph verify` always runs an AI subagent after mechanical checks. The subagent reads changed files, checks acceptance criteria, verifies best practices, and outputs `VERIFY_PASS` or `VERIFY_FAIL:reason` markers. `runVerifySubagent()` spawns the provider non-interactively and scans for these markers. Multiple `VERIFY_FAIL` markers are collected. NOT run during `ralph run` (per-story verification stays fast).
 - **Branch from default branch**: `cmdPrd` passes `git.DefaultBranch()` as startPoint to `EnsureBranch`, so new feature branches always start from main/master instead of the current HEAD. `EnsureBranch(branchName, startPoint ...string)` uses `CreateBranchFrom` when creating a new branch with a startPoint.
-- **V2 → V3 migration**: `LoadPRDDefinition` detects `schemaVersion < 3` and returns a descriptive error with upgrade instructions. `prdStateFinalized` handles this error gracefully, offering only "Regenerate prd.json" and "Edit" options.
 - **$schema field**: `RalphConfig` has a `Schema string \`json:"$schema,omitempty"\`` field. `WriteDefaultConfig` includes a `$schema` URL pointing to `ralph.schema.json` for editor autocompletion. The value is ignored at runtime.
 - **Git diff in verify prompt**: `GetDiffSummary()` provides `git diff --stat` output from the default branch to HEAD, used in verify-fix and refine prompts.
 - **KnowledgeFile change detection**: `HasFileChanged()` in git.go checks if a file was modified on the current branch vs default branch using `git diff --name-only`. Used in verification to report whether the knowledgeFile was updated.
@@ -325,7 +325,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 
 | Template | Variables |
 |----------|-----------|
-| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `serviceURLs`, `timeout`, `resourceVerificationInstructions` |
+| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `serviceURLs`, `timeout`, `codebaseContext`, `diffSummary`, `resourceVerificationInstructions` |
 | `verify-fix.md` | `project`, `description`, `branchName`, `progress`, `storyDetails`, `verifyResults`, `verifyCommands`, `learnings`, `knowledgeFile`, `serviceURLs`, `diffSummary`, `featureDir`, `resourceVerificationInstructions` |
 | `verify-analyze.md` | `project`, `description`, `branchName`, `criteriaChecklist`, `verifyResults`, `diffSummary`, `resourceVerificationInstructions` |
 | `prd-create.md` | `feature`, `outputPath`, `codebaseContext` |
@@ -347,20 +347,23 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **`$EDITOR` validation in PRD editing**: `prdEditManual()` validates the editor binary exists before spawning. Falls back from `$EDITOR` to `nano`, but checks either is available. Returns a clear error with instructions to set `$EDITOR`.
 - **`ralph prd` warns about placeholder verify commands but does not block**: During `cmdPrd()`, if verify.default contains placeholder commands, a warning is printed to stderr. PRD creation proceeds normally — the user can still create PRDs but needs to fix config before `ralph run`.
 - **`prdFinalize` produces v3 prd.json**: `prdFinalize()` converts prd.md to prd.json (v3 schema, no runtime fields). Validates with `LoadPRDDefinition` instead of `LoadPRD`.
-- **`prdStateFinalized` offers refine and regenerate**: When returning to a finalized PRD, the menu shows current progress (e.g., "Progress: 3/5 stories complete (1 skipped)") if any stories have been worked on, and offers Refine with AI/Regenerate prd.json/Edit prd.md/Edit prd.json/Quit. Regenerate is safe because run-state.json is separate.
+- **`prdStateFinalized` offers refine and regenerate**: When returning to a finalized PRD, the menu shows current progress (e.g., "Progress: 3/5 stories complete (1 skipped)") if any stories have been worked on, and offers Refine with AI/Regenerate prd.json/Edit prd.md/Edit prd.json/Quit. Regenerate is safe because run-state.json is separate. Invalid prd.json (e.g., wrong schema version) prints the error and returns.
+- **Cross-feature learnings are branch-local**: `CollectCrossFeatureLearnings` scans the filesystem, so only features whose `.ralph/` directories are on the current filesystem are visible. Feature branches that haven't been merged won't contribute learnings to other features.
 - **Refine options don't acquire lock**: Both `prdRefineDraft` (pre-finalization) and `prdRefineInteractive` (post-finalization) open interactive AI sessions without acquiring a lock. These are interactive sessions, not automated runs.
+- **Cross-feature learnings are ephemeral**: `CollectCrossFeatureLearnings` computes learnings at prompt time by scanning other features' run-state.json files. They are never copied into the current feature's run-state.json — purely read-only aggregation. Only injected into `generateRunPrompt` (the story implementation prompt), not into verify-fix or refine prompts.
+- **Feature completion prints learnings and knowledge file warning**: When `AllComplete` triggers in the run loop, captured learnings are printed as a numbered list and a warning is shown if the knowledge file was not modified on the branch.
 
 ## Testing
 
 Tests are in `*_test.go` files alongside source. Key test files:
 - `commands_test.go` - provider selection prompt, verify command prompts (with detected defaults), service config prompt, provider choices validation, gitignore creation
 - `config_test.go` - config loading, validation, provider defaults, readiness checks (including placeholder service detection), command validation, verify timeout defaults, services required validation, $schema field handling
-- `schema_test.go` - PRD definition validation, RunState methods (MarkPassed/MarkFailed/MarkSkipped/UnmarkPassed), GetNextStory, AllComplete, GetPendingStories, learning deduplication, LoadPRDDefinition, ValidatePRDDefinition, LoadRunState, SaveRunState, v2 migration error, IsUIStory
+- `schema_test.go` - PRD definition validation, RunState methods (MarkPassed/MarkFailed/MarkSkipped/UnmarkPassed), GetNextStory, AllComplete, GetPendingStories, learning deduplication, LoadPRDDefinition, ValidatePRDDefinition, LoadRunState, SaveRunState, v2 error, IsUIStory
 - `discovery_test.go` - tech stack detection (including Elixir), framework detection (including Phoenix), codebase context formatting, verify command auto-detection, Elixir dependency extraction
 - `services_test.go` - output capture, service manager, health checks
-- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism, generateRefinePrompt, buildRefinementStoryDetails, generateVerifyAnalyzePrompt, buildCriteriaChecklist
+- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism, generateRefinePrompt, buildRefinementStoryDetails, generateVerifyAnalyzePrompt, buildCriteriaChecklist, cross-feature learnings in run prompt
 - `loop_test.go` - marker detection (DONE, STUCK with note, LEARNING, whole-line matching, embedded marker rejection, whitespace tolerance), nil ProviderResult guard, provider result parsing, command timeout, runCommand, VERIFY_PASS/VERIFY_FAIL marker detection
-- `feature_test.go` - directory parsing, timestamp formats, case-insensitive matching
+- `feature_test.go` - directory parsing, timestamp formats, case-insensitive matching, cross-feature learnings (dedup, exclusion, skip-no-passed, empty, case-insensitive)
 - `lock_test.go` - lock acquisition, stale detection (including age-based isLockStale)
 - `cleanup_test.go` - CleanupCoordinator idempotency, nil resource handling
 - `atomic_test.go` - atomic writes, JSON validation
@@ -369,6 +372,7 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `logger_test.go` - event logging, run numbering, log rotation, event filtering, run summaries
 - `resources_test.go` - ResourceManager, ResourcesConfig, cache operations
 - `resourcereg_test.go` - MapDependencyToResource, MergeWithCustom, DefaultResources validation (including Phoenix/Elixir ecosystem entries)
+- `loop_test.go` also includes VerifyReport tests (FormatForConsole, FormatForPrompt, Finalize, AddWarn)
 - `prd_test.go` - editor validation in prdEditManual, stripNonInteractiveArgs
 - `external_git_test.go` - ExternalGitOps, Exists, GetRepoSize
 - `e2e_test.go` - Full end-to-end test (`//go:build e2e`) exercising init → prd → run → verify on real project with real Claude

@@ -137,13 +137,3 @@ func MergeWithCustom(custom []Resource) []Resource {
 
 	return merged
 }
-
-// GetResourceByName returns a resource by exact name match.
-func GetResourceByName(name string, resources []Resource) *Resource {
-	for i := range resources {
-		if resources[i].Name == name {
-			return &resources[i]
-		}
-	}
-	return nil
-}

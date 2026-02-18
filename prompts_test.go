@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,8 @@ func TestGetPrompt_Run(t *testing.T) {
 		"branchName":         "ralph/test",
 		"progress":           "1/3 stories complete",
 		"storyMap":           "✓ US-000: Setup\n→ US-001: Test Story [CURRENT]",
+		"codebaseContext":    "",
+		"diffSummary":        "",
 		"resourceVerificationInstructions": "",
 	})
 
@@ -499,6 +502,8 @@ func TestGetPrompt_RunWithResourcesCache(t *testing.T) {
 		"branchName":                        "ralph/test",
 		"progress":                          "0/1",
 		"storyMap":                          "→ US-001: Test [CURRENT]",
+		"codebaseContext":                   "",
+		"diffSummary":                       "",
 		"resourceVerificationInstructions":resourceInstr,
 	})
 
@@ -528,6 +533,8 @@ func TestGetPrompt_RunWithoutResourcesCache(t *testing.T) {
 		"branchName":                        "ralph/test",
 		"progress":                          "0/1",
 		"storyMap":                          "→ US-001: Test [CURRENT]",
+		"codebaseContext":                   "",
+		"diffSummary":                       "",
 		"resourceVerificationInstructions":webSearchInstr,
 	})
 
@@ -733,6 +740,64 @@ func TestBuildCriteriaChecklist_Empty(t *testing.T) {
 	result := buildCriteriaChecklist(def, state)
 	if result != "" {
 		t.Errorf("expected empty string for no stories, got %q", result)
+	}
+}
+
+func TestGenerateRunPrompt_CrossFeatureLearnings(t *testing.T) {
+	dir := t.TempDir()
+	ralphDir := filepath.Join(dir, ".ralph")
+
+	// Create another feature with learnings
+	otherFeature := filepath.Join(ralphDir, "2024-01-10-billing")
+	os.MkdirAll(otherFeature, 0755)
+	otherState := NewRunState()
+	otherState.MarkPassed("US-010")
+	otherState.Learnings = []string{"Stripe needs idempotency keys"}
+	otherStateJSON, _ := json.Marshal(otherState)
+	os.WriteFile(filepath.Join(otherFeature, "run-state.json"), otherStateJSON, 0644)
+
+	// Current feature directory
+	currentFeature := filepath.Join(ralphDir, "2024-01-20-auth")
+	os.MkdirAll(currentFeature, 0755)
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			MaxRetries: 3,
+			Provider: ProviderConfig{
+				Command:       "claude",
+				KnowledgeFile: "CLAUDE.md",
+			},
+			Verify: VerifyConfig{
+				Default: []string{"echo ok"},
+			},
+		},
+	}
+
+	featureDir := &FeatureDir{
+		Feature: "auth",
+		Path:    currentFeature,
+	}
+
+	def := &PRDDefinition{
+		Project:     "TestApp",
+		Description: "Auth",
+		BranchName:  "ralph/auth",
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Works"}},
+		},
+	}
+
+	state := NewRunState()
+	story := &def.UserStories[0]
+
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story)
+
+	if !strings.Contains(prompt, "Learnings from Previous Features") {
+		t.Error("prompt should contain cross-feature learnings heading")
+	}
+	if !strings.Contains(prompt, "Stripe needs idempotency keys") {
+		t.Error("prompt should contain cross-feature learning content")
 	}
 }
 

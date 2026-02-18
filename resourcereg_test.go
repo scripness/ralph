@@ -120,26 +120,15 @@ func TestMergeWithCustom_Add(t *testing.T) {
 	}
 
 	// Verify defaults are still present
-	next := GetResourceByName("next", merged)
+	var next *Resource
+	for i := range merged {
+		if merged[i].Name == "next" {
+			next = &merged[i]
+			break
+		}
+	}
 	if next == nil {
 		t.Error("expected default 'next' resource to still be present")
-	}
-}
-
-func TestGetResourceByName(t *testing.T) {
-	resources := DefaultResources
-
-	r := GetResourceByName("react", resources)
-	if r == nil {
-		t.Fatal("expected to find 'react'")
-	}
-	if r.Name != "react" {
-		t.Errorf("expected name 'react', got '%s'", r.Name)
-	}
-
-	r = GetResourceByName("nonexistent", resources)
-	if r != nil {
-		t.Error("expected nil for nonexistent resource")
 	}
 }
 
@@ -147,8 +136,14 @@ func TestDefaultResourcesHasExpectedEntries(t *testing.T) {
 	expected := []string{"next", "react", "svelte", "vue", "tailwindcss", "prisma", "vitest", "vite", "phoenix", "ecto", "phoenix_live_view"}
 
 	for _, name := range expected {
-		r := GetResourceByName(name, DefaultResources)
-		if r == nil {
+		found := false
+		for _, r := range DefaultResources {
+			if r.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
 			t.Errorf("expected default resource '%s' to exist", name)
 		}
 	}

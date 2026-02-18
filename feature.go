@@ -175,6 +175,47 @@ func newFeatureDir(ralphDir, feature string) *FeatureDir {
 	}
 }
 
+// CollectCrossFeatureLearnings aggregates learnings from other features' run-state.json files.
+// Skips the current feature (case-insensitive) and features with zero passed stories.
+// Returns deduplicated learnings, most-recent-feature first.
+func CollectCrossFeatureLearnings(projectRoot, excludeFeature string) []string {
+	features, err := ListFeatures(projectRoot)
+	if err != nil {
+		return nil
+	}
+
+	// ListFeatures returns most-recent first (sorted by timestamp descending)
+	seen := make(map[string]bool)
+	var result []string
+
+	for _, f := range features {
+		if strings.EqualFold(f.Feature, excludeFeature) {
+			continue
+		}
+
+		state, err := LoadRunState(f.RunStatePath())
+		if err != nil || len(state.Learnings) == 0 {
+			continue
+		}
+
+		// Skip features with zero passed stories (abandoned/unused runs)
+		if CountPassed(state) == 0 {
+			continue
+		}
+
+		for _, l := range state.Learnings {
+			normalized := normalizeLearning(l)
+			if seen[normalized] {
+				continue
+			}
+			seen[normalized] = true
+			result = append(result, l)
+		}
+	}
+
+	return result
+}
+
 // PrdMdPath returns the path to prd.md
 func (fd *FeatureDir) PrdMdPath() string {
 	return filepath.Join(fd.Path, "prd.md")

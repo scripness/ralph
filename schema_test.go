@@ -392,8 +392,8 @@ func TestLoadPRDDefinition_V2Error(t *testing.T) {
 	if !strings.Contains(err.Error(), "schema version 2") {
 		t.Errorf("expected 'schema version 2' in error, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "Regenerate prd.json") {
-		t.Errorf("expected upgrade instructions in error, got: %v", err)
+	if !strings.Contains(err.Error(), "re-run 'ralph prd") {
+		t.Errorf("expected re-run instructions in error, got: %v", err)
 	}
 }
 
@@ -580,42 +580,6 @@ func TestSaveRunState_RoundTrip(t *testing.T) {
 	}
 	if !loaded.IsSkipped("US-003") {
 		t.Error("expected US-003 skipped=true")
-	}
-}
-
-func TestLoadRunState_MigrateOldFormat(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "run-state.json")
-
-	// Write old format with "stories" key
-	oldState := `{
-		"learnings": ["old learning"],
-		"stories": {
-			"US-001": {"passes": true, "retries": 0},
-			"US-002": {"passes": false, "retries": 2, "blocked": true, "notes": "stuck"}
-		}
-	}`
-	os.WriteFile(statePath, []byte(oldState), 0644)
-
-	loaded, err := LoadRunState(statePath)
-	if err != nil {
-		t.Fatalf("LoadRunState migration failed: %v", err)
-	}
-
-	if len(loaded.Learnings) != 1 || loaded.Learnings[0] != "old learning" {
-		t.Errorf("expected migrated learnings, got %v", loaded.Learnings)
-	}
-	if !loaded.IsPassed("US-001") {
-		t.Error("expected US-001 migrated to passed")
-	}
-	if !loaded.IsSkipped("US-002") {
-		t.Error("expected US-002 migrated to skipped (was blocked)")
-	}
-	if loaded.GetRetries("US-002") != 2 {
-		t.Errorf("expected US-002 retries=2, got %d", loaded.GetRetries("US-002"))
-	}
-	if loaded.GetLastFailure("US-002") != "stuck" {
-		t.Errorf("expected US-002 lastFailure='stuck', got '%s'", loaded.GetLastFailure("US-002"))
 	}
 }
 

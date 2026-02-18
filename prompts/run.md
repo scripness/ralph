@@ -11,6 +11,12 @@ You are an autonomous coding agent working on a software project. Your task is t
 **Time Budget:** {{timeout}}
 {{serviceURLs}}
 
+## Codebase
+
+{{codebaseContext}}
+
+{{diffSummary}}
+
 ## Story Map
 
 {{storyMap}}
@@ -50,10 +56,11 @@ Implement the following story:
 ## Before You Start
 
 1. Check the Learnings section below (if present) for prior context
-2. Check the nearest `{{knowledgeFile}}` for codebase conventions
-3. Read related code to understand existing patterns
-4. Plan your approach before writing code
-5. Check recent git history for context from previous iterations:
+2. **If this is a RETRY** (see "Previous Attempts" above): focus on the specific failure — do not re-implement from scratch. Read the previous issue carefully and try a different approach.
+3. Check the nearest `{{knowledgeFile}}` for codebase conventions
+4. Read related code to understand existing patterns
+5. Plan your approach before writing code
+6. Check recent git history for context from previous iterations:
    `git log --oneline -20`
 
 ## Instructions

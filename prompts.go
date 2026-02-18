@@ -105,6 +105,12 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 	// Build learnings (capped at maxLearningsInPrompt most recent)
 	learningsStr := buildLearnings(state.Learnings, "## Learnings from Previous Work")
 
+	// Cross-feature learnings (read-only aggregation from other features)
+	crossLearnings := CollectCrossFeatureLearnings(cfg.ProjectRoot, featureDir.Feature)
+	if crossStr := buildLearnings(crossLearnings, "## Learnings from Previous Features"); crossStr != "" {
+		learningsStr += "\n" + crossStr
+	}
+
 	// Build tags info
 	tagsStr := ""
 	if len(story.Tags) > 0 {
@@ -131,6 +137,17 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 		}
 	}
 
+	// Build codebase context
+	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
+	codebaseStr := FormatCodebaseContext(codebaseCtx)
+
+	// Build git diff summary
+	git := NewGitOps(cfg.ProjectRoot)
+	diffStr := ""
+	if diffStat := git.GetDiffSummary(); diffStat != "" {
+		diffStr = "## Changes on Branch\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n"
+	}
+
 	// Build resource verification instructions
 	resourceStr := buildResourceVerificationInstructions(cfg)
 
@@ -151,6 +168,8 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 		"storyMap":           buildStoryMap(def, state, story),
 		"serviceURLs":                      serviceURLsStr,
 		"timeout":                          fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
+		"codebaseContext":                  codebaseStr,
+		"diffSummary":                      diffStr,
 		"resourceVerificationInstructions": resourceStr,
 	})
 }
