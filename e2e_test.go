@@ -86,10 +86,11 @@ func (pt *processTracker) killAll() {
 
 // testEnv holds shared state across test phases.
 type testEnv struct {
-	ralphBin    string
-	projectDir  string
-	featureName string
-	artifactDir string // persistent output directory for this run
+	ralphBin        string
+	projectDir      string
+	featureName     string
+	artifactDir     string // persistent output directory for this run
+	providerSpawned bool   // true if provider was actually used during run
 }
 
 // ralphResult captures the output and exit code of a ralph invocation.
@@ -384,11 +385,14 @@ func runRalphInteractive(t *testing.T, dir string, timeout time.Duration,
 							}
 							mu.Unlock()
 							if matchIdx >= 0 {
-								matchedOnCurrentLine = true
 								time.Sleep(100 * time.Millisecond)
 								io.WriteString(stdinPipe, responses[matchIdx].response+"\n")
 								t.Logf("RESPOND: matched %q -> sent %q",
 									responses[matchIdx].pattern, responses[matchIdx].response)
+								// Reset partial line so subsequent prompts on the
+								// same stdout line can be matched independently.
+								currentLine.Reset()
+								matchedOnCurrentLine = false
 							}
 						}
 					}
@@ -857,6 +861,10 @@ func phase1Setup(t *testing.T, env *testEnv) {
 	runCmd(t, "", 2*time.Minute, "gh", "repo", "clone",
 		"scripness/warrantycert", env.projectDir, "--", "--depth", "1")
 
+	// Remove any existing ralph artifacts so ralph init starts fresh
+	os.Remove(filepath.Join(env.projectDir, "ralph.config.json"))
+	os.RemoveAll(filepath.Join(env.projectDir, ".ralph"))
+
 	// Install dependencies
 	t.Log("Installing dependencies (bun install)...")
 	runCmd(t, env.projectDir, 2*time.Minute, "bun", "install")
@@ -887,6 +895,8 @@ func phase2Init(t *testing.T, env *testEnv) {
 			{pattern: "Typecheck", response: ""},
 			{pattern: "Lint", response: ""},
 			{pattern: "Test", response: ""},
+			{pattern: "Start command", response: "bun run dev"},
+			{pattern: "Ready URL", response: ""},
 		},
 		"init",
 	)
@@ -1173,15 +1183,20 @@ func phase7FirstRun(t *testing.T, env *testEnv) {
 	t.Logf("ralph run exited with code %d", result.ExitCode)
 
 	checks := map[string]string{
-		"banner":     "Ralph - Autonomous Agent Loop",
-		"branch":     "ralph/" + env.featureName,
-		"pre-verify": "Pre-verifying stories",
-		"iteration":  "Iteration 1:",
+		"banner": "Ralph - Autonomous Agent Loop",
+		"branch": "ralph/" + env.featureName,
 	}
 	for name, pattern := range checks {
 		if !strings.Contains(combined, pattern) {
 			t.Errorf("run output missing %q (expected %q)", name, pattern)
 		}
+	}
+
+	// Check for either verify-at-top pass or normal iteration flow
+	hasPreVerify := strings.Contains(combined, "already passes verification")
+	hasIteration := strings.Contains(combined, "Iteration 1:")
+	if !hasPreVerify && !hasIteration {
+		t.Error("run output has neither verify-at-top pass nor iteration start")
 	}
 
 	lockPath := filepath.Join(env.projectDir, ".ralph", "ralph.lock")
@@ -1279,11 +1294,19 @@ func phase8PostRunAnalysis(t *testing.T, env *testEnv) {
 		t.Logf("Log event types: %v", eventTypes)
 
 		// Only assert on critical events if the run actually started
+		providerWasSpawned := countLogEventType(logEvents, EventProviderStart) > 0
+		env.providerSpawned = providerWasSpawned
 		if runStarted {
 			assertLogEventExists(t, logEvents, EventRunStart, "run should have started")
-			assertLogEventExists(t, logEvents, EventProviderStart, "provider should have been spawned")
-			assertLogEventExists(t, logEvents, EventVerifyStart, "verification should have run")
-			assertLogEventExists(t, logEvents, EventIterationStart, "at least one iteration should have started")
+
+			if providerWasSpawned {
+				// Normal flow: provider was spawned, expect full event lifecycle
+				assertLogEventExists(t, logEvents, EventVerifyStart, "verification should have run")
+				assertLogEventExists(t, logEvents, EventIterationStart, "at least one iteration should have started")
+			} else {
+				// All stories passed via verify-at-top (pre-verify) — no provider needed
+				t.Log("All stories passed via verify-at-top — no provider was spawned")
+			}
 
 			// Check for service lifecycle events (configured in phase3)
 			if countLogEventType(logEvents, EventServiceStart) == 0 {
@@ -1295,9 +1318,9 @@ func phase8PostRunAnalysis(t *testing.T, env *testEnv) {
 
 		// Check for marker detection events
 		markerCount := countLogEventType(logEvents, EventMarkerDetected)
-		if markerCount == 0 {
+		if markerCount == 0 && providerWasSpawned {
 			t.Log("Warning: No marker_detected events — provider may not have emitted markers")
-		} else {
+		} else if markerCount > 0 {
 			t.Logf("Marker events detected: %d", markerCount)
 		}
 
@@ -1537,6 +1560,12 @@ func phase12Verify(t *testing.T, env *testEnv) {
 		saveSkippedPhase(env, "12-verify",
 			fmt.Sprintf("Not all stories passed (%d/%d)", passed, len(def.UserStories)))
 		t.Skipf("Not all stories passed (%d/%d) — skipping verify", passed, len(def.UserStories))
+	}
+
+	if !env.providerSpawned {
+		saveSkippedPhase(env, "12-verify",
+			"All stories passed via verify-at-top — no new code to verify")
+		t.Skip("All stories passed via verify-at-top — skipping verify (no new code)")
 	}
 
 	t.Log("All stories passed — running final verification (10 min timeout)...")
