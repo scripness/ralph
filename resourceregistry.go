@@ -9,9 +9,8 @@ import (
 
 // ResourceRegistry tracks metadata about cached resources.
 type ResourceRegistry struct {
-	Repos       map[string]*CachedRepo `json:"repos"`
-	TotalSize   int64                  `json:"totalSize"`
-	LastCleaned time.Time              `json:"lastCleaned"`
+	Repos     map[string]*CachedRepo `json:"repos"`
+	TotalSize int64                  `json:"totalSize"`
 }
 
 // CachedRepo tracks a single cached resource.

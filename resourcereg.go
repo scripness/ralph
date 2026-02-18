@@ -6,104 +6,68 @@ import (
 
 // Resource maps a framework/library to its source code repository
 type Resource struct {
-	Name        string   // e.g., "nextjs", "react", "svelte"
-	URL         string   // GitHub repo URL (full source)
-	Branch      string   // e.g., "main", "canary"
-	Notes       string   // Guidance for AI agent
+	Name   string // e.g., "nextjs", "react", "svelte"
+	URL    string // GitHub repo URL (full source)
+	Branch string // e.g., "main", "canary"
 }
 
 // DefaultResources is the built-in registry of popular frameworks.
 // These are SOURCE CODE repos, not just docs.
 var DefaultResources = []Resource{
-	// Frontend Frameworks - FULL SOURCE
-	{Name: "next", URL: "https://github.com/vercel/next.js", Branch: "canary",
-		Notes: "Next.js framework. Check packages/next/src for core, docs/ for patterns."},
-	{Name: "react", URL: "https://github.com/facebook/react", Branch: "main",
-		Notes: "React library. Check packages/react/src for core implementation."},
-	{Name: "svelte", URL: "https://github.com/sveltejs/svelte", Branch: "main",
-		Notes: "Svelte compiler and runtime. Check packages/svelte/src."},
-	{Name: "@sveltejs/kit", URL: "https://github.com/sveltejs/kit", Branch: "main",
-		Notes: "SvelteKit framework. Check packages/kit/src."},
-	{Name: "vue", URL: "https://github.com/vuejs/core", Branch: "main",
-		Notes: "Vue 3 core. Check packages/vue/src and packages/runtime-core/src."},
-	{Name: "nuxt", URL: "https://github.com/nuxt/nuxt", Branch: "main",
-		Notes: "Nuxt framework. Check packages/nuxt/src."},
-	{Name: "angular", URL: "https://github.com/angular/angular", Branch: "main",
-		Notes: "Angular framework. Check packages/core/src."},
+	// Frontend Frameworks
+	{Name: "next", URL: "https://github.com/vercel/next.js", Branch: "canary"},
+	{Name: "react", URL: "https://github.com/facebook/react", Branch: "main"},
+	{Name: "svelte", URL: "https://github.com/sveltejs/svelte", Branch: "main"},
+	{Name: "@sveltejs/kit", URL: "https://github.com/sveltejs/kit", Branch: "main"},
+	{Name: "vue", URL: "https://github.com/vuejs/core", Branch: "main"},
+	{Name: "nuxt", URL: "https://github.com/nuxt/nuxt", Branch: "main"},
+	{Name: "angular", URL: "https://github.com/angular/angular", Branch: "main"},
 
 	// Styling
-	{Name: "tailwindcss", URL: "https://github.com/tailwindlabs/tailwindcss", Branch: "main",
-		Notes: "Tailwind CSS. Check src/ for plugin system and utilities."},
+	{Name: "tailwindcss", URL: "https://github.com/tailwindlabs/tailwindcss", Branch: "main"},
 
 	// Backend/Runtime - JavaScript/TypeScript
-	{Name: "hono", URL: "https://github.com/honojs/hono", Branch: "main",
-		Notes: "Hono web framework. Check src/ for middleware patterns."},
-	{Name: "fastify", URL: "https://github.com/fastify/fastify", Branch: "main",
-		Notes: "Fastify framework. Check lib/ for core, types/ for TypeScript."},
-	{Name: "express", URL: "https://github.com/expressjs/express", Branch: "master",
-		Notes: "Express framework. Check lib/ for core middleware patterns."},
-	{Name: "koa", URL: "https://github.com/koajs/koa", Branch: "master",
-		Notes: "Koa framework. Check lib/ for middleware patterns."},
+	{Name: "hono", URL: "https://github.com/honojs/hono", Branch: "main"},
+	{Name: "fastify", URL: "https://github.com/fastify/fastify", Branch: "main"},
+	{Name: "express", URL: "https://github.com/expressjs/express", Branch: "master"},
+	{Name: "koa", URL: "https://github.com/koajs/koa", Branch: "master"},
 
 	// ORMs and Database
-	{Name: "prisma", URL: "https://github.com/prisma/prisma", Branch: "main",
-		Notes: "Prisma ORM. Check packages/client/src for client generation."},
-	{Name: "@prisma/client", URL: "https://github.com/prisma/prisma", Branch: "main",
-		Notes: "Prisma ORM. Check packages/client/src for client generation."},
-	{Name: "drizzle-orm", URL: "https://github.com/drizzle-team/drizzle-orm", Branch: "main",
-		Notes: "Drizzle ORM. Check drizzle-orm/src for query builders."},
+	{Name: "prisma", URL: "https://github.com/prisma/prisma", Branch: "main"},
+	{Name: "@prisma/client", URL: "https://github.com/prisma/prisma", Branch: "main"},
+	{Name: "drizzle-orm", URL: "https://github.com/drizzle-team/drizzle-orm", Branch: "main"},
 
 	// Testing
-	{Name: "vitest", URL: "https://github.com/vitest-dev/vitest", Branch: "main",
-		Notes: "Vitest testing framework. Check packages/vitest/src."},
-	{Name: "playwright", URL: "https://github.com/microsoft/playwright", Branch: "main",
-		Notes: "Playwright testing. Check packages/playwright-core/src."},
-	{Name: "@playwright/test", URL: "https://github.com/microsoft/playwright", Branch: "main",
-		Notes: "Playwright testing. Check packages/playwright-core/src."},
-	{Name: "jest", URL: "https://github.com/jestjs/jest", Branch: "main",
-		Notes: "Jest testing framework. Check packages/jest/src."},
+	{Name: "vitest", URL: "https://github.com/vitest-dev/vitest", Branch: "main"},
+	{Name: "playwright", URL: "https://github.com/microsoft/playwright", Branch: "main"},
+	{Name: "@playwright/test", URL: "https://github.com/microsoft/playwright", Branch: "main"},
+	{Name: "jest", URL: "https://github.com/jestjs/jest", Branch: "main"},
 
 	// Validation
-	{Name: "zod", URL: "https://github.com/colinhacks/zod", Branch: "main",
-		Notes: "Zod validation. Check src/ for schema definitions."},
+	{Name: "zod", URL: "https://github.com/colinhacks/zod", Branch: "main"},
 
 	// Build Tools
-	{Name: "vite", URL: "https://github.com/vitejs/vite", Branch: "main",
-		Notes: "Vite build tool. Check packages/vite/src."},
-	{Name: "esbuild", URL: "https://github.com/evanw/esbuild", Branch: "main",
-		Notes: "esbuild bundler. Check pkg/api for Go API."},
-	{Name: "webpack", URL: "https://github.com/webpack/webpack", Branch: "main",
-		Notes: "Webpack bundler. Check lib/ for core."},
+	{Name: "vite", URL: "https://github.com/vitejs/vite", Branch: "main"},
+	{Name: "esbuild", URL: "https://github.com/evanw/esbuild", Branch: "main"},
+	{Name: "webpack", URL: "https://github.com/webpack/webpack", Branch: "main"},
 
 	// State Management
-	{Name: "zustand", URL: "https://github.com/pmndrs/zustand", Branch: "main",
-		Notes: "Zustand state management. Check src/ for core store implementation."},
-	{Name: "jotai", URL: "https://github.com/pmndrs/jotai", Branch: "main",
-		Notes: "Jotai atomic state management. Check src/ for atom implementation."},
+	{Name: "zustand", URL: "https://github.com/pmndrs/zustand", Branch: "main"},
+	{Name: "jotai", URL: "https://github.com/pmndrs/jotai", Branch: "main"},
 
 	// Elixir/Phoenix Ecosystem
-	{Name: "phoenix", URL: "https://github.com/phoenixframework/phoenix", Branch: "main",
-		Notes: "Phoenix web framework. Check lib/phoenix/ for core."},
-	{Name: "phoenix_live_view", URL: "https://github.com/phoenixframework/phoenix_live_view", Branch: "main",
-		Notes: "Phoenix LiveView. Check lib/phoenix_live_view/ for core."},
-	{Name: "ecto", URL: "https://github.com/elixir-ecto/ecto", Branch: "main",
-		Notes: "Ecto database library. Check lib/ecto/ for core."},
-	{Name: "phoenix_html", URL: "https://github.com/phoenixframework/phoenix_html", Branch: "main",
-		Notes: "Phoenix HTML helpers. Check lib/phoenix_html/."},
-	{Name: "absinthe", URL: "https://github.com/absinthe-graphql/absinthe", Branch: "main",
-		Notes: "Absinthe GraphQL toolkit. Check lib/absinthe/."},
-	{Name: "oban", URL: "https://github.com/oban-bg/oban", Branch: "main",
-		Notes: "Oban background jobs. Check lib/oban/ for workers and queues."},
+	{Name: "phoenix", URL: "https://github.com/phoenixframework/phoenix", Branch: "main"},
+	{Name: "phoenix_live_view", URL: "https://github.com/phoenixframework/phoenix_live_view", Branch: "main"},
+	{Name: "ecto", URL: "https://github.com/elixir-ecto/ecto", Branch: "main"},
+	{Name: "phoenix_html", URL: "https://github.com/phoenixframework/phoenix_html", Branch: "main"},
+	{Name: "absinthe", URL: "https://github.com/absinthe-graphql/absinthe", Branch: "main"},
+	{Name: "oban", URL: "https://github.com/oban-bg/oban", Branch: "main"},
 
 	// Go Frameworks
-	{Name: "gin", URL: "https://github.com/gin-gonic/gin", Branch: "master",
-		Notes: "Gin web framework for Go. Check .go files for middleware patterns."},
-	{Name: "echo", URL: "https://github.com/labstack/echo", Branch: "master",
-		Notes: "Echo web framework for Go. Check echo.go for core."},
-	{Name: "fiber", URL: "https://github.com/gofiber/fiber", Branch: "main",
-		Notes: "Fiber web framework for Go. Check app.go for core."},
-	{Name: "chi", URL: "https://github.com/go-chi/chi", Branch: "master",
-		Notes: "Chi router for Go. Check chi.go and mux.go for routing."},
+	{Name: "gin", URL: "https://github.com/gin-gonic/gin", Branch: "master"},
+	{Name: "echo", URL: "https://github.com/labstack/echo", Branch: "master"},
+	{Name: "fiber", URL: "https://github.com/gofiber/fiber", Branch: "main"},
+	{Name: "chi", URL: "https://github.com/go-chi/chi", Branch: "master"},
 }
 
 // MapDependencyToResource finds a Resource for a given dependency name.

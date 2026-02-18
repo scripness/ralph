@@ -165,8 +165,5 @@ func TestDefaultResourcesHaveValidFields(t *testing.T) {
 		if r.Branch == "" {
 			t.Errorf("resource '%s' has empty branch", r.Name)
 		}
-		if r.Notes == "" {
-			t.Errorf("resource '%s' has empty notes", r.Name)
-		}
 	}
 }
