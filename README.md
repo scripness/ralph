@@ -98,7 +98,7 @@ stateDiagram-v2
 3. Creates/switches to `ralph/{feature}` branch
 4. Picks next story (highest priority, not passed, not skipped)
 5. **Verify-at-top**: runs verification first — if story already passes, marks passed and skips implementation
-6. Sends prompt to provider subprocess (includes deduplicated learnings)
+6. Sends prompt to provider subprocess (includes deduplicated learnings + cross-feature learnings from other completed features)
 7. Provider implements code, writes tests, commits
 8. Provider outputs `<ralph>DONE</ralph>` when finished
 9. Ralph runs `verify.default` commands
@@ -114,9 +114,9 @@ stateDiagram-v2
 
 ```bash
 ralph init [--force]           # Initialize Ralph (creates config + .ralph/)
-ralph prd <feature>            # Create, refine, or manage a PRD
+ralph prd <feature>            # Create/refine/regenerate PRD (interactive menu)
 ralph run <feature>            # Run the agent loop (infinite until done)
-ralph verify <feature>         # Run verification (mechanical checks + AI deep analysis)
+ralph verify <feature>         # Run full verification (tests + lint + AI analysis), offers fix session on failure
 # Feature names are case-insensitive: "ralph run Auth" and "ralph run auth" find the same feature
 ```
 
@@ -364,7 +364,7 @@ Ralph automatically detects project dependencies and caches their source code re
 
 ### How It Works
 
-1. **Detection**: When you run `ralph run`, Ralph extracts dependencies from package.json, go.mod, pyproject.toml, or Cargo.toml
+1. **Detection**: When you run `ralph run`, Ralph extracts dependencies from package.json, go.mod, pyproject.toml, Cargo.toml, or mix.exs
 2. **Mapping**: Dependencies are mapped to their source repositories (e.g., "next" → github.com/vercel/next.js)
 3. **Caching**: Repos are cloned as shallow clones (`--depth 1`) to minimize disk usage
 4. **Sync**: Before each run, repos are synced to latest if out of date
@@ -378,8 +378,10 @@ Ralph automatically detects project dependencies and caches their source code re
 |----------|------------|
 | **Frontend** | React, Next.js, Vue, Nuxt, Svelte, SvelteKit, Angular |
 | **Styling** | Tailwind CSS |
-| **Backend** | Express, Fastify, Hono, Koa, Gin, Echo, Fiber, Chi |
-| **ORM** | Prisma, Drizzle |
+| **Backend (JS/TS)** | Express, Fastify, Hono, Koa |
+| **Backend (Go)** | Gin, Echo, Fiber, Chi |
+| **Backend (Elixir)** | Phoenix, Phoenix LiveView, Absinthe, Oban |
+| **ORM/Database** | Prisma, Drizzle, Ecto |
 | **Testing** | Vitest, Jest, Playwright |
 | **Validation** | Zod |
 | **Build Tools** | Vite, esbuild, Webpack |
@@ -396,8 +398,7 @@ Add custom framework mappings in `ralph.config.json`:
       {
         "name": "internal-ui",
         "url": "https://github.com/company/ui-library",
-        "branch": "main",
-        "notes": "Internal component library. Check src/components for patterns."
+        "branch": "main"
       }
     ]
   }
@@ -459,6 +460,10 @@ State is preserved in run-state.json (separate from prd.json):
 - `learnings[]`: Accumulated insights from providers
 
 On restart, verify-at-top-of-loop re-checks each story before spawning a provider.
+
+### Cross-Feature Learnings
+
+When running a feature, Ralph automatically collects learnings from other completed features in the same project and includes them in the prompt. This means insights discovered during `auth` (e.g., "use bcrypt for password hashing") are available when implementing `billing`. Learnings are read-only — they're never copied between features.
 
 ## Troubleshooting
 

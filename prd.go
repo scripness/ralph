@@ -101,17 +101,32 @@ func prdStateFinalized(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	// Show progress if any stories have been worked on
 	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
 	if err != nil {
-		fmt.Printf("\nError: %v\n", err)
+		fmt.Printf("\nError loading prd.json: %v\n", err)
+		fmt.Println()
+		fmt.Println("What would you like to do?")
+		fmt.Println("  A) Regenerate prd.json from prd.md")
+		fmt.Println("  B) Edit prd.json ($EDITOR)")
+		fmt.Println("  C) Edit prd.md ($EDITOR)")
+		fmt.Println("  Q) Quit")
+		fmt.Println()
+
+		choice := promptChoice("Choose", []string{"a", "b", "c", "q"})
+		switch choice {
+		case "a":
+			return prdRegenerateJson(cfg, featureDir)
+		case "b":
+			return prdEditManual(featureDir.PrdJsonPath())
+		case "c":
+			return prdEditManual(featureDir.PrdMdPath())
+		}
 		return nil
 	}
-	state, _ := LoadRunState(featureDir.RunStatePath())
 
-	if def != nil {
-		passed := CountPassed(state)
-		skipped := CountSkipped(state)
-		if passed > 0 || skipped > 0 {
-			fmt.Printf("Progress: %s\n", buildProgress(def, state))
-		}
+	state, _ := LoadRunState(featureDir.RunStatePath())
+	passed := CountPassed(state)
+	skipped := CountSkipped(state)
+	if passed > 0 || skipped > 0 {
+		fmt.Printf("Progress: %s\n", buildProgress(def, state))
 	}
 
 	fmt.Println()

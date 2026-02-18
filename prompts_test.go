@@ -275,7 +275,7 @@ func TestGenerateRunPrompt(t *testing.T) {
 
 	story := &def.UserStories[0]
 
-	prompt := generateRunPrompt(cfg, featureDir, def, state, story)
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "")
 
 	if !strings.Contains(prompt, "US-001") {
 		t.Error("prompt should contain story ID")
@@ -334,7 +334,7 @@ func TestGenerateRunPrompt_StoryMap(t *testing.T) {
 
 	story := &def.UserStories[1] // US-002 is current
 
-	prompt := generateRunPrompt(cfg, featureDir, def, state, story)
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "")
 
 	// Completed story
 	if !strings.Contains(prompt, "✓ US-001: Database setup") {
@@ -791,7 +791,7 @@ func TestGenerateRunPrompt_CrossFeatureLearnings(t *testing.T) {
 	state := NewRunState()
 	story := &def.UserStories[0]
 
-	prompt := generateRunPrompt(cfg, featureDir, def, state, story)
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "")
 
 	if !strings.Contains(prompt, "Learnings from Previous Features") {
 		t.Error("prompt should contain cross-feature learnings heading")

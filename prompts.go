@@ -81,8 +81,9 @@ func buildStoryMap(def *PRDDefinition, state *RunState, current *StoryDefinition
 	return strings.Join(lines, "\n")
 }
 
-// generateRunPrompt generates the prompt for story implementation
-func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, story *StoryDefinition) string {
+// generateRunPrompt generates the prompt for story implementation.
+// codebaseStr and diffSummary are pre-computed in runLoop to avoid redundant per-iteration I/O.
+func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, story *StoryDefinition, codebaseStr, diffSummary string) string {
 	// Build acceptance criteria list
 	var criteria []string
 	for _, c := range story.AcceptanceCriteria {
@@ -137,17 +138,6 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 		}
 	}
 
-	// Build codebase context
-	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
-	codebaseStr := FormatCodebaseContext(codebaseCtx)
-
-	// Build git diff summary
-	git := NewGitOps(cfg.ProjectRoot)
-	diffStr := ""
-	if diffStat := git.GetDiffSummary(); diffStat != "" {
-		diffStr = "## Changes on Branch\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n"
-	}
-
 	// Build resource verification instructions
 	resourceStr := buildResourceVerificationInstructions(cfg)
 
@@ -169,7 +159,7 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 		"serviceURLs":                      serviceURLsStr,
 		"timeout":                          fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
 		"codebaseContext":                  codebaseStr,
-		"diffSummary":                      diffStr,
+		"diffSummary":                      diffSummary,
 		"resourceVerificationInstructions": resourceStr,
 	})
 }

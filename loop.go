@@ -130,9 +130,12 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		}
 	}
 
+	// Discover codebase context once (used for resource sync + run prompt)
+	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
+	codebaseStr := FormatCodebaseContext(codebaseCtx)
+
 	// Sync source code resources for detected frameworks
 	if cfg.Config.Resources == nil || cfg.Config.Resources.IsEnabled() {
-		codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
 		depNames := GetDependencyNames(codebaseCtx.Dependencies)
 		rm := NewResourceManager(cfg.Config.Resources, depNames)
 		if rm.HasDetectedResources() {
@@ -247,8 +250,14 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		// Capture commit hash AFTER state commit, BEFORE provider runs
 		preRunCommit := git.GetLastCommit()
 
+		// Compute diff summary per-iteration (changes as provider commits)
+		diffSummary := ""
+		if diffStat := git.GetDiffSummary(); diffStat != "" {
+			diffSummary = "## Changes on Branch\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n"
+		}
+
 		// Generate and send prompt
-		prompt := generateRunPrompt(cfg, featureDir, def, state, story)
+		prompt := generateRunPrompt(cfg, featureDir, def, state, story, codebaseStr, diffSummary)
 		logger.LogPrintln("Provider running...")
 		logger.ProviderStart()
 		providerStartTime := time.Now()
