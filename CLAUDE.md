@@ -16,7 +16,6 @@ schema.go         PRD definition types, flat RunState, validation, state load/sa
 prompts.go        Prompt template loading + variable substitution (//go:embed prompts/*)
 loop.go           Main agent loop, provider subprocess management, verify-at-top-of-loop
 logger.go         JSONL event logging, run history, timestamped console output
-browser.go        Browser automation via rod (Chrome DevTools Protocol)
 prd.go            Interactive PRD state machine (create/refine/finalize/regenerate)
 feature.go        Date-prefixed feature directory management (.ralph/YYYY-MM-DD-feature/)
 services.go       Dev server lifecycle, output capture, health checks
@@ -40,6 +39,7 @@ Prompt templates live in `prompts/` and are embedded at compile time:
 - `prd-create.md` - PRD brainstorming prompt
 - `prd-finalize.md` - PRD to JSON conversion prompt
 - `refine.md` - interactive refine session context prompt (used by `ralph prd` refine options)
+- `verify-analyze.md` - AI deep verification analysis prompt (used by `ralph verify`)
 
 ## Build and Test
 
@@ -49,7 +49,7 @@ make test     # go test ./...
 make test-e2e # go test -tags e2e -timeout 60m -v -run TestE2E ./...
 ```
 
-Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automation, `github.com/creativeprojects/go-selfupdate` for self-update.
+Go version: 1.25.6. Key dependency: `github.com/creativeprojects/go-selfupdate` for self-update.
 
 ## How the CLI Works (End-to-End)
 
@@ -62,11 +62,11 @@ Go version: 1.25.6. Key dependencies: `github.com/go-rod/rod` for browser automa
    - Each iteration: picks next story (highest priority, not passed/skipped)
    - **Verify-at-top**: runs verification first — if story already passes, mark passed and skip to next
    - Generates prompt, spawns provider subprocess, captures output with marker detection
-   - After provider signals `<ralph>DONE</ralph>`, CLI runs verification commands + browser checks (console errors are hard failures) + service health checks
+   - After provider signals `<ralph>DONE</ralph>`, CLI runs verification commands + service health checks
    - Pass -> mark story complete; Fail -> retry (up to maxRetries, then auto-skip)
    - When all stories are passed or skipped -> print summary, exit
    - Learnings are saved on every path (including timeout/error)
-4. `ralph verify <feature>` runs all verification checks (verify commands + browser + services), prints a structured report. On failures, offers an interactive AI session to fix issues.
+4. `ralph verify <feature>` runs all verification checks (verify commands + services + AI deep analysis), prints a structured report. On failures, offers an interactive AI session to fix issues.
 6. `ralph logs <feature>` views run history and logs:
    - `--list` shows all runs with timestamps and outcomes
    - `--summary` shows detailed summary of latest run (stories, durations, verification results)
@@ -86,7 +86,6 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Branch management**: CLI creates/switches to the `ralph/<feature>` branch (both `ralph prd` and `ralph run` call `EnsureBranch` before any commits)
 - **State updates**: CLI marks stories passed/failed/skipped based on verification results
 - **Verification**: CLI runs `verify.default` and `verify.ui` commands, not the provider
-- **Browser testing**: CLI executes browserSteps via rod; console errors are hard failures
 - **Service management**: CLI starts/stops/restarts dev servers; captures output; checks health during verification
 - **Learning management**: CLI deduplicates learnings and saves them on every code path (including timeout/error)
 - **Concurrency control**: CLI uses lock file to prevent parallel runs
@@ -111,12 +110,10 @@ This is the most important architectural decision. In the original v1, the AI ag
 
 **User must provide (manual config, only if needed):**
 - `verify.ui` — e2e test commands (only if UI stories)
-- `browser.executablePath` — if auto-download won't work
 
 **Ralph handles automatically:**
 - Provider args, promptMode, knowledgeFile (auto-detected from known providers)
 - Verify command suggestions (auto-detected from package.json scripts, go.mod, Cargo.toml, pyproject.toml, mix.exs, requirements.txt)
-- Browser binary (auto-downloaded if needed for UI stories)
 - Resource caching (auto-detected from dependencies)
 - Git branch management, story selection, verification orchestration
 - All PRD state management
@@ -165,7 +162,7 @@ The original was a ~90-line bash script (`ralph.sh`) with a simple for loop:
 | Completion signal | `<promise>COMPLETE</promise>` | Marker protocol (DONE, STUCK, LEARNING) |
 | Memory | `progress.txt` (append-only file) | `run-state.json` learnings |
 | Loop limit | Fixed iterations (default 10) | Infinite until verified |
-| Browser testing | Delegated to provider skills (dev-browser) | Built-in rod automation |
+| Browser testing | Delegated to provider skills (dev-browser) | Project's own e2e test suite via verify.ui |
 | Service management | None | Start/ready/restart lifecycle |
 | Crash recovery | None | Verify-at-top-of-loop (re-checks on restart) |
 | Concurrency safety | None | Lock file |
@@ -179,6 +176,7 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
 
 ```json
 {
+  "$schema": "https://raw.githubusercontent.com/scripness/ralph/main/ralph.schema.json",
   "maxRetries": 3,
   "provider": {
     "command": "claude"
@@ -196,12 +194,6 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
     "default": ["bun run typecheck", "bun run lint", "bun run test:unit"],
     "ui": ["bun run test:e2e"],
     "timeout": 300
-  },
-  "browser": {
-    "enabled": true,
-    "headless": true,
-    "executablePath": "/usr/bin/chromium",
-    "screenshotDir": ".ralph/screenshots"
   },
   "commits": {
     "prdChanges": true
@@ -240,8 +232,7 @@ PRD data is split into two files: **prd.json** (AI-authored definition, immutabl
     "description": "...",
     "acceptanceCriteria": ["..."],
     "tags": ["ui"],
-    "priority": 1,
-    "browserSteps": [{ "action": "navigate", "url": "/path" }]
+    "priority": 1
   }]
 }
 ```
@@ -282,11 +273,6 @@ Story lifecycle: `pending` -> provider implements -> CLI verifies -> `passed` or
 - **Lock file**: JSON with pid/startedAt/feature/branch. Stale detection via `isLockStale()` which checks both process liveness (`kill(pid, 0)`) and lock age (24h max, guards against PID reuse). Atomic creation via `O_CREATE|O_EXCL`.
 - **Feature directories**: `.ralph/YYYY-MM-DD-feature/` or `.ralph/YYYYMMDD-feature/` format. `FindFeatureDir` finds most recent match by suffix.
 - **Feature name matching**: `FindFeatureDir` matches feature names case-insensitively via `strings.EqualFold`. `ralph run Auth` and `ralph run auth` find the same feature directory.
-- **Browser steps**: Defined in prd.json per story. Executed by rod in headless Chrome. Screenshots saved to `.ralph/screenshots/`.
-- **Console error capture**: BrowserRunner captures both `RuntimeExceptionThrown` (uncaught exceptions) and `RuntimeConsoleAPICalled` (`console.error()`) events. Access to `consoleErrors` is protected by `sync.Mutex` since event handlers run in goroutines. Both `RunSteps` and `checkURL` wait 1 second before collecting console errors to allow async JS errors to propagate.
-- **Browser launcher cleanup**: BrowserRunner stores the `launcher.Launcher` reference and calls `launcher.Kill()` in `close()` to ensure the Chrome process is terminated. Error paths in `init()` also call `launcher.Kill()` to prevent orphaned processes.
-- **Console error enforcement**: Browser console errors are hard verification failures (not warnings). Checked in both per-story verification and `ralph verify`.
-- **Browser pre-download**: `EnsureBrowser()` pre-resolves the Chromium binary before the main loop. Uses `os.Stat` (not `Validate()`) for fast path (~1μs vs ~2s). Mutates `config.Browser.ExecutablePath` in-place on success; sets `Enabled=false` on download failure to prevent silent per-story retry. Gated on UI stories — skips entirely if no stories have the "ui" tag. `CheckBrowserStatus()` provides read-only status for `cmdDoctor`.
 - **Default branch detection**: `DefaultBranch()` tries `origin/HEAD` symbolic ref first, then falls back to checking if `main` or `master` branch exists locally, then checks `origin/main` or `origin/master` remote tracking branches. Diff-based functions (`GetChangedFiles`, `HasFileChanged`, `GetDiffSummary`) fall back from three-dot diff to two-dot diff when the merge-base is unavailable.
 - **Process group killing**: Services and provider subprocesses are started with `Setpgid: true` so `syscall.Kill(-pid, SIGTERM)` kills the entire process group (including child processes). This prevents orphaned processes on timeout or signal. Provider subprocesses use `cmd.Cancel` + `cmd.WaitDelay` (matching `runCommand()`) to ensure the process group is killed on context timeout and `cmd.Wait()` is always called to prevent zombie processes.
 - **CleanupCoordinator**: Signal handlers use a `CleanupCoordinator` that resources register with when created. On SIGINT/SIGTERM, the coordinator kills provider process groups, stops services, logs run end, and releases locks — all before calling `os.Exit(130)`. This ensures cleanup happens even when defer statements would be bypassed.
@@ -294,33 +280,35 @@ Story lifecycle: `pending` -> provider implements -> CLI verifies -> `passed` or
 - **Idempotent StopAll**: `ServiceManager.StopAll()` sets `processes` to nil after stopping, making it safe to call multiple times (e.g., from both defer and signal handler).
 - **Service output capture**: `capturedOutput` trim buffer (keeps last ~50% on overflow) captures service stdout/stderr. Service output is not printed to the console — only captured for diagnostics via `GetRecentOutput()`.
 - **Service health checks**: `CheckServiceHealth()` polls service ready URLs during verification to detect crashed/unresponsive services.
-- **Readiness gates**: `CheckReadiness()` in config.go validates: `sh` is in PATH, project is inside a git repository, `.ralph/` directory exists and is writable, `browser.executablePath` exists if explicitly set, QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`), service `start` commands are available (placeholder service commands are flagged separately), and PRD browserSteps require browser enabled. Called before `ralph run` and `ralph verify`. `CheckReadinessWarnings(cfg)` returns soft warnings (e.g., unknown provider defaults).
+- **Readiness gates**: `CheckReadiness()` in config.go validates: `sh` is in PATH, project is inside a git repository, `.ralph/` directory exists and is writable, QA command binaries exist in PATH (`extractBaseCommand()` + `exec.LookPath`), service `start` commands are available (placeholder service commands are flagged separately). UI stories with no `verify.ui` commands generate a warning. Called before `ralph run` and `ralph verify`. `CheckReadinessWarnings(cfg)` returns soft warnings (e.g., unknown provider defaults).
 - **Learning deduplication**: `AddLearning()` normalizes (case-insensitive, trimmed) before checking for duplicates. Learnings are saved on all code paths: success, timeout, error, STUCK, and no-DONE. Prompt delivery caps at 50 most recent learnings to prevent context overflow.
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
 - **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h (falls back to `/tmp/ralph-update-check.json` if home directory is unavailable). Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`. Cache uses `isNewerVersion()` for proper semver comparison (not just string inequality) to avoid suggesting downgrades after upgrades.
 - **Resources module**: `ResourceManager` auto-detects project dependencies via `ExtractDependencies()`, maps them to source repos via `MapDependencyToResource()`, and caches full repos in `~/.ralph/resources/`. Shallow clones (`--depth 1 --single-branch`) minimize disk usage. `EnsureResources()` is called before the story loop to sync detected frameworks. Cache metadata is stored in `registry.json`. `ralph doctor` shows cache status.
 - **Resource verification instructions**: Prompts include `{{resourceVerificationInstructions}}` which tells the agent about cached framework source code. When resources are cached, agents can read actual source to verify implementations. Falls back to web search instructions when no resources are cached.
-- **VerifyReport**: `runVerifyChecks()` runs all verification gates (verify commands, browser checks, service health) and returns a structured `*VerifyReport` with PASS/FAIL/WARN items. `FormatForConsole()` renders a colored summary table; `FormatForPrompt()` renders detailed output for the AI verify-fix session.
+- **VerifyReport**: `runVerifyChecks()` runs all verification gates (verify commands, service health, AI deep analysis) and returns a structured `*VerifyReport` with PASS/FAIL/WARN items. `FormatForConsole()` renders a colored summary table; `FormatForPrompt()` renders detailed output for the AI verify-fix session.
+- **AI deep verification**: `ralph verify` always runs an AI subagent after mechanical checks. The subagent reads changed files, checks acceptance criteria, verifies best practices, and outputs `VERIFY_PASS` or `VERIFY_FAIL:reason` markers. `runVerifySubagent()` spawns the provider non-interactively and scans for these markers. Multiple `VERIFY_FAIL` markers are collected. NOT run during `ralph run` (per-story verification stays fast).
+- **Branch from default branch**: `cmdPrd` passes `git.DefaultBranch()` as startPoint to `EnsureBranch`, so new feature branches always start from main/master instead of the current HEAD. `EnsureBranch(branchName, startPoint ...string)` uses `CreateBranchFrom` when creating a new branch with a startPoint.
+- **V2 → V3 migration**: `LoadPRDDefinition` detects `schemaVersion < 3` and returns a descriptive error with upgrade instructions. `prdStateFinalized` handles this error gracefully, offering only "Regenerate prd.json" and "Edit" options.
+- **$schema field**: `RalphConfig` has a `Schema string \`json:"$schema,omitempty"\`` field. `WriteDefaultConfig` includes a `$schema` URL pointing to `ralph.schema.json` for editor autocompletion. The value is ignored at runtime.
 - **Git diff in verify prompt**: `GetDiffSummary()` provides `git diff --stat` output from the default branch to HEAD, used in verify-fix and refine prompts.
 - **KnowledgeFile change detection**: `HasFileChanged()` in git.go checks if a file was modified on the current branch vs default branch using `git diff --name-only`. Used in verification to report whether the knowledgeFile was updated.
 - **Commit-exists gate**: After provider signals DONE, CLI checks HEAD changed from pre-run snapshot (captured AFTER PRD commit to avoid false positives). No new commit = automatic retry counted toward maxRetries.
 - **Verify command timeout**: Each verify command has a configurable timeout (`verify.timeout`, default 300s). Prevents hanging test suites from blocking the loop indefinitely.
 - **Test file heuristic**: `HasTestFileChanges()` checks if any files matching test patterns (`*_test.*`, `*.test.*`, `*.spec.*`, `__tests__/`) were modified on the branch. Result is included as PASS/WARN in the verification summary.
-- **Run logging**: `RunLogger` in logger.go writes JSONL event logs to `.ralph/YYYY-MM-DD-feature/logs/run-NNN.jsonl`. Events include timestamps, durations, story context, and full provider/verification output. Logs are auto-rotated to keep only `maxRuns` most recent. Key methods: `StoryStart(storyID, title)` logs story iteration beginning, `StoryEnd(storyID, success)` logs story iteration completion, `BrowserStep(action, success, details)` logs individual browser step execution, `ProviderLine(stream, line)` streams each provider output line in real-time.
+- **Run logging**: `RunLogger` in logger.go writes JSONL event logs to `.ralph/YYYY-MM-DD-feature/logs/run-NNN.jsonl`. Events include timestamps, durations, story context, and full provider/verification output. Logs are auto-rotated to keep only `maxRuns` most recent. Key methods: `IterationStart(storyID, title, retries)` logs iteration beginning, `IterationEnd(success)` logs iteration completion, `ProviderLine(stream, line)` streams each provider output line in real-time.
 - **Console output suppression**: `ralph run` shows a clean dashboard — provider output, verification command output, and service output are NOT printed to the console. Provider output is streamed line-by-line to JSONL (`provider_line` events) for real-time viewing via `ralph logs -f`. Verification commands only show the `→ command` and `✓/✗ (duration)` status lines. Key markers (DONE, STUCK, LEARNING) are printed to console as detected.
 - **Timestamped console output**: When `logging.consoleTimestamps` is true, status lines are prefixed with `[HH:MM:SS]`.
-- **Event types**: `run_start`, `run_end`, `iteration_start/end`, `story_start/end`, `provider_start/end`, `provider_output`, `provider_line`, `marker_detected`, `verify_start/end`, `verify_cmd_start/end`, `browser_start/end`, `browser_step`, `service_start/ready/restart/health`, `state_change`, `learning`, `warning`, `error`. Note: `provider_output` logs stdout/stderr in bulk after completion; `provider_line` streams each line in real-time.
+- **Event types**: `run_start`, `run_end`, `iteration_start/end`, `provider_start/end`, `provider_output`, `provider_line`, `marker_detected`, `verify_start/end`, `verify_cmd_start/end`, `service_start/ready/restart/health`, `state_change`, `learning`, `warning`, `error`. Note: `provider_output` logs stdout/stderr in bulk after completion; `provider_line` streams each line in real-time.
 - **Verify-at-top-of-loop**: Each loop iteration verifies the story BEFORE implementation. If the story already passes all checks, it's marked passed and skipped — no provider spawn needed. This replaces the old pre-verify phase and enables the "infinite loop" pattern: modify PRD → run → verify-at-top catches already-implemented work.
 - **Codebase discovery**: `DiscoverCodebase()` in discovery.go detects tech stack (go, typescript, python, rust, elixir), package manager (bun, npm, yarn, pnpm, go, cargo, mix), frameworks, and full dependency list from config files. Used in PRD creation and resource syncing. Detection is lightweight (reads config files, doesn't run commands). `ExtractDependencies()` returns `[]Dependency` with name, version, and isDev flag.
 - **Dependency extraction**: `extractJSDependencies()` parses package.json, `extractGoDependencies()` parses go.mod, `extractPythonDependencies()` parses pyproject.toml/requirements.txt, `extractRustDependencies()` parses Cargo.toml, `extractElixirDependencies()` parses mix.exs. The `Dependency` struct includes Name, Version, and IsDev fields.
 - **Provider selection prompt**: `ralph init` prompts the user to select from `providerChoices` (alphabetically sorted known providers) or enter a custom command. `promptProviderSelection()` accepts a `*bufio.Reader` so tests can inject controlled input. `providerChoices` must stay in sync with `knownProviders` map (enforced by `TestProviderChoices_MatchKnownProviders`).
 - **Verify command prompts**: `promptVerifyCommands()` in commands.go prompts for 3 commands (typecheck, lint, test) during `ralph init`. Accepts `*bufio.Reader` and detected defaults `[3]string` for testability. When defaults are detected, pressing Enter accepts them; typing overrides. Non-empty inputs go into `verify.default`; all skipped falls back to placeholder echo commands.
 - **Service config prompt**: `promptServiceConfig()` in commands.go prompts for dev server start command and ready URL during `ralph init`. Returns `*ServiceConfig` (nil if skipped, placeholder used instead). Auto-prepends `http://` if no scheme. Services are required — `validateConfig()` enforces at least one entry.
-- **Browser skip warnings**: When browser verification is skipped for UI stories (browser disabled or no service ready URL), warnings are logged in `runStoryVerification()` and added to `VerifyReport` as WARN items.
 - **Verify command auto-detection**: `DetectVerifyCommands()` in discovery.go reads project config files to pre-fill verify command prompts during `ralph init`. For JS/TS projects, reads `scripts` from package.json (prefers `test:unit` over `test`). For Go, suggests `go vet ./...` and `go test ./...`; detects `golangci-lint run` if `.golangci.yml`/`.golangci.yaml` exists. For Rust, suggests `cargo check` and `cargo test`. For Python, suggests `pytest` if in dependencies. For Elixir, suggests `mix compile --warnings-as-errors` and `mix test`; detects `mix credo` if `:credo` is in mix.exs deps. Only suggests commands that are 100% deterministic from config files — never guesses.
 - **`.ralph/` existence check in CheckReadiness**: `CheckReadiness` verifies `.ralph/` exists before checking writability. Missing directory produces "Run 'ralph init' first" message.
 - **Services required**: `validateConfig()` enforces at least one service entry. Also validates that `services[].ready` starts with `http://` or `https://`. Catches typos like `localhost:3000` (missing scheme) at config load time. `WriteDefaultConfig()` writes a placeholder service if none provided during init.
-- **Browser executable path validation**: `CheckReadiness` validates `browser.executablePath` exists on disk if explicitly set and browser is enabled.
 - **Unknown provider warning**: `CheckReadinessWarnings()` warns when `provider.command` is not in `knownProviders` map. Non-blocking warning printed before every run/verify.
 - **Interactive sessions strip non-interactive flags**: `runProviderInteractive()` removes `--print`/`-p` from provider args via `stripNonInteractiveArgs()` so the provider runs as a conversational CLI session. Used by `ralph prd` (including refine options). The `ralph run` loop (which uses `runProvider()` in loop.go) is unaffected.
 - **Interactive commands skip Setpgid**: `Command.Run()` in prd.go does NOT set `Setpgid: true` — the provider must stay in ralph's foreground process group to read from the terminal. `Setpgid` would put it in a background group, causing SIGTTIN on stdin reads (freezing the process). The run loop in loop.go uses `Setpgid: true` since it communicates via pipes, not the terminal.
@@ -328,7 +316,6 @@ Story lifecycle: `pending` -> provider implements -> CLI verifies -> `passed` or
 - **Story state helpers**: `RunState` methods: `MarkPassed(id)` appends to passed[], `MarkSkipped(id, reason)` appends to skipped[] + sets lastFailure, `MarkFailed(id, reason, maxRetries)` increments retries and auto-skips at threshold, `UnmarkPassed(id)` removes from passed (for regression detection). `GetNextStory(def, state)` returns first non-passed, non-skipped story by priority. `AllComplete(def, state)` returns true when every story is in passed or skipped.
 - **EnsureBranch dirty-tree guard**: `EnsureBranch` refuses to switch to an existing branch with uncommitted changes (returns error). Creating a new branch with dirty tree is allowed (changes carry over safely). Already on the right branch skips the check entirely.
 - **`commitPrdOnly` error handling**: `commitPrdOnly(projectRoot, filePath, message)` commits a single file (typically run-state.json during runs). All call sites check the returned error and log a warning via `logger.Warning()`. PRD state commit failures are non-fatal (the loop continues) but are surfaced.
-- **`aggregateBrowserResults` helper**: `RunSteps` fallback to `RunChecks` aggregates all URL check results into a single `BrowserCheckResult` with merged console errors and the first error propagated.
 - **Scanner buffer overflow logging**: Both stdout and stderr scanners in `runProvider` check `scanner.Err()` after completion and log warnings for buffer overflows (lines >1MB).
 - **Refine context loading**: `generateRefinePrompt()` reads prd.md + prd.json from disk, discovers codebase context, builds git diff summary, and includes verify commands + service URLs. The resulting prompt gives the AI comprehensive feature context for free-form interactive work. Called from `prdRefineInteractive()` in prd.go.
 
@@ -338,8 +325,9 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 
 | Template | Variables |
 |----------|-----------|
-| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `browserSteps`, `serviceURLs`, `timeout`, `resourceVerificationInstructions` |
-| `verify-fix.md` | `project`, `description`, `branchName`, `verifyResults`, `verifyCommands`, `learnings`, `knowledgeFile`, `serviceURLs`, `diffSummary`, `resourceVerificationInstructions` |
+| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `serviceURLs`, `timeout`, `resourceVerificationInstructions` |
+| `verify-fix.md` | `project`, `description`, `branchName`, `progress`, `storyDetails`, `verifyResults`, `verifyCommands`, `learnings`, `knowledgeFile`, `serviceURLs`, `diffSummary`, `featureDir`, `resourceVerificationInstructions` |
+| `verify-analyze.md` | `project`, `description`, `branchName`, `criteriaChecklist`, `verifyResults`, `diffSummary`, `resourceVerificationInstructions` |
 | `prd-create.md` | `feature`, `outputPath`, `codebaseContext` |
 | `prd-finalize.md` | `feature`, `prdContent`, `outputPath` |
 | `refine.md` | `feature`, `prdMdContent`, `prdJsonContent`, `progress`, `storyDetails`, `learnings`, `diffSummary`, `codebaseContext`, `verifyCommands`, `serviceURLs`, `knowledgeFile`, `branchName`, `featureDir` |
@@ -353,14 +341,11 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **`cmdVerify` acquires the lock**: Not just `cmdRun` — verification also acquires the lock file to prevent concurrent operations.
 - **Verification output is captured for retries**: When verification fails, the last 50 lines of command output are stored in `lastFailure` so the retry agent can see what specifically failed.
 - **`ralph verify` interactive fix session**: When `ralph verify` detects failures, it offers to open an interactive AI session (using `runProviderInteractive`) pre-loaded with the `VerifyReport` details. The AI can then fix issues interactively.
-- **Browser init/restart failures fail verification**: Both per-story and `ralph verify` treat browser initialization errors and service restart failures as hard failures.
 - **Provider must commit code to pass**: Signaling DONE without making a new git commit is treated as a failed attempt and counts toward maxRetries. The pre-run commit hash is captured AFTER the PRD state commit to avoid false positives.
 - **Working tree cleanliness is checked but not enforced**: Uncommitted files after provider finishes generate a warning but don't fail the story. This catches providers that left untracked or modified files.
 - **Test file heuristic in VerifyReport**: If no test files (`*_test.*`, `*.test.*`, `*.spec.*`, `__tests__/`) are modified on the branch, a WARN item is included in the `VerifyReport`.
 - **`$EDITOR` validation in PRD editing**: `prdEditManual()` validates the editor binary exists before spawning. Falls back from `$EDITOR` to `nano`, but checks either is available. Returns a clear error with instructions to set `$EDITOR`.
 - **`ralph prd` warns about placeholder verify commands but does not block**: During `cmdPrd()`, if verify.default contains placeholder commands, a warning is printed to stderr. PRD creation proceeds normally — the user can still create PRDs but needs to fix config before `ralph run`.
-- **Browser URL extraction from acceptance criteria**: `extractURLs()` in browser.go scans acceptance criteria text for path patterns ("navigate to /path", "visit /page", "accessible at /url") and explicit `http(s)://` URLs. If no URLs are found and the story is tagged "ui", the base URL from services config is used as fallback. This means UI stories get basic browser verification (page load + console error check) even without explicit `browserSteps`.
-- **EnsureBrowser skips without UI stories**: If no story in the PRD has a "ui" tag, `EnsureBrowser` returns immediately — no `os.Stat`, no download attempt. Failed browser download disables browser for the entire run (`Enabled=false`), preventing repeated download retries on each story.
 - **`prdFinalize` produces v3 prd.json**: `prdFinalize()` converts prd.md to prd.json (v3 schema, no runtime fields). Validates with `LoadPRDDefinition` instead of `LoadPRD`.
 - **`prdStateFinalized` offers refine and regenerate**: When returning to a finalized PRD, the menu shows current progress (e.g., "Progress: 3/5 stories complete (1 skipped)") if any stories have been worked on, and offers Refine with AI/Regenerate prd.json/Edit prd.md/Edit prd.json/Quit. Regenerate is safe because run-state.json is separate.
 - **Refine options don't acquire lock**: Both `prdRefineDraft` (pre-finalization) and `prdRefineInteractive` (post-finalization) open interactive AI sessions without acquiring a lock. These are interactive sessions, not automated runs.
@@ -369,21 +354,20 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 
 Tests are in `*_test.go` files alongside source. Key test files:
 - `commands_test.go` - provider selection prompt, verify command prompts (with detected defaults), service config prompt, provider choices validation, gitignore creation
-- `config_test.go` - config loading, validation, provider defaults, readiness checks (including placeholder service detection, browserSteps cross-check), command validation, verify timeout defaults, services required validation
-- `schema_test.go` - PRD definition validation, RunState methods (MarkPassed/MarkFailed/MarkSkipped/UnmarkPassed), GetNextStory, AllComplete, GetPendingStories, browser steps, learning deduplication, LoadPRDDefinition, ValidatePRDDefinition, LoadRunState, SaveRunState, old format migration
+- `config_test.go` - config loading, validation, provider defaults, readiness checks (including placeholder service detection), command validation, verify timeout defaults, services required validation, $schema field handling
+- `schema_test.go` - PRD definition validation, RunState methods (MarkPassed/MarkFailed/MarkSkipped/UnmarkPassed), GetNextStory, AllComplete, GetPendingStories, learning deduplication, LoadPRDDefinition, ValidatePRDDefinition, LoadRunState, SaveRunState, v2 migration error, IsUIStory
 - `discovery_test.go` - tech stack detection (including Elixir), framework detection (including Phoenix), codebase context formatting, verify command auto-detection, Elixir dependency extraction
 - `services_test.go` - output capture, service manager, health checks
-- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism, generateRefinePrompt, buildRefinementStoryDetails
-- `loop_test.go` - marker detection (DONE, STUCK with note, LEARNING, whole-line matching, embedded marker rejection, whitespace tolerance), nil ProviderResult guard, provider result parsing, command timeout, runCommand
+- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism, generateRefinePrompt, buildRefinementStoryDetails, generateVerifyAnalyzePrompt, buildCriteriaChecklist
+- `loop_test.go` - marker detection (DONE, STUCK with note, LEARNING, whole-line matching, embedded marker rejection, whitespace tolerance), nil ProviderResult guard, provider result parsing, command timeout, runCommand, VERIFY_PASS/VERIFY_FAIL marker detection
 - `feature_test.go` - directory parsing, timestamp formats, case-insensitive matching
 - `lock_test.go` - lock acquisition, stale detection (including age-based isLockStale)
-- `browser_test.go` - runner init, screenshot saving, console error mutex safety, formatConsoleArgs, aggregateBrowserResults
 - `cleanup_test.go` - CleanupCoordinator idempotency, nil resource handling
 - `atomic_test.go` - atomic writes, JSON validation
-- `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, EnsureBranch dirty-tree guard, DefaultBranch fallback chain including origin/main and origin/master, GetDiffSummary, HasNewCommitSince, IsWorkingTreeClean, GetChangedFiles two-dot fallback, HasTestFileChanges)
+- `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, EnsureBranch dirty-tree guard, CreateBranchFrom, EnsureBranch with startPoint, DefaultBranch fallback chain including origin/main and origin/master, GetDiffSummary, HasNewCommitSince, IsWorkingTreeClean, GetChangedFiles two-dot fallback, HasTestFileChanges)
 - `update_check_test.go` - update check cache path, isNewerVersion semver comparison
 - `logger_test.go` - event logging, run numbering, log rotation, event filtering, run summaries
-- `resources_test.go` - ResourceManager, ResourcesConfig, cache operations, FormatSize
+- `resources_test.go` - ResourceManager, ResourcesConfig, cache operations
 - `resourcereg_test.go` - MapDependencyToResource, MergeWithCustom, DefaultResources validation (including Phoenix/Elixir ecosystem entries)
 - `prd_test.go` - editor validation in prdEditManual, stripNonInteractiveArgs
 - `external_git_test.go` - ExternalGitOps, Exists, GetRepoSize
@@ -395,7 +379,7 @@ Run with `go test ./...` or `go test -v ./...` for verbose output.
 
 `e2e_test.go` contains a full end-to-end test (`//go:build e2e`) that exercises the complete user journey on a real TypeScript project (warrantycert) with real Claude CLI. No mocking, no pre-crafted data.
 
-**Prerequisites:** `claude` CLI (configured with API key), `bun`, `git`, internet access, system Chromium or auto-download capability.
+**Prerequisites:** `claude` CLI (configured with API key), `bun`, `git`, internet access.
 
 **Run:** `make test-e2e` (or `go test -tags e2e -timeout 60m -v -run TestE2E ./...`)
 
@@ -403,12 +387,12 @@ Run with `go test ./...` or `go test -v ./...` for verbose output.
 0. **Smoke Tests** — `--help`, `--version`, unknown command (exit codes + output patterns)
 1. **Project Setup** — Clone warrantycert, `bun install`, database setup, Playwright install, baseline typecheck
 2. **ralph init** — Interactive provider selection (claude) + verify command acceptance (detected defaults)
-3. **Config Enhancement** — Add services, verify.ui, browser config programmatically
+3. **Config Enhancement** — Add services, verify.ui programmatically
 4. **ralph doctor** — Validate all environment checks pass (config, provider, dirs, tools, git)
-5. **ralph prd** — Create + finalize PRD for "certificate-search" feature (creates v3 PRDDefinition directly, real Claude brainstorming)
+5. **ralph prd** — Create + finalize PRD for "certificate-search" feature (writes v3 PRDDefinition directly, real Claude brainstorming)
 6. **Pre-Run Checks** — status (no-arg + feature)
 7. **ralph run** — First implementation run (25 min timeout, real Claude coding)
-8. **Post-Run Analysis** — Parse PRD state, JSONL event assertions (run_start, provider_start, verify_start, story_start, service_start, marker_detected), git history
+8. **Post-Run Analysis** — Parse PRD state, JSONL event assertions (run_start, provider_start, verify_start, iteration_start, service_start, marker_detected), git history
 9. **PRD Refinement** — Conditional: resets skipped stories in run-state.json if not all passed
 10. **Second Run** — Conditional: re-run with refined PRD (20 min timeout)
 11. **Status + Logs** — status (no-arg), logs --list/--summary/--json/--run/--type/--story
@@ -416,7 +400,7 @@ Run with `go test ./...` or `go test -v ./...` for verbose output.
 13. **Post-Run Doctor** — Verify doctor still passes after full run (no stale locks, etc.)
 14. **Report** — Comprehensive summary with per-story breakdown
 
-**Key design:** Uses `promptResponder` (expect-style stdin interaction) to drive interactive sessions — watches stdout for prompt patterns and responds just-in-time. Process tracker (`processTracker`) ensures all ralph subprocesses are killed on test abort via `t.Cleanup`. JSONL event assertions validate the internal event stream (run_start, provider_start, verify_start, etc.). The test validates Ralph's full orchestration pipeline including service management, browser verification, and e2e test execution.
+**Key design:** Uses `promptResponder` (expect-style stdin interaction) to drive interactive sessions — watches stdout for prompt patterns and responds just-in-time. Process tracker (`processTracker`) ensures all ralph subprocesses are killed on test abort via `t.Cleanup`. JSONL event assertions validate the internal event stream (run_start, provider_start, verify_start, etc.). The test validates Ralph's full orchestration pipeline including service management and e2e test execution.
 
 **Artifact directory:** Each run saves structured output to `e2e-runs/<timestamp>/` (override with `RALPH_E2E_ARTIFACT_DIR` env var). Structure:
 ```
@@ -448,7 +432,6 @@ e2e-runs/2026-02-10T15-04-05/
     us-001/
       summary.md         # Description, criteria, status, failure details
       failure.txt        # Raw verification failure output (if failed)
-      browser-steps.txt  # Browser step events from JSONL (if UI story)
     us-002/
       ...
   logs/                  # Copied JSONL run logs
@@ -505,7 +488,6 @@ After your code changes are done, re-read the sections of CLAUDE.md, README.md, 
 ## Common Development Tasks
 
 - **Add a new provider**: Add entry to `knownProviders` map in config.go and add to `providerChoices` slice in commands.go (keep alphabetical)
-- **Add a new browser action**: Add case to `executeStep()` switch in browser.go
 - **Add a new marker**: Add regex pattern and field to `ProviderResult` in loop.go, handle in `processLine()`
 - **Add a new command**: Add case to `main()` switch in main.go, implement handler in commands.go
 - **Modify prompt**: Edit the `.md` file in `prompts/` directory (embedded at compile time)

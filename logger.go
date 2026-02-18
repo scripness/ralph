@@ -22,8 +22,6 @@ const (
 	EventRunEnd         EventType = "run_end"
 	EventIterationStart EventType = "iteration_start"
 	EventIterationEnd   EventType = "iteration_end"
-	EventStoryStart     EventType = "story_start"
-	EventStoryEnd       EventType = "story_end"
 	EventProviderStart  EventType = "provider_start"
 	EventProviderEnd    EventType = "provider_end"
 	EventProviderOutput EventType = "provider_output"
@@ -32,9 +30,6 @@ const (
 	EventVerifyEnd      EventType = "verify_end"
 	EventVerifyCmdStart EventType = "verify_cmd_start"
 	EventVerifyCmdEnd   EventType = "verify_cmd_end"
-	EventBrowserStart   EventType = "browser_start"
-	EventBrowserEnd     EventType = "browser_end"
-	EventBrowserStep    EventType = "browser_step"
 	EventServiceStart   EventType = "service_start"
 	EventServiceReady   EventType = "service_ready"
 	EventServiceRestart EventType = "service_restart"
@@ -175,35 +170,6 @@ func (l *RunLogger) SetCurrentStory(id string) {
 	l.currentStory = id
 }
 
-// Log writes a generic event
-func (l *RunLogger) Log(eventType EventType, data map[string]interface{}) {
-	l.LogWithStory(eventType, "", data)
-}
-
-// LogWithStory writes an event with story context
-func (l *RunLogger) LogWithStory(eventType EventType, storyID string, data map[string]interface{}) {
-	if !l.enabled || l.file == nil {
-		return
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	event := Event{
-		Timestamp: time.Now(),
-		Type:      eventType,
-		Iteration: l.iteration,
-		StoryID:   storyID,
-		Data:      data,
-	}
-
-	if storyID == "" && l.currentStory != "" {
-		event.StoryID = l.currentStory
-	}
-
-	l.encoder.Encode(event)
-}
-
 // logEvent is an internal helper that writes an event with all fields
 func (l *RunLogger) logEvent(event Event) {
 	if !l.enabled || l.file == nil {
@@ -262,26 +228,6 @@ func (l *RunLogger) IterationStart(storyID, title string, retries int) {
 			"title":   title,
 			"retries": retries,
 		},
-	})
-}
-
-// StoryStart logs the start of a story (alias for more granular tracking)
-func (l *RunLogger) StoryStart(storyID, title string) {
-	l.logEvent(Event{
-		Type:    EventStoryStart,
-		StoryID: storyID,
-		Data: map[string]interface{}{
-			"title": title,
-		},
-	})
-}
-
-// StoryEnd logs the end of a story
-func (l *RunLogger) StoryEnd(storyID string, success bool) {
-	l.logEvent(Event{
-		Type:    EventStoryEnd,
-		StoryID: storyID,
-		Success: &success,
 	})
 }
 
@@ -389,36 +335,6 @@ func (l *RunLogger) VerifyCmdEnd(cmd string, success bool, output string, durati
 		Data: map[string]interface{}{
 			"cmd":    cmd,
 			"output": output,
-		},
-	})
-}
-
-// BrowserStart logs the start of browser verification
-func (l *RunLogger) BrowserStart() {
-	l.logEvent(Event{
-		Type: EventBrowserStart,
-	})
-}
-
-// BrowserEnd logs the end of browser verification
-func (l *RunLogger) BrowserEnd(success bool, consoleErrors int) {
-	l.logEvent(Event{
-		Type:    EventBrowserEnd,
-		Success: &success,
-		Data: map[string]interface{}{
-			"console_errors": consoleErrors,
-		},
-	})
-}
-
-// BrowserStep logs a browser step execution
-func (l *RunLogger) BrowserStep(action string, success bool, details map[string]interface{}) {
-	l.logEvent(Event{
-		Type:    EventBrowserStep,
-		Success: &success,
-		Data: map[string]interface{}{
-			"action":  action,
-			"details": details,
 		},
 	})
 }
@@ -775,8 +691,6 @@ func ReadEventsFromReader(r io.Reader, filter *EventFilter) ([]Event, error) {
 type EventFilter struct {
 	EventType EventType
 	StoryID   string
-	Offset    int
-	Limit     int
 }
 
 // Match returns true if the event matches the filter

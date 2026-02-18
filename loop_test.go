@@ -464,3 +464,72 @@ func TestProcessLine_LearningMarker_WithWhitespace(t *testing.T) {
 		t.Errorf("expected 'trimmed learning', got '%s'", result.Learnings[0])
 	}
 }
+
+func TestProcessVerifyLine_VerifyPassMarker(t *testing.T) {
+	result := &VerifyAnalysisResult{}
+	processVerifyLine("<ralph>VERIFY_PASS</ralph>", result)
+	if !result.Passed {
+		t.Error("expected Passed=true")
+	}
+	if len(result.Failures) != 0 {
+		t.Errorf("expected no failures, got %v", result.Failures)
+	}
+}
+
+func TestProcessVerifyLine_VerifyFailMarker(t *testing.T) {
+	result := &VerifyAnalysisResult{}
+	processVerifyLine("<ralph>VERIFY_FAIL:Missing test coverage for login</ralph>", result)
+	if result.Passed {
+		t.Error("expected Passed=false")
+	}
+	if len(result.Failures) != 1 {
+		t.Fatalf("expected 1 failure, got %d", len(result.Failures))
+	}
+	if result.Failures[0] != "Missing test coverage for login" {
+		t.Errorf("unexpected failure: %s", result.Failures[0])
+	}
+}
+
+func TestProcessVerifyLine_MultipleFailures(t *testing.T) {
+	result := &VerifyAnalysisResult{}
+	processVerifyLine("<ralph>VERIFY_FAIL:Issue one</ralph>", result)
+	processVerifyLine("<ralph>VERIFY_FAIL:Issue two</ralph>", result)
+	if len(result.Failures) != 2 {
+		t.Fatalf("expected 2 failures, got %d", len(result.Failures))
+	}
+}
+
+func TestProcessVerifyLine_NoMarkers(t *testing.T) {
+	result := &VerifyAnalysisResult{}
+	processVerifyLine("Regular output without markers", result)
+	if result.Passed || len(result.Failures) > 0 {
+		t.Error("expected no markers detected")
+	}
+}
+
+func TestProcessVerifyLine_WithWhitespace(t *testing.T) {
+	result := &VerifyAnalysisResult{}
+	processVerifyLine("  <ralph>VERIFY_PASS</ralph>  ", result)
+	if !result.Passed {
+		t.Error("expected Passed=true for marker with surrounding whitespace")
+	}
+}
+
+func TestVerifyPassPattern(t *testing.T) {
+	if !VerifyPassPattern.MatchString("<ralph>VERIFY_PASS</ralph>") {
+		t.Error("pattern should match VERIFY_PASS marker")
+	}
+	if VerifyPassPattern.MatchString("text <ralph>VERIFY_PASS</ralph> more") {
+		t.Error("pattern should NOT match embedded marker")
+	}
+}
+
+func TestVerifyFailPattern(t *testing.T) {
+	matches := VerifyFailPattern.FindStringSubmatch("<ralph>VERIFY_FAIL:test reason</ralph>")
+	if len(matches) < 2 {
+		t.Fatal("expected match for VERIFY_FAIL marker")
+	}
+	if matches[1] != "test reason" {
+		t.Errorf("expected 'test reason', got '%s'", matches[1])
+	}
+}

@@ -8,16 +8,6 @@ import (
 	"strings"
 )
 
-// BrowserStep represents a single browser verification step
-type BrowserStep struct {
-	Action   string `json:"action"`             // navigate, click, type, waitFor, assertVisible, assertText, assertNotVisible, submit, screenshot, wait
-	URL      string `json:"url,omitempty"`      // for navigate
-	Selector string `json:"selector,omitempty"` // CSS selector for click, type, waitFor, assert*
-	Value    string `json:"value,omitempty"`    // for type action
-	Contains string `json:"contains,omitempty"` // for assertText
-	Timeout  int    `json:"timeout,omitempty"`  // seconds to wait (default 10)
-}
-
 // --- v3 definition types (on-disk format, AI-authored, immutable during runs) ---
 
 // PRDDefinition is the v3 on-disk format for prd.json (no runtime fields).
@@ -37,7 +27,6 @@ type StoryDefinition struct {
 	AcceptanceCriteria []string      `json:"acceptanceCriteria"`
 	Tags               []string      `json:"tags,omitempty"`
 	Priority           int           `json:"priority"`
-	BrowserSteps       []BrowserStep `json:"browserSteps,omitempty"`
 }
 
 // --- Flat execution state (on-disk, CLI-managed) ---
@@ -266,6 +255,13 @@ func LoadPRDDefinition(path string) (*PRDDefinition, error) {
 	var def PRDDefinition
 	if err := json.Unmarshal(data, &def); err != nil {
 		return nil, fmt.Errorf("invalid JSON in prd.json: %w", err)
+	}
+
+	if def.SchemaVersion < 3 {
+		return nil, fmt.Errorf("prd.json is schema version %d (expected 3)\n\n"+
+			"To upgrade: run 'ralph prd <feature>' and select 'Regenerate prd.json'.\n"+
+			"Your prd.md will be preserved and re-finalized into v3 format.",
+			def.SchemaVersion)
 	}
 
 	if err := ValidatePRDDefinition(&def); err != nil {

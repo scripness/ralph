@@ -102,7 +102,7 @@ stateDiagram-v2
 7. Provider implements code, writes tests, commits
 8. Provider outputs `<ralph>DONE</ralph>` when finished
 9. Ralph runs `verify.default` commands
-10. If UI story: restarts services, runs browser verification (console errors = hard fail), runs `verify.ui` commands
+10. If UI story: restarts services, runs `verify.ui` commands (e2e tests)
 11. Service health check: verifies services still respond
 12. Pass → mark story complete, next story
 13. Fail → increment retries, retry or auto-skip at maxRetries
@@ -116,7 +116,7 @@ stateDiagram-v2
 ralph init [--force]           # Initialize Ralph (creates config + .ralph/)
 ralph prd <feature>            # Create, refine, or manage a PRD
 ralph run <feature>            # Run the agent loop (infinite until done)
-ralph verify <feature>         # Run verification only
+ralph verify <feature>         # Run verification (mechanical checks + AI deep analysis)
 # Feature names are case-insensitive: "ralph run Auth" and "ralph run auth" find the same feature
 ```
 
@@ -154,6 +154,7 @@ ralph upgrade                  # Update to latest version
 
 ```json
 {
+  "$schema": "https://raw.githubusercontent.com/scripness/ralph/main/ralph.schema.json",
   "maxRetries": 3,
   "provider": {
     "command": "claude",
@@ -172,12 +173,6 @@ ralph upgrade                  # Update to latest version
     "default": ["bun run typecheck", "bun run lint", "bun run test:unit"],
     "ui": ["bun run test:e2e"],
     "timeout": 300
-  },
-  "browser": {
-    "enabled": true,
-    "headless": true,
-    "executablePath": "/usr/bin/chromium",
-    "screenshotDir": ".ralph/screenshots"
   },
   "commits": {
     "prdChanges": true
@@ -215,10 +210,6 @@ ralph upgrade                  # Update to latest version
 | verify | `default` | string[] | **required** | Commands for all stories (typecheck, lint, test) |
 | verify | `ui` | string[] | `[]` | Commands for UI stories (e2e tests) |
 | verify | `timeout` | int | `300` | Seconds per command (5 minutes) |
-| browser | `enabled` | bool | `true` | Enable browser verification |
-| browser | `headless` | bool | `true` | Run Chrome in headless mode |
-| browser | `executablePath` | string | auto-detected | Path to Chrome/Chromium binary |
-| browser | `screenshotDir` | string | `.ralph/screenshots` | Where to save screenshots |
 | commits | `prdChanges` | bool | `true` | Auto-commit prd.json changes |
 | logging | `enabled` | bool | `true` | Enable JSONL logging |
 | logging | `maxRuns` | int | `10` | Max log files to keep per feature |
@@ -262,10 +253,6 @@ PRD data is split into two files: **prd.json** (definition) and **run-state.json
     "acceptanceCriteria": ["Criterion 1", "Criterion 2"],
     "tags": ["ui"],
     "priority": 1,
-    "browserSteps": [
-      {"action": "navigate", "url": "/path"},
-      {"action": "click", "selector": "#button"}
-    ]
   }]
 }
 ```
@@ -286,7 +273,7 @@ PRD data is split into two files: **prd.json** (definition) and **run-state.json
 
 | Tag | Effect |
 |-----|--------|
-| `ui` | Restarts services before verify, runs `verify.ui` commands, runs browser verification |
+| `ui` | Restarts services before verify, runs `verify.ui` commands (e2e tests) |
 
 ### Story Lifecycle
 
@@ -305,45 +292,6 @@ Providers communicate with Ralph via markers in stdout or stderr:
 | `<ralph>DONE</ralph>` | Story implementation complete | `<ralph>DONE</ralph>` |
 | `<ralph>STUCK:reason</ralph>` | Provider can't proceed (counts as failed, auto-skips at maxRetries) | `<ralph>STUCK:Cannot resolve type errors</ralph>` |
 | `<ralph>LEARNING:text</ralph>` | Add learning for future context | `<ralph>LEARNING:Use bun instead of npm</ralph>` |
-
-## Browser Automation
-
-For UI stories, Ralph can run interactive browser verification like a real user. Define `browserSteps` in the story:
-
-```json
-{
-  "id": "US-003",
-  "title": "Login form works",
-  "tags": ["ui"],
-  "browserSteps": [
-    {"action": "navigate", "url": "/login"},
-    {"action": "type", "selector": "#email", "value": "test@example.com"},
-    {"action": "type", "selector": "#password", "value": "secret"},
-    {"action": "click", "selector": "button[type=submit]"},
-    {"action": "waitFor", "selector": ".dashboard"},
-    {"action": "assertText", "selector": "h1", "contains": "Welcome"}
-  ]
-}
-```
-
-### Browser Actions
-
-| Action | Fields | Description |
-|--------|--------|-------------|
-| `navigate` | `url` | Go to URL (relative or absolute) |
-| `click` | `selector` | Click an element |
-| `type` | `selector`, `value` | Type text into input |
-| `waitFor` | `selector` | Wait for element to be visible |
-| `assertVisible` | `selector` | Assert element exists and is visible |
-| `assertText` | `selector`, `contains` | Assert element contains text |
-| `assertNotVisible` | `selector` | Assert element is hidden/not found |
-| `submit` | `selector` | Click and wait for navigation |
-| `screenshot` | - | Capture screenshot |
-| `wait` | `timeout` | Wait N seconds |
-
-All actions support optional `timeout` (seconds, default 10).
-
-**Console errors are hard failures**: Any `console.error()` or uncaught exception during browser verification fails the story.
 
 ## Service Management
 
@@ -374,7 +322,6 @@ project/
     │   ├── prd.md
     │   ├── prd.json
     │   └── logs/
-    ├── screenshots/               # Browser verification evidence
     └── ralph.lock                 # Prevents concurrent runs
 ```
 
@@ -491,7 +438,7 @@ ralph run user-auth          # Verify-at-top catches already-done work, resumes 
 ```
 
 ### UI Changes
-Tag stories with `ui` and define `browserSteps` for visual verification.
+Tag stories with `ui` and ensure your project has e2e tests that verify the UI through `verify.ui` commands.
 
 ## Idempotent Workflow
 
@@ -569,13 +516,6 @@ export EDITOR=vim       # Set your preferred editor
 1. Check `ralph logs <feature> --type error` for specific failures
 2. Review story notes: `ralph status <feature>`
 3. Simplify acceptance criteria
-4. Add more specific browser steps
-
-### Browser verification fails
-1. Check console errors in logs
-2. Ensure `browser.executablePath` points to valid Chrome/Chromium
-3. Try with `headless: false` to see what's happening
-4. Verify selectors match actual DOM
 
 ### Lock file prevents running
 ```bash
@@ -655,7 +595,7 @@ v2 is a Go CLI that improves on v1:
 | **Multi-feature** | Manual archive/switch | Built-in date-prefixed dirs |
 | **Crash recovery** | None | Verify-at-top-of-loop re-checks on restart |
 | **Verification** | Agent runs commands | CLI runs commands |
-| **Browser testing** | Provider skill (dev-browser) | Built-in rod (auto-downloads Chromium) |
+| **Browser testing** | Provider skill (dev-browser) | Project's own e2e test suite via verify.ui |
 | **Service management** | None | Built-in start/ready/restart |
 | **Concurrency** | None | Lock file prevents conflicts |
 

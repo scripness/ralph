@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -371,49 +372,28 @@ func TestGetPendingStories_AllComplete(t *testing.T) {
 	}
 }
 
-func TestBrowserSteps_InStoryDefinition(t *testing.T) {
-	def := &PRDDefinition{
-		SchemaVersion: 3,
-		Project:       "Test",
-		BranchName:    "ralph/test",
-		UserStories: []StoryDefinition{
-			{
-				ID:                 "US-001",
-				Title:              "Login form",
-				AcceptanceCriteria: []string{"Login works"},
-				Tags:               []string{"ui"},
-				BrowserSteps: []BrowserStep{
-					{Action: "navigate", URL: "/login"},
-					{Action: "type", Selector: "#email", Value: "test@example.com"},
-					{Action: "click", Selector: "button[type=submit]"},
-					{Action: "waitFor", Selector: ".dashboard"},
-					{Action: "assertText", Selector: "h1", Contains: "Welcome"},
-				},
-			},
-		},
-	}
+func TestLoadPRDDefinition_V2Error(t *testing.T) {
+	dir := t.TempDir()
+	prdPath := filepath.Join(dir, "prd.json")
 
-	story := GetStoryByID(def, "US-001")
-	if len(story.BrowserSteps) != 5 {
-		t.Errorf("expected 5 browser steps, got %d", len(story.BrowserSteps))
-	}
-	if story.BrowserSteps[0].Action != "navigate" {
-		t.Errorf("expected first step action='navigate', got '%s'", story.BrowserSteps[0].Action)
-	}
-	if story.BrowserSteps[1].Selector != "#email" {
-		t.Errorf("expected second step selector='#email', got '%s'", story.BrowserSteps[1].Selector)
-	}
-}
+	// Write a v2 PRD (schemaVersion: 2)
+	v2JSON := `{
+		"schemaVersion": 2,
+		"project": "Test",
+		"branchName": "ralph/test",
+		"userStories": [{"id": "US-001", "title": "Test", "acceptanceCriteria": ["Works"]}]
+	}`
+	os.WriteFile(prdPath, []byte(v2JSON), 0644)
 
-func TestBrowserStep_Timeout(t *testing.T) {
-	step := BrowserStep{
-		Action:   "waitFor",
-		Selector: ".slow-element",
-		Timeout:  30,
+	_, err := LoadPRDDefinition(prdPath)
+	if err == nil {
+		t.Fatal("expected error for v2 PRD")
 	}
-
-	if step.Timeout != 30 {
-		t.Errorf("expected timeout=30, got %d", step.Timeout)
+	if !strings.Contains(err.Error(), "schema version 2") {
+		t.Errorf("expected 'schema version 2' in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Regenerate prd.json") {
+		t.Errorf("expected upgrade instructions in error, got: %v", err)
 	}
 }
 

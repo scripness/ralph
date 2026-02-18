@@ -62,41 +62,20 @@ Create a valid JSON file with this structure. **Only include definition fields â
 | `title` | Short story title |
 | `description` | Full user story description |
 | `acceptanceCriteria` | Array of specific, testable criteria |
-| `tags` | `["ui"]` for stories needing browser verification |
+| `tags` | `["ui"]` for stories needing e2e test verification |
 | `priority` | Integer, lower = higher priority (order of execution) |
-| `browserSteps` | Optional array of interactive browser verification steps |
 
-## Browser Steps (for UI stories)
+## UI Stories and E2E Tests
 
-For UI stories, define interactive browser verification steps that the CLI will execute like a real user:
+For UI stories (tagged `["ui"]`), write acceptance criteria that are testable via e2e tests. The implementing agent will write e2e tests based on these criteria using the project's existing e2e testing framework (e.g., Playwright, Cypress).
 
-```json
-"browserSteps": [
-  {"action": "navigate", "url": "/login"},
-  {"action": "type", "selector": "#email", "value": "test@example.com"},
-  {"action": "type", "selector": "#password", "value": "password123"},
-  {"action": "click", "selector": "button[type=submit]"},
-  {"action": "waitFor", "selector": ".dashboard"},
-  {"action": "assertText", "selector": "h1", "contains": "Welcome"},
-  {"action": "screenshot"}
-]
-```
+**Good acceptance criteria for UI stories:**
+- "Search results page shows matching certificates when a valid certificate number is entered"
+- "Login form displays error message when password is incorrect"
+- "Dashboard shows user's name in the header after login"
 
-Available actions:
-| Action | Fields | Description |
-|--------|--------|-------------|
-| `navigate` | `url` | Go to URL (relative or absolute) |
-| `click` | `selector` | Click an element |
-| `type` | `selector`, `value` | Type text into input |
-| `waitFor` | `selector` | Wait for element visible |
-| `assertVisible` | `selector` | Assert element exists |
-| `assertText` | `selector`, `contains` | Assert element has text |
-| `assertNotVisible` | `selector` | Assert element hidden |
-| `submit` | `selector` | Click and wait for navigation |
-| `screenshot` | - | Capture screenshot |
-| `wait` | `timeout` | Wait N seconds |
-
-All steps support optional `timeout` (seconds, default 10).
+**Bad acceptance criteria:**
+- "UI looks correct" (too vague for automated testing)
 
 ## Save Location
 

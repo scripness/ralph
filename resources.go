@@ -59,7 +59,6 @@ type ResourceManager struct {
 	resources    []Resource           // all available resources (defaults + custom)
 	detected     map[string]*Resource // detected dependency name -> resource
 	registry     *ResourceRegistry
-	detectedDeps []string // original dependency names from project
 }
 
 // NewResourceManager creates a manager for detected dependencies.
@@ -86,10 +85,9 @@ func NewResourceManager(cfg *ResourcesConfig, detectedDeps []string) *ResourceMa
 	}
 
 	return &ResourceManager{
-		cacheDir:     cacheDir,
-		resources:    resources,
-		detected:     detected,
-		detectedDeps: detectedDeps,
+		cacheDir:  cacheDir,
+		resources: resources,
+		detected:  detected,
 	}
 }
 
@@ -176,53 +174,6 @@ func (rm *ResourceManager) EnsureResources() error {
 	return nil
 }
 
-// SyncResource updates a single resource to latest.
-// Checks if up-to-date via ls-remote (fast), pulls only if behind.
-func (rm *ResourceManager) SyncResource(name string) error {
-	if err := rm.loadRegistry(); err != nil {
-		return err
-	}
-
-	// Find resource
-	r := GetResourceByName(name, rm.resources)
-	if r == nil {
-		return fmt.Errorf("unknown resource: %s", name)
-	}
-
-	repoPath := filepath.Join(rm.cacheDir, name)
-	gitOps := NewExternalGitOps(repoPath, r.URL, r.Branch)
-
-	if !gitOps.Exists() {
-		// Clone if not present
-		if err := gitOps.Clone(true); err != nil {
-			return fmt.Errorf("failed to clone %s: %w", name, err)
-		}
-	} else {
-		// Sync if needed
-		upToDate, err := gitOps.IsUpToDate()
-		if err != nil {
-			return fmt.Errorf("failed to check %s: %w", name, err)
-		}
-		if !upToDate {
-			if err := gitOps.Pull(); err != nil {
-				return fmt.Errorf("failed to sync %s: %w", name, err)
-			}
-		}
-	}
-
-	// Update registry
-	size, _ := gitOps.GetRepoSize()
-	rm.registry.UpdateRepo(name, &CachedRepo{
-		URL:      r.URL,
-		Branch:   r.Branch,
-		Commit:   gitOps.GetCurrentCommitShort(),
-		SyncedAt: time.Now(),
-		Size:     size,
-	})
-
-	return rm.registry.Save(rm.cacheDir)
-}
-
 // GetResourcePath returns the local path to a cached resource.
 func (rm *ResourceManager) GetResourcePath(name string) string {
 	return filepath.Join(rm.cacheDir, name)
@@ -248,53 +199,9 @@ func (rm *ResourceManager) ListDetected() []string {
 	return names
 }
 
-// ClearCache removes all cached resources.
-func (rm *ResourceManager) ClearCache() error {
-	entries, err := os.ReadDir(rm.cacheDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	for _, entry := range entries {
-		if entry.Name() == registryFileName {
-			continue // Keep registry file until the end
-		}
-		path := filepath.Join(rm.cacheDir, entry.Name())
-		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("failed to remove %s: %w", entry.Name(), err)
-		}
-	}
-
-	// Clear registry
-	rm.registry = &ResourceRegistry{
-		Repos:       make(map[string]*CachedRepo),
-		LastCleaned: time.Now(),
-	}
-	return rm.registry.Save(rm.cacheDir)
-}
-
-// GetCacheSize returns total size of cached resources.
-func (rm *ResourceManager) GetCacheSize() (int64, error) {
-	if err := rm.loadRegistry(); err != nil {
-		return 0, err
-	}
-	return rm.registry.TotalSize, nil
-}
-
 // GetCacheDir returns the cache directory path.
 func (rm *ResourceManager) GetCacheDir() string {
 	return rm.cacheDir
-}
-
-// GetCachedRepoInfo returns info about a cached repo.
-func (rm *ResourceManager) GetCachedRepoInfo(name string) *CachedRepo {
-	if err := rm.loadRegistry(); err != nil {
-		return nil
-	}
-	return rm.registry.GetRepo(name)
 }
 
 // HasDetectedResources returns true if any dependencies map to known resources.
@@ -302,21 +209,3 @@ func (rm *ResourceManager) HasDetectedResources() bool {
 	return len(rm.detected) > 0
 }
 
-// FormatSize formats bytes as human-readable string.
-func FormatSize(bytes int64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-	)
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.1fGB", float64(bytes)/GB)
-	case bytes >= MB:
-		return fmt.Sprintf("%.1fMB", float64(bytes)/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%.1fKB", float64(bytes)/KB)
-	default:
-		return fmt.Sprintf("%dB", bytes)
-	}
-}

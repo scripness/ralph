@@ -36,16 +36,6 @@ func TestCapturedOutput_Truncation(t *testing.T) {
 	}
 }
 
-func TestCapturedOutput_Reset(t *testing.T) {
-	co := &capturedOutput{maxBytes: 1024}
-	co.Write([]byte("some data"))
-
-	co.Reset()
-	if co.String() != "" {
-		t.Errorf("expected empty after reset, got '%s'", co.String())
-	}
-}
-
 func TestServiceManager_GetRecentOutput(t *testing.T) {
 	sm := NewServiceManager("/tmp", nil)
 

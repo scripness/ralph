@@ -127,7 +127,7 @@ func TestListFeatures(t *testing.T) {
 	ralphDir := filepath.Join(dir, ".ralph")
 	os.MkdirAll(filepath.Join(ralphDir, "2024-01-15-auth"), 0755)
 	os.MkdirAll(filepath.Join(ralphDir, "2024-01-20-billing"), 0755)
-	os.MkdirAll(filepath.Join(ralphDir, "screenshots"), 0755) // Should be ignored
+	os.MkdirAll(filepath.Join(ralphDir, "logs"), 0755) // Should be ignored (no date prefix)
 
 	features, err := ListFeatures(dir)
 	if err != nil {

@@ -2,10 +2,7 @@ module github.com/scripness/ralph
 
 go 1.25.6
 
-require (
-	github.com/creativeprojects/go-selfupdate v1.5.2
-	github.com/go-rod/rod v0.116.2
-)
+require github.com/creativeprojects/go-selfupdate v1.5.2
 
 require (
 	code.gitea.io/sdk/gitea v0.22.1 // indirect
@@ -19,11 +16,6 @@ require (
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/hashicorp/go-version v1.8.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
-	github.com/ysmood/fetchup v0.2.3 // indirect
-	github.com/ysmood/goob v0.4.0 // indirect
-	github.com/ysmood/got v0.40.0 // indirect
-	github.com/ysmood/gson v0.7.3 // indirect
-	github.com/ysmood/leakless v0.9.0 // indirect
 	gitlab.com/gitlab-org/api/client-go v1.9.1 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect

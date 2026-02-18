@@ -23,8 +23,10 @@ const (
 )
 
 var (
-	LearningPattern = regexp.MustCompile(`^<ralph>LEARNING:(.+?)</ralph>$`)
-	StuckNotePattern = regexp.MustCompile(`^<ralph>STUCK:(.+?)</ralph>$`)
+	LearningPattern    = regexp.MustCompile(`^<ralph>LEARNING:(.+?)</ralph>$`)
+	StuckNotePattern   = regexp.MustCompile(`^<ralph>STUCK:(.+?)</ralph>$`)
+	VerifyPassPattern  = regexp.MustCompile(`^<ralph>VERIFY_PASS</ralph>$`)
+	VerifyFailPattern  = regexp.MustCompile(`^<ralph>VERIFY_FAIL:(.+?)</ralph>$`)
 )
 
 // ProviderResult contains the result of a provider iteration
@@ -127,9 +129,6 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			logger.ServiceReady(svc.Name, svc.Ready, time.Since(startTime).Nanoseconds())
 		}
 	}
-
-	// Pre-resolve browser binary (downloads Chromium if needed)
-	EnsureBrowser(cfg.Config.Browser, def)
 
 	// Sync source code resources for detected frameworks
 	if cfg.Config.Resources == nil || cfg.Config.Resources.IsEnabled() {
@@ -669,84 +668,6 @@ func runStoryVerification(cfg *ResolvedConfig, featureDir *FeatureDir, story *St
 			logger.ServiceRestart("all", true)
 		}
 
-		// Run built-in browser verification
-		if cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
-			baseURL := GetBaseURL(cfg.Config.Services)
-			if baseURL != "" {
-				browser := NewBrowserRunner(cfg.ProjectRoot, cfg.Config.Browser)
-				logger.BrowserStart()
-
-				if len(story.BrowserSteps) > 0 {
-					logger.LogPrintln("  → Running browser verification steps...")
-					browserResult, err := browser.RunSteps(story, baseURL)
-					if err != nil {
-						logger.BrowserEnd(false, 0)
-						result.passed = false
-						result.reason = fmt.Sprintf("browser initialization failed: %v", err)
-						return result, nil
-					} else if browserResult != nil {
-						fmt.Print(FormatStepResult(browserResult))
-
-						if browserResult.Error != nil {
-							logger.BrowserEnd(false, len(browserResult.ConsoleErrors))
-							result.passed = false
-							result.reason = fmt.Sprintf("browser verification failed: %v", browserResult.Error)
-							return result, nil
-						}
-
-						if len(browserResult.ConsoleErrors) > 0 {
-							logger.LogPrint("  ✗ Console errors detected: %d\n", len(browserResult.ConsoleErrors))
-							for _, ce := range browserResult.ConsoleErrors {
-								logger.LogPrint("    - %s\n", ce)
-							}
-							logger.BrowserEnd(false, len(browserResult.ConsoleErrors))
-							result.passed = false
-							result.reason = fmt.Sprintf("browser console errors: %d error(s) detected", len(browserResult.ConsoleErrors))
-							return result, nil
-						}
-						logger.BrowserEnd(true, 0)
-					}
-				} else {
-					// Fallback: basic URL checks
-					logger.LogPrintln("  → Running browser checks...")
-					browserResults, err := browser.RunChecks(story, baseURL)
-					if err != nil {
-						logger.BrowserEnd(false, 0)
-						result.passed = false
-						result.reason = fmt.Sprintf("browser initialization failed: %v", err)
-						return result, nil
-					} else if len(browserResults) > 0 {
-						fmt.Print(FormatBrowserResults(browserResults))
-						for _, r := range browserResults {
-							if r.Error != nil {
-								logger.BrowserEnd(false, 0)
-								result.passed = false
-								result.reason = fmt.Sprintf("page load failed: %v", r.Error)
-								return result, nil
-							}
-							if len(r.ConsoleErrors) > 0 {
-								logger.LogPrint("  ✗ Console errors detected: %d\n", len(r.ConsoleErrors))
-								for _, ce := range r.ConsoleErrors {
-									logger.LogPrint("    - %s\n", ce)
-								}
-								logger.BrowserEnd(false, len(r.ConsoleErrors))
-								result.passed = false
-								result.reason = fmt.Sprintf("browser console errors: %d error(s) detected", len(r.ConsoleErrors))
-								return result, nil
-							}
-						}
-						logger.BrowserEnd(true, 0)
-					}
-				}
-			} else if IsUIStory(story) || len(story.BrowserSteps) > 0 {
-				logger.Warning(fmt.Sprintf("browser verification skipped for %s: no service with a ready URL", story.ID))
-				logger.LogPrint("  ⚠ Browser verification skipped for %s\n", story.ID)
-			}
-		} else if (cfg.Config.Browser == nil || !cfg.Config.Browser.Enabled) && (IsUIStory(story) || len(story.BrowserSteps) > 0) {
-			logger.Warning(fmt.Sprintf("browser verification skipped for %s: browser disabled", story.ID))
-			logger.LogPrint("  ⚠ Browser verification skipped for %s: browser disabled\n", story.ID)
-		}
-
 		// Run UI verification commands
 		for _, cmd := range cfg.Config.Verify.UI {
 			logger.LogPrint("  → %s\n", cmd)
@@ -930,105 +851,7 @@ func runVerifyChecks(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefini
 		}
 	}
 
-	// 3. Browser verification for all UI stories
-	if svcMgr != nil && cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
-		baseURL := GetBaseURL(cfg.Config.Services)
-		if baseURL != "" {
-			// Restart services once before all browser checks
-			if svcMgr.HasUIServices() {
-				if err := svcMgr.RestartForVerify(); err != nil {
-					logger.ServiceRestart("all", false)
-					report.AddFail("service restart", err.Error())
-				} else {
-					logger.ServiceRestart("all", true)
-				}
-			}
-
-			for i := range def.UserStories {
-				story := &def.UserStories[i]
-				if state.IsSkipped(story.ID) || !IsUIStory(story) {
-					continue
-				}
-
-				logger.LogPrint("  → Browser: %s (%s)\n", story.ID, story.Title)
-				logger.BrowserStart()
-
-				browser := NewBrowserRunner(cfg.ProjectRoot, cfg.Config.Browser)
-
-				if len(story.BrowserSteps) > 0 {
-					browserResult, err := browser.RunSteps(story, baseURL)
-					if err != nil {
-						logger.BrowserEnd(false, 0)
-						report.AddFail(fmt.Sprintf("browser %s", story.ID), err.Error())
-					} else if browserResult != nil {
-						fmt.Print(FormatStepResult(browserResult))
-						if browserResult.Error != nil {
-							logger.BrowserEnd(false, len(browserResult.ConsoleErrors))
-							report.AddFail(fmt.Sprintf("browser %s", story.ID), browserResult.Error.Error())
-						} else if len(browserResult.ConsoleErrors) > 0 {
-							logger.BrowserEnd(false, len(browserResult.ConsoleErrors))
-							report.AddFail(fmt.Sprintf("browser %s", story.ID), fmt.Sprintf("console errors: %d", len(browserResult.ConsoleErrors)))
-						} else {
-							logger.BrowserEnd(true, 0)
-							report.AddPass(fmt.Sprintf("browser %s", story.ID))
-						}
-					}
-				} else {
-					logger.LogPrintln("    → Running browser checks (fallback)...")
-					browserResults, err := browser.RunChecks(story, baseURL)
-					if err != nil {
-						logger.BrowserEnd(false, 0)
-						report.AddFail(fmt.Sprintf("browser %s", story.ID), err.Error())
-					} else if len(browserResults) > 0 {
-						fmt.Print(FormatBrowserResults(browserResults))
-						hasFailed := false
-						for _, r := range browserResults {
-							if r.Error != nil {
-								logger.BrowserEnd(false, 0)
-								report.AddFail(fmt.Sprintf("browser %s", story.ID), r.Error.Error())
-								hasFailed = true
-								break
-							}
-							if len(r.ConsoleErrors) > 0 {
-								logger.BrowserEnd(false, len(r.ConsoleErrors))
-								report.AddFail(fmt.Sprintf("browser %s", story.ID), fmt.Sprintf("console errors: %d", len(r.ConsoleErrors)))
-								hasFailed = true
-								break
-							}
-						}
-						if !hasFailed {
-							logger.BrowserEnd(true, 0)
-							report.AddPass(fmt.Sprintf("browser %s", story.ID))
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Warn about skipped browser verification for UI stories
-	if cfg.Config.Browser == nil || !cfg.Config.Browser.Enabled {
-		for i := range def.UserStories {
-			story := &def.UserStories[i]
-			if state.IsSkipped(story.ID) || !IsUIStory(story) {
-				continue
-			}
-			report.AddWarn(fmt.Sprintf("browser %s", story.ID), "browser disabled")
-		}
-	} else if svcMgr != nil && cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
-		baseURL := GetBaseURL(cfg.Config.Services)
-		if baseURL == "" {
-			for i := range def.UserStories {
-				story := &def.UserStories[i]
-				if state.IsSkipped(story.ID) || !IsUIStory(story) {
-					continue
-				}
-				report.AddWarn(fmt.Sprintf("browser %s", story.ID), "no base URL")
-			}
-		}
-	}
-
-	// 4. Service health checks
+	// 3. Service health checks
 	if svcMgr != nil && svcMgr.HasServices() {
 		if healthIssues := svcMgr.CheckServiceHealth(); len(healthIssues) > 0 {
 			for _, issue := range healthIssues {
@@ -1043,7 +866,7 @@ func runVerifyChecks(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefini
 		}
 	}
 
-	// 5. Knowledge file check
+	// 4. Knowledge file check
 	git := NewGitOps(cfg.ProjectRoot)
 	knowledgeFile := cfg.Config.Provider.KnowledgeFile
 	if knowledgeFile != "" {
@@ -1054,11 +877,25 @@ func runVerifyChecks(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefini
 		}
 	}
 
-	// 6. Test file heuristic
+	// 5. Test file heuristic
 	if git.HasTestFileChanges() {
 		report.AddPass("test files were modified")
 	} else {
 		report.AddWarn("test files", "no test files were modified on this branch")
+	}
+
+	// 6. AI deep verification (always runs during ralph verify)
+	logger.LogPrintln("  → AI verification analysis...")
+	analyzePrompt := generateVerifyAnalyzePrompt(cfg, featureDir, def, state, report)
+	aiResult, aiErr := runVerifySubagent(cfg, analyzePrompt)
+	if aiErr != nil {
+		report.AddFail("AI analysis", aiErr.Error())
+	} else if !aiResult.Passed {
+		for _, f := range aiResult.Failures {
+			report.AddFail("AI analysis", f)
+		}
+	} else {
+		report.AddPass("AI analysis")
 	}
 
 	report.Finalize()
@@ -1091,7 +928,7 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 
 	logger.RunStart(featureDir.Feature, def.BranchName, len(def.UserStories))
 
-	// Start services for browser verification
+	// Start services for verification
 	svcMgr := NewServiceManager(cfg.ProjectRoot, cfg.Config.Services)
 	defer svcMgr.StopAll()
 	if svcMgr.HasServices() {
@@ -1109,9 +946,6 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			logger.ServiceReady(svc.Name, svc.Ready, time.Since(startTime).Nanoseconds())
 		}
 	}
-
-	// Pre-resolve browser binary
-	EnsureBrowser(cfg.Config.Browser, def)
 
 	// Run all verification checks
 	fmt.Println(strings.Repeat("=", 60))
@@ -1201,20 +1035,144 @@ func truncateOutput(output string, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
+// VerifyAnalysisResult contains the result of AI deep verification
+type VerifyAnalysisResult struct {
+	Passed   bool
+	Failures []string
+	Output   string
+}
+
+// runVerifySubagent spawns a non-interactive provider to perform AI deep verification.
+// Scans output for VERIFY_PASS/VERIFY_FAIL markers.
+func runVerifySubagent(cfg *ResolvedConfig, prompt string) (*VerifyAnalysisResult, error) {
+	timeout := time.Duration(cfg.Config.Provider.Timeout) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	p := cfg.Config.Provider
+	args, promptFile, err := buildProviderArgs(p.Args, p.PromptMode, p.PromptFlag, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.CommandContext(ctx, p.Command, args...)
+	cmd.Dir = cfg.ProjectRoot
+	cmd.Env = os.Environ()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 5 * time.Second
+
+	// Setup stdin pipe for stdin mode
+	var stdinPipe io.WriteCloser
+	if p.PromptMode == "stdin" || p.PromptMode == "" {
+		stdinPipe, err = cmd.StdinPipe()
+		if err != nil {
+			if promptFile != "" {
+				os.Remove(promptFile)
+			}
+			return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+		}
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		if promptFile != "" {
+			os.Remove(promptFile)
+		}
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		if promptFile != "" {
+			os.Remove(promptFile)
+		}
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		if promptFile != "" {
+			os.Remove(promptFile)
+		}
+		return nil, fmt.Errorf("failed to start verify subagent: %w", err)
+	}
+
+	if promptFile != "" {
+		defer os.Remove(promptFile)
+	}
+
+	// Write prompt to stdin (for stdin mode)
+	if stdinPipe != nil {
+		go func() {
+			defer stdinPipe.Close()
+			io.WriteString(stdinPipe, prompt)
+		}()
+	}
+
+	// Collect output and scan for markers
+	result := &VerifyAnalysisResult{}
+	var mu sync.Mutex
+	var outputBuilder strings.Builder
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		s := bufio.NewScanner(stderr)
+		s.Buffer(make([]byte, 64*1024), 1024*1024)
+		for s.Scan() {
+			line := s.Text()
+			mu.Lock()
+			outputBuilder.WriteString(line + "\n")
+			processVerifyLine(line, result)
+			mu.Unlock()
+		}
+	}()
+
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		mu.Lock()
+		outputBuilder.WriteString(line + "\n")
+		processVerifyLine(line, result)
+		mu.Unlock()
+	}
+
+	wg.Wait()
+	cmd.Wait()
+	result.Output = outputBuilder.String()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("verify subagent timed out after %v", timeout)
+	}
+
+	// If no markers detected at all, treat as a failure
+	if !result.Passed && len(result.Failures) == 0 {
+		result.Failures = append(result.Failures, "AI verification did not produce a verdict (no VERIFY_PASS or VERIFY_FAIL marker)")
+	}
+
+	return result, nil
+}
+
+// processVerifyLine scans a line for VERIFY_PASS/VERIFY_FAIL markers.
+func processVerifyLine(line string, result *VerifyAnalysisResult) {
+	trimmed := strings.TrimSpace(line)
+
+	if VerifyPassPattern.MatchString(trimmed) {
+		result.Passed = true
+	}
+	if matches := VerifyFailPattern.FindStringSubmatch(trimmed); len(matches) > 1 {
+		result.Failures = append(result.Failures, strings.TrimSpace(matches[1]))
+	}
+}
+
 // commitPrdOnly commits a single file (typically run-state.json during runs)
 func commitPrdOnly(projectRoot, filePath, message string) error {
 	git := NewGitOps(projectRoot)
 	return git.CommitFile(filePath, message)
 }
 
-// getLastCommit returns the last commit hash (short, for display)
-func getLastCommit(projectRoot string) string {
-	git := NewGitOps(projectRoot)
-	return git.GetLastCommitShort()
-}
-
-// getCommitMessage returns the commit message for a hash
-func getCommitMessage(projectRoot, hash string) string {
-	git := NewGitOps(projectRoot)
-	return git.GetCommitMessage(hash)
-}

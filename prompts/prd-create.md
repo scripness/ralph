@@ -72,7 +72,7 @@ Format each story as:
 - [ ] Typecheck passes
 - [ ] Tests pass
 
-**Tags:** [ui] (if browser verification needed)
+**Tags:** [ui] (if e2e test verification needed)
 **Priority:** X (lower = higher priority)
 ```
 
@@ -109,15 +109,10 @@ Any unresolved questions that need answers before implementation.
 
 For stories with the `[ui]` tag:
 - Include specific, verifiable UI acceptance criteria
-- Consider what browser verification steps would look like (navigate, click, type, assert)
-- Ensure e2e test coverage expectations are clear
+- Write criteria that are testable via e2e tests (e.g., Playwright, Cypress)
+- Think about concrete user interactions: navigate, click, type, submit, assert
 
-For UI stories, think about concrete user interactions:
-- What page does the user navigate to?
-- What do they click, type, or submit?
-- What should they see as a result?
-
-These interactions will become automated browser verification steps (browserSteps) during finalization.
+The implementing agent will write e2e tests based on these criteria.
 
 ## Save Location
 

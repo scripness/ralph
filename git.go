@@ -16,8 +16,10 @@ func NewGitOps(projectRoot string) *GitOps {
 	return &GitOps{projectRoot: projectRoot}
 }
 
-// EnsureBranch ensures we're on the correct branch, creating it if needed
-func (g *GitOps) EnsureBranch(branchName string) error {
+// EnsureBranch ensures we're on the correct branch, creating it if needed.
+// When creating a new branch, if startPoint is provided, the branch starts from
+// that ref (e.g., "main") instead of current HEAD.
+func (g *GitOps) EnsureBranch(branchName string, startPoint ...string) error {
 	current, err := g.CurrentBranch()
 	if err != nil {
 		return fmt.Errorf("failed to get current branch: %w", err)
@@ -37,7 +39,10 @@ func (g *GitOps) EnsureBranch(branchName string) error {
 		return g.Checkout(branchName)
 	}
 
-	// Create new branch from current HEAD
+	// Create new branch — from startPoint if provided, otherwise from current HEAD
+	if len(startPoint) > 0 && startPoint[0] != "" {
+		return g.CreateBranchFrom(branchName, startPoint[0])
+	}
 	return g.CreateBranch(branchName)
 }
 
@@ -59,6 +64,12 @@ func (g *GitOps) BranchExists(branchName string) bool {
 // CreateBranch creates a new branch from current HEAD
 func (g *GitOps) CreateBranch(branchName string) error {
 	_, err := g.run("checkout", "-b", branchName)
+	return err
+}
+
+// CreateBranchFrom creates a new branch from a specific start point
+func (g *GitOps) CreateBranchFrom(branchName, startPoint string) error {
+	_, err := g.run("checkout", "-b", branchName, startPoint)
 	return err
 }
 
@@ -90,24 +101,6 @@ func (g *GitOps) CommitFile(filePath, message string) error {
 // GetLastCommit returns the last commit hash (full).
 func (g *GitOps) GetLastCommit() string {
 	out, err := g.run("rev-parse", "HEAD")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(out)
-}
-
-// GetLastCommitShort returns the last commit hash (short, for display).
-func (g *GitOps) GetLastCommitShort() string {
-	out, err := g.run("rev-parse", "--short", "HEAD")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(out)
-}
-
-// GetCommitMessage returns the commit message for a hash
-func (g *GitOps) GetCommitMessage(hash string) string {
-	out, err := g.run("log", "-1", "--format=%s", hash)
 	if err != nil {
 		return ""
 	}

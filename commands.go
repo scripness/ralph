@@ -117,7 +117,7 @@ func promptVerifyCommands(reader *bufio.Reader, detected [3]string) []string {
 // promptServiceConfig prompts the user for dev server configuration.
 // Returns nil if the user skips (placeholder will be used).
 func promptServiceConfig(reader *bufio.Reader) *ServiceConfig {
-	fmt.Println("\nDev server (for browser verification and service health checks):")
+	fmt.Println("\nDev server (for service health checks and e2e tests):")
 	fmt.Print("  Start command (e.g. npm run dev, mix phx.server): ")
 	startCmd, _ := reader.ReadString('\n')
 	startCmd = strings.TrimSpace(startCmd)
@@ -186,7 +186,6 @@ func cmdInit(args []string) {
 	gitignoreContent := `# Ralph temporary files
 ralph.lock
 *.tmp
-screenshots/
 */logs/
 `
 	if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
@@ -391,10 +390,11 @@ func cmdPrd(args []string) {
 		os.Exit(1)
 	}
 
-	// Ensure we're on the feature branch before any commits
+	// Ensure we're on the feature branch before any commits.
+	// New branches start from the default branch (main/master), not current HEAD.
 	branchName := "ralph/" + feature
 	git := NewGitOps(projectRoot)
-	if err := git.EnsureBranch(branchName); err != nil {
+	if err := git.EnsureBranch(branchName, git.DefaultBranch()); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to switch to branch %s: %v\n", branchName, err)
 		os.Exit(1)
 	}
@@ -613,18 +613,6 @@ func cmdDoctor(args []string) {
 			fmt.Printf("○ verify.ui: no commands (required for UI stories)\n")
 		}
 
-		// Browser check
-		if cfg.Config.Browser != nil && cfg.Config.Browser.Enabled {
-			status, ok := CheckBrowserStatus(cfg.Config.Browser)
-			if ok {
-				fmt.Printf("✓ Browser: %s\n", status)
-			} else {
-				fmt.Printf("✗ Browser: %s\n", status)
-				issues++
-			}
-		} else {
-			fmt.Printf("○ Browser: disabled\n")
-		}
 	}
 
 	// List features
@@ -786,7 +774,7 @@ func cmdLogs(args []string) {
 
 	// --summary mode: show detailed summary
 	if *summaryMode {
-		printRunSummary(targetRun.LogPath, feature)
+		printRunSummary(targetRun.LogPath)
 		return
 	}
 
@@ -800,7 +788,7 @@ func cmdLogs(args []string) {
 	printEvents(targetRun.LogPath, *tail, *eventType, *storyID, *jsonOutput)
 }
 
-func printRunSummary(logPath, feature string) {
+func printRunSummary(logPath string) {
 	summary, err := GetRunSummary(logPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading log: %v\n", err)

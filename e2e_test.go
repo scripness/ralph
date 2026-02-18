@@ -959,7 +959,7 @@ func phase2Init(t *testing.T, env *testEnv) {
 		cfg.Provider.Command, cfg.Verify.Default)
 }
 
-// phase3ConfigEnhancement adds services, verify.ui, and browser config.
+// phase3ConfigEnhancement adds services and verify.ui.
 func phase3ConfigEnhancement(t *testing.T, env *testEnv) {
 	configPath := filepath.Join(env.projectDir, "ralph.config.json")
 	cfg := loadConfig(t, configPath)
@@ -973,17 +973,12 @@ func phase3ConfigEnhancement(t *testing.T, env *testEnv) {
 			RestartBeforeVerify: true,
 		},
 	}
-	// Use `true` (the Unix no-op command) as a lightweight verify.ui placeholder.
-	// This satisfies the readiness gate (UI stories require non-empty verify.ui) without
-	// adding real e2e test overhead — pre-verify would run them per story, eating 15+ min.
-	// Browser steps (navigate, assertVisible) already provide real UI verification.
-	cfg.Verify.UI = []string{"true"}
+	// Use the project's real Playwright e2e test command. This is the primary UI
+	// verification mechanism now that browser.go/rod is removed — the project's own
+	// e2e test suite validates UI stories through verify.ui commands.
+	cfg.Verify.UI = []string{"bun run test:e2e"}
 	if cfg.Verify.Timeout == 0 {
 		cfg.Verify.Timeout = 300
-	}
-	cfg.Browser = &BrowserConfig{
-		Enabled:  true,
-		Headless: true,
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -1004,14 +999,11 @@ func phase3ConfigEnhancement(t *testing.T, env *testEnv) {
 	if reloaded.Services[0].Ready != "http://localhost:3000" {
 		t.Errorf("Service ready URL: got %q", reloaded.Services[0].Ready)
 	}
-	if len(reloaded.Verify.UI) != 1 || reloaded.Verify.UI[0] != "true" {
-		t.Errorf("verify.ui should be [\"true\"], got %v", reloaded.Verify.UI)
-	}
-	if reloaded.Browser == nil || !reloaded.Browser.Enabled {
-		t.Error("Browser should be enabled")
+	if len(reloaded.Verify.UI) != 1 || reloaded.Verify.UI[0] != "bun run test:e2e" {
+		t.Errorf("verify.ui should be [\"bun run test:e2e\"], got %v", reloaded.Verify.UI)
 	}
 
-	t.Log("Config enhanced with services, verify.ui (true), and browser")
+	t.Log("Config enhanced with services and verify.ui")
 }
 
 // phase4Doctor runs ralph doctor and checks output.
@@ -1068,13 +1060,10 @@ Add search and filtering functionality to the certificates page (/certificates) 
 ## User Stories
 
 ### US-001: Add search input to certificates page
-Add a text search input at the top of the certificates list that filters by customer name and product name. Server-side filtering with form submission.
+Add a text search input at the top of the certificates list that filters by customer name and product name. Server-side filtering with form submission. Write Playwright e2e tests that verify the search functionality.
 
-### US-002: Add status filter dropdown
-Add a dropdown filter for certificate status (active/expired/voided) next to the search input. Works in combination with text search.
-
-### US-003: Add e2e test for certificate search
-Add Playwright e2e tests that verify search and filter functionality works correctly.
+### US-002: Add status filter dropdown and combined e2e tests
+Add a dropdown filter for certificate status (active/expired/voided) next to the search input. Works in combination with text search. Write Playwright e2e tests that verify filtering and combined search+filter functionality.
 `
 	prdMdPath := filepath.Join(featureDir, "prd.md")
 	if err := os.WriteFile(prdMdPath, []byte(prdMd), 0o644); err != nil {
@@ -1082,6 +1071,9 @@ Add Playwright e2e tests that verify search and filter functionality works corre
 	}
 
 	// Write prd.json (v3 definition — no runtime fields)
+	// Each UI story is responsible for writing its own e2e tests — this is the
+	// e2e-first verification strategy. verify.ui runs "bun run test:e2e" which
+	// executes the project's Playwright suite to validate UI stories.
 	def := &PRDDefinition{
 		SchemaVersion: 3,
 		Project:       "warrantycert",
@@ -1091,60 +1083,36 @@ Add Playwright e2e tests that verify search and filter functionality works corre
 			{
 				ID:          "US-001",
 				Title:       "Add search input to certificates page",
-				Description: "Add a text search input field at the top of the certificates list page (/certificates). When a user types a query and submits the form, the page reloads with certificates filtered by customer name or product name (case-insensitive partial match). The search term should be preserved in the URL as a query parameter (?q=term) so the filtered view is bookmarkable. When the search field is cleared, all certificates are shown again.",
+				Description: "Add a text search input field at the top of the certificates list page (/certificates). When a user types a query and submits the form, the page reloads with certificates filtered by customer name or product name (case-insensitive partial match). The search term should be preserved in the URL as a query parameter (?q=term) so the filtered view is bookmarkable. When the search field is cleared, all certificates are shown again. Write Playwright e2e tests that verify the search functionality works end-to-end.",
 				AcceptanceCriteria: []string{
 					"A search input is visible at the top of the /certificates page",
 					"Submitting a search term filters certificates by customer name or product name",
 					"Search is case-insensitive and supports partial matches",
 					"The search term is preserved in the URL as ?q=<term>",
 					"Clearing the search shows all certificates",
+					"Playwright e2e tests exist and pass for search functionality",
 					"Typecheck passes",
 					"Lint passes",
 				},
 				Tags:     []string{"ui"},
 				Priority: 1,
-				BrowserSteps: []BrowserStep{
-					{Action: "navigate", URL: "/certificates"},
-					{Action: "assertVisible", Selector: "input[name=\"q\"], input[type=\"search\"]"},
-				},
 			},
 			{
 				ID:          "US-002",
 				Title:       "Add status filter dropdown",
-				Description: "Add a dropdown/select element next to the search input that allows filtering certificates by status (all/active/expired/voided). The filter works in combination with the text search. The selected status is preserved in the URL as a query parameter (?status=active). Default is 'all' (no filtering).",
+				Description: "Add a dropdown/select element next to the search input that allows filtering certificates by status (all/active/expired/voided). The filter works in combination with the text search. The selected status is preserved in the URL as a query parameter (?status=active). Default is 'all' (no filtering). Write Playwright e2e tests that verify filtering and combined search+filter functionality.",
 				AcceptanceCriteria: []string{
 					"A status filter dropdown is visible next to the search input on /certificates",
 					"Filter options include: All, Active, Expired, Voided",
 					"Selecting a status filters the certificate list to only show matching certificates",
 					"Status filter works in combination with text search",
 					"The selected status is preserved in the URL as ?status=<value>",
+					"Playwright e2e tests exist and pass for filter and combined search+filter",
 					"Typecheck passes",
 					"Lint passes",
 				},
 				Tags:     []string{"ui"},
 				Priority: 2,
-				BrowserSteps: []BrowserStep{
-					{Action: "navigate", URL: "/certificates"},
-					{Action: "assertVisible", Selector: "select[name=\"status\"], [data-filter=\"status\"]"},
-				},
-			},
-			{
-				ID:          "US-003",
-				Title:       "Add e2e test for certificate search and filtering",
-				Description: "Write Playwright e2e tests that verify: searching by customer name returns correct results, searching by product returns correct results, status filter works correctly, combined search + filter works, clearing search/filter shows all results.",
-				AcceptanceCriteria: []string{
-					"E2e test file exists for certificate search functionality",
-					"Tests cover text search by customer name",
-					"Tests cover status filter dropdown",
-					"Tests cover combined search + filter",
-					"All e2e tests pass",
-					"Typecheck passes",
-				},
-				Tags:     []string{"ui"},
-				Priority: 3,
-				BrowserSteps: []BrowserStep{
-					{Action: "navigate", URL: "/certificates"},
-				},
 			},
 		},
 	}
@@ -1171,8 +1139,8 @@ Add Playwright e2e tests that verify search and filter functionality works corre
 	if loaded.SchemaVersion != 3 {
 		t.Errorf("Expected schemaVersion=3, got %d", loaded.SchemaVersion)
 	}
-	if len(loaded.UserStories) != 3 {
-		t.Errorf("Expected 3 user stories, got %d", len(loaded.UserStories))
+	if len(loaded.UserStories) != 2 {
+		t.Errorf("Expected 2 user stories, got %d", len(loaded.UserStories))
 	}
 	hasUI := false
 	for _, s := range loaded.UserStories {
@@ -1766,9 +1734,6 @@ func writeReport(t *testing.T, env *testEnv) {
 					svc.Name, svc.Start, svc.Ready, svc.RestartBeforeVerify))
 			}
 		}
-		if cfg.Browser != nil {
-			report.WriteString(fmt.Sprintf("- **Browser:** enabled=%v headless=%v\n", cfg.Browser.Enabled, cfg.Browser.Headless))
-		}
 		report.WriteString("\n")
 	}
 
@@ -1853,31 +1818,6 @@ func writeReport(t *testing.T, env *testEnv) {
 	logEvents := parseLogEvents(env, featureDir)
 
 	// ============================================================
-	// Copy browser screenshots
-	// ============================================================
-	screenshotDir := filepath.Join(env.projectDir, ".ralph", "screenshots")
-	var screenshotsByStory = make(map[string][]string)
-	if entries, err := os.ReadDir(screenshotDir); err == nil && len(entries) > 0 {
-		for _, entry := range entries {
-			src := filepath.Join(screenshotDir, entry.Name())
-			copyArtifact(env, filepath.Join("screenshots", entry.Name()), src)
-			// Screenshots named like US-001-20260210-150405-_path.png
-			name := entry.Name()
-			if idx := strings.Index(name, "-"); idx > 0 {
-				// Extract story ID prefix: find second dash group matching US-NNN
-				if strings.HasPrefix(strings.ToUpper(name), "US-") {
-					parts := strings.SplitN(name, "-", 4)
-					if len(parts) >= 3 {
-						storyID := strings.ToUpper(parts[0] + "-" + parts[1])
-						screenshotsByStory[storyID] = append(screenshotsByStory[storyID], entry.Name())
-					}
-				}
-			}
-		}
-		report.WriteString(fmt.Sprintf("**Screenshots:** %d saved in `screenshots/` directory\n\n", len(entries)))
-	}
-
-	// ============================================================
 	// Run duration from JSONL logs
 	// ============================================================
 	var totalDurationSecs float64
@@ -1943,15 +1883,10 @@ func writeReport(t *testing.T, env *testEnv) {
 			report.WriteString("\n```\n\n")
 		}
 
-		// Screenshots for this story
-		if shots, ok := screenshotsByStory[s.ID]; ok && len(shots) > 0 {
-			report.WriteString(fmt.Sprintf("**Screenshots:** %d — see `screenshots/` directory\n\n", len(shots)))
-		}
-
 		report.WriteString("---\n\n")
 
 		// Write per-story artifacts
-		writeStoryArtifact(env, s, state, logEvents, screenshotsByStory[s.ID])
+		writeStoryArtifact(env, s, state, logEvents)
 	}
 
 	// ============================================================
@@ -2062,11 +1997,11 @@ func extractStoryProviderOutput(events []Event, storyID string) string {
 	var buf strings.Builder
 	inStory := false
 	for _, ev := range events {
-		if ev.Type == "story_start" && ev.StoryID == storyID {
+		if ev.Type == "iteration_start" && ev.StoryID == storyID {
 			inStory = true
 			continue
 		}
-		if ev.Type == "story_end" && ev.StoryID == storyID {
+		if ev.Type == "iteration_end" && ev.StoryID == storyID {
 			inStory = false
 			continue
 		}
@@ -2087,11 +2022,11 @@ func extractStoryVerifyOutput(events []Event, storyID string) string {
 	var buf strings.Builder
 	inStory := false
 	for _, ev := range events {
-		if ev.Type == "story_start" && ev.StoryID == storyID {
+		if ev.Type == "iteration_start" && ev.StoryID == storyID {
 			inStory = true
 			continue
 		}
-		if ev.Type == "story_end" && ev.StoryID == storyID {
+		if ev.Type == "iteration_end" && ev.StoryID == storyID {
 			inStory = false
 			continue
 		}
@@ -2109,39 +2044,8 @@ func extractStoryVerifyOutput(events []Event, storyID string) string {
 	return buf.String()
 }
 
-// extractStoryBrowserOutput extracts browser step results for a specific story from JSONL events.
-func extractStoryBrowserOutput(events []Event, storyID string) string {
-	var buf strings.Builder
-	inStory := false
-	for _, ev := range events {
-		if ev.Type == "story_start" && ev.StoryID == storyID {
-			inStory = true
-			continue
-		}
-		if ev.Type == "story_end" && ev.StoryID == storyID {
-			inStory = false
-			continue
-		}
-		if inStory && ev.Type == "browser_step" && ev.Data != nil {
-			action, _ := ev.Data["action"].(string)
-			success := ev.Success != nil && *ev.Success
-			details, _ := ev.Data["details"].(string)
-			status := "PASS"
-			if !success {
-				status = "FAIL"
-			}
-			fmt.Fprintf(&buf, "[%s] %s", status, action)
-			if details != "" {
-				fmt.Fprintf(&buf, " — %s", details)
-			}
-			buf.WriteString("\n")
-		}
-	}
-	return buf.String()
-}
-
 // writeStoryArtifact writes per-story files to stories/<id>/.
-func writeStoryArtifact(env *testEnv, s StoryDefinition, state *RunState, logEvents []Event, screenshots []string) {
+func writeStoryArtifact(env *testEnv, s StoryDefinition, state *RunState, logEvents []Event) {
 	dir := strings.ToLower(s.ID)
 	var buf strings.Builder
 
@@ -2171,32 +2075,6 @@ func writeStoryArtifact(env *testEnv, s StoryDefinition, state *RunState, logEve
 	}
 	buf.WriteString("\n")
 
-	if len(s.BrowserSteps) > 0 {
-		buf.WriteString("## Browser Steps\n\n")
-		for _, step := range s.BrowserSteps {
-			fmt.Fprintf(&buf, "- **%s**", step.Action)
-			if step.URL != "" {
-				fmt.Fprintf(&buf, " url=%s", step.URL)
-			}
-			if step.Selector != "" {
-				fmt.Fprintf(&buf, " selector=%s", step.Selector)
-			}
-			if step.Value != "" {
-				fmt.Fprintf(&buf, " value=%s", step.Value)
-			}
-			buf.WriteString("\n")
-		}
-		buf.WriteString("\n")
-	}
-
-	if len(screenshots) > 0 {
-		buf.WriteString("## Screenshots\n\n")
-		for _, shot := range screenshots {
-			fmt.Fprintf(&buf, "- `screenshots/%s`\n", shot)
-		}
-		buf.WriteString("\n")
-	}
-
 	// Failure info
 	if !passed && lastFailure != "" {
 		buf.WriteString("## Failure Details\n\n")
@@ -2222,11 +2100,6 @@ func writeStoryArtifact(env *testEnv, s StoryDefinition, state *RunState, logEve
 		verifyOutput := extractStoryVerifyOutput(logEvents, s.ID)
 		if verifyOutput != "" {
 			saveArtifact(env, filepath.Join("stories", dir, "verify-output.txt"), verifyOutput)
-		}
-
-		browserOutput := extractStoryBrowserOutput(logEvents, s.ID)
-		if browserOutput != "" {
-			saveArtifact(env, filepath.Join("stories", dir, "browser-steps.txt"), browserOutput)
 		}
 	}
 }

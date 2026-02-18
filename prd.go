@@ -101,6 +101,28 @@ func prdStateFinalized(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	// Show progress if any stories have been worked on
 	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
 	state, _ := LoadRunState(featureDir.RunStatePath())
+
+	// Handle v2 schema — offer only regeneration
+	if err != nil && strings.Contains(err.Error(), "schema version") {
+		fmt.Printf("\n%v\n\n", err)
+		fmt.Println("What would you like to do?")
+		fmt.Println("  A) Regenerate prd.json from prd.md (upgrades to v3)")
+		fmt.Println("  C) Edit prd.md ($EDITOR)")
+		fmt.Println("  Q) Quit")
+		fmt.Println()
+
+		choice := promptChoice("Choose", []string{"a", "c", "q"})
+		switch choice {
+		case "a":
+			return prdRegenerateJson(cfg, featureDir)
+		case "c":
+			return prdEditManual(featureDir.PrdMdPath())
+		case "q":
+			return nil
+		}
+		return nil
+	}
+
 	if err == nil {
 		passed := CountPassed(state)
 		skipped := CountSkipped(state)
@@ -318,7 +340,7 @@ type Command struct {
 }
 
 func (c *Command) Run() error {
-	cmd := newExecCommand(c.name, c.args...)
+	cmd := exec.Command(c.name, c.args...)
 	if c.dir != "" {
 		cmd.Dir = c.dir
 	}
@@ -329,19 +351,6 @@ func (c *Command) Run() error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
-}
-
-// newExecCommand is a helper to create exec.Command
-func newExecCommand(name string, args ...string) *execCmd {
-	return &execCmd{Cmd: *execCommand(name, args...)}
-}
-
-type execCmd struct {
-	exec.Cmd
-}
-
-func execCommand(name string, args ...string) *exec.Cmd {
-	return exec.Command(name, args...)
 }
 
 // nonInteractiveArgs are flags that prevent interactive provider sessions.

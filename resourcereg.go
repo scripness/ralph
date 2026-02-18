@@ -9,7 +9,6 @@ type Resource struct {
 	Name        string   // e.g., "nextjs", "react", "svelte"
 	URL         string   // GitHub repo URL (full source)
 	Branch      string   // e.g., "main", "canary"
-	SearchPaths []string // Optional: focus areas (empty = search all)
 	Notes       string   // Guidance for AI agent
 }
 

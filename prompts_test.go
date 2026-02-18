@@ -24,7 +24,6 @@ func TestGetPrompt_Run(t *testing.T) {
 		"branchName":         "ralph/test",
 		"progress":           "1/3 stories complete",
 		"storyMap":           "✓ US-000: Setup\n→ US-001: Test Story [CURRENT]",
-		"browserSteps":       "",
 		"resourceVerificationInstructions": "",
 	})
 
@@ -78,8 +77,8 @@ func TestGetPrompt_PrdCreate(t *testing.T) {
 	if !strings.Contains(prompt, "US-XXX") {
 		t.Error("prompt should contain story format example")
 	}
-	if !strings.Contains(prompt, "browserSteps") {
-		t.Error("prompt should mention browserSteps for UI stories")
+	if !strings.Contains(prompt, "e2e tests") {
+		t.Error("prompt should mention e2e tests for UI stories")
 	}
 	if !strings.Contains(prompt, "Typecheck passes") {
 		t.Error("prompt should enforce typecheck criterion")
@@ -96,11 +95,8 @@ func TestGetPrompt_PrdFinalize(t *testing.T) {
 	if !strings.Contains(prompt, "schemaVersion") {
 		t.Error("prompt should contain schema version")
 	}
-	if !strings.Contains(prompt, "browserSteps") {
-		t.Error("prompt should document browserSteps")
-	}
-	if !strings.Contains(prompt, "navigate") {
-		t.Error("prompt should list available actions")
+	if !strings.Contains(prompt, "e2e tests") {
+		t.Error("prompt should mention e2e tests for UI stories")
 	}
 	if !strings.Contains(prompt, "Typecheck passes") {
 		t.Error("prompt should enforce typecheck in checklist")
@@ -204,7 +200,6 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"branchName":         "ralph/test",
 			"progress":           "0/1",
 			"storyMap":           "→ US-001: Test [CURRENT]",
-			"browserSteps":       "",
 			"storySummaries":     "Test",
 			"prdContent":         "Test",
 			"outputPath":         "/test",
@@ -364,88 +359,6 @@ func TestGenerateRunPrompt_StoryMap(t *testing.T) {
 	}
 }
 
-func TestGenerateRunPrompt_BrowserSteps(t *testing.T) {
-	cfg := &ResolvedConfig{
-		Config: RalphConfig{
-			Provider: ProviderConfig{KnowledgeFile: "AGENTS.md"},
-			Verify:   VerifyConfig{Default: []string{"echo ok"}},
-		},
-	}
-
-	featureDir := &FeatureDir{Feature: "test", Path: "/project/.ralph/test"}
-
-	def := &PRDDefinition{
-		Project:     "Test",
-		Description: "Test",
-		BranchName:  "ralph/test",
-		UserStories: []StoryDefinition{
-			{
-				ID:                 "US-001",
-				Title:              "Login form",
-				AcceptanceCriteria: []string{"Form works"},
-				Tags:               []string{"ui"},
-				BrowserSteps: []BrowserStep{
-					{Action: "navigate", URL: "/login"},
-					{Action: "type", Selector: "#email", Value: "test@example.com"},
-					{Action: "click", Selector: "button[type=submit]"},
-					{Action: "assertText", Selector: "h1", Contains: "Welcome"},
-				},
-			},
-		},
-	}
-
-	state := NewRunState()
-	story := &def.UserStories[0]
-
-	prompt := generateRunPrompt(cfg, featureDir, def, state, story)
-
-	if !strings.Contains(prompt, "Browser Verification") {
-		t.Error("prompt should contain browser verification section")
-	}
-	if !strings.Contains(prompt, "navigate → /login") {
-		t.Error("prompt should show navigate step")
-	}
-	if !strings.Contains(prompt, `type → #email = "test@example.com"`) {
-		t.Error("prompt should show type step with value")
-	}
-	if !strings.Contains(prompt, "click → button[type=submit]") {
-		t.Error("prompt should show click step")
-	}
-	if !strings.Contains(prompt, `assertText → h1 contains "Welcome"`) {
-		t.Error("prompt should show assertText step")
-	}
-	if !strings.Contains(prompt, "Design your implementation so these steps will pass") {
-		t.Error("prompt should contain design guidance for browser steps")
-	}
-}
-
-func TestGenerateRunPrompt_NoBrowserSteps(t *testing.T) {
-	cfg := &ResolvedConfig{
-		Config: RalphConfig{
-			Provider: ProviderConfig{KnowledgeFile: "AGENTS.md"},
-			Verify:   VerifyConfig{Default: []string{"echo ok"}},
-		},
-	}
-
-	featureDir := &FeatureDir{Feature: "test", Path: "/project/.ralph/test"}
-
-	def := &PRDDefinition{
-		Project:     "Test",
-		Description: "Test",
-		BranchName:  "ralph/test",
-		UserStories: []StoryDefinition{
-			{ID: "US-001", Title: "Backend task", AcceptanceCriteria: []string{"Works"}},
-		},
-	}
-
-	state := NewRunState()
-	prompt := generateRunPrompt(cfg, featureDir, def, state, &def.UserStories[0])
-
-	if strings.Contains(prompt, "Browser Verification") {
-		t.Error("prompt should NOT contain browser verification for non-UI stories")
-	}
-}
-
 func TestBuildProgress(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -528,52 +441,6 @@ func TestBuildStoryMap(t *testing.T) {
 	}
 }
 
-func TestBuildBrowserSteps(t *testing.T) {
-	story := &StoryDefinition{
-		BrowserSteps: []BrowserStep{
-			{Action: "navigate", URL: "/page"},
-			{Action: "click", Selector: "#btn"},
-			{Action: "type", Selector: "#input", Value: "hello"},
-			{Action: "waitFor", Selector: ".loaded"},
-			{Action: "assertVisible", Selector: ".item"},
-			{Action: "assertText", Selector: "h1", Contains: "Title"},
-			{Action: "assertNotVisible", Selector: ".modal"},
-			{Action: "submit", Selector: "form"},
-			{Action: "screenshot"},
-			{Action: "wait", Timeout: 3},
-		},
-	}
-
-	result := buildBrowserSteps(story)
-
-	expectations := []string{
-		"navigate → /page",
-		"click → #btn",
-		`type → #input = "hello"`,
-		"waitFor → .loaded",
-		"assertVisible → .item",
-		`assertText → h1 contains "Title"`,
-		"assertNotVisible → .modal",
-		"submit → form",
-		"screenshot",
-		"wait 3s",
-	}
-
-	for _, e := range expectations {
-		if !strings.Contains(result, e) {
-			t.Errorf("expected browser steps to contain %q", e)
-		}
-	}
-}
-
-func TestBuildBrowserSteps_Empty(t *testing.T) {
-	story := &StoryDefinition{}
-	result := buildBrowserSteps(story)
-	if result != "" {
-		t.Errorf("expected empty string for no browser steps, got %q", result)
-	}
-}
-
 func TestBuildLearnings_Empty(t *testing.T) {
 	result := buildLearnings(nil, "## Learnings")
 	if result != "" {
@@ -632,8 +499,7 @@ func TestGetPrompt_RunWithResourcesCache(t *testing.T) {
 		"branchName":                        "ralph/test",
 		"progress":                          "0/1",
 		"storyMap":                          "→ US-001: Test [CURRENT]",
-		"browserSteps":                      "",
-		"resourceVerificationInstructions":  resourceInstr,
+		"resourceVerificationInstructions":resourceInstr,
 	})
 
 	if !strings.Contains(prompt, "Documentation Verification") {
@@ -662,8 +528,7 @@ func TestGetPrompt_RunWithoutResourcesCache(t *testing.T) {
 		"branchName":                        "ralph/test",
 		"progress":                          "0/1",
 		"storyMap":                          "→ US-001: Test [CURRENT]",
-		"browserSteps":                      "",
-		"resourceVerificationInstructions":  webSearchInstr,
+		"resourceVerificationInstructions":webSearchInstr,
 	})
 
 	if !strings.Contains(prompt, "Documentation Verification") {
@@ -827,5 +692,104 @@ func TestBuildRefinementStoryDetails_Empty(t *testing.T) {
 	result := buildRefinementStoryDetails(def, state)
 	if result != "" {
 		t.Errorf("expected empty string for no stories, got %q", result)
+	}
+}
+
+func TestBuildCriteriaChecklist(t *testing.T) {
+	def := &PRDDefinition{
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Form renders", "Auth works"}},
+			{ID: "US-002", Title: "Logout", AcceptanceCriteria: []string{"Session cleared"}},
+			{ID: "US-003", Title: "Register", AcceptanceCriteria: []string{"Account created"}},
+		},
+	}
+
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkSkipped("US-003", "blocked")
+
+	result := buildCriteriaChecklist(def, state)
+
+	if !strings.Contains(result, "### US-001: Login (PASSED)") {
+		t.Error("expected US-001 with PASSED status")
+	}
+	if !strings.Contains(result, "### US-002: Logout (PENDING)") {
+		t.Error("expected US-002 with PENDING status")
+	}
+	if !strings.Contains(result, "### US-003: Register (SKIPPED)") {
+		t.Error("expected US-003 with SKIPPED status")
+	}
+	if !strings.Contains(result, "- [ ] Form renders") {
+		t.Error("expected criterion checkbox")
+	}
+	if !strings.Contains(result, "- [ ] Session cleared") {
+		t.Error("expected criterion checkbox")
+	}
+}
+
+func TestBuildCriteriaChecklist_Empty(t *testing.T) {
+	def := &PRDDefinition{UserStories: []StoryDefinition{}}
+	state := NewRunState()
+	result := buildCriteriaChecklist(def, state)
+	if result != "" {
+		t.Errorf("expected empty string for no stories, got %q", result)
+	}
+}
+
+func TestGenerateVerifyAnalyzePrompt(t *testing.T) {
+	cfg := &ResolvedConfig{
+		ProjectRoot: "/project",
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:       "claude",
+				KnowledgeFile: "CLAUDE.md",
+			},
+			Verify: VerifyConfig{
+				Default: []string{"go vet ./...", "go test ./..."},
+			},
+		},
+	}
+
+	featureDir := &FeatureDir{
+		Feature: "auth",
+		Path:    "/project/.ralph/2024-01-15-auth",
+	}
+
+	def := &PRDDefinition{
+		Project:     "MyApp",
+		Description: "Auth feature",
+		BranchName:  "ralph/auth",
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Form renders"}},
+			{ID: "US-002", Title: "Logout", AcceptanceCriteria: []string{"Session cleared"}},
+		},
+	}
+
+	state := NewRunState()
+	state.MarkPassed("US-001")
+
+	report := &VerifyReport{}
+	report.AddPass("go vet ./...")
+	report.AddFail("go test ./...", "exit code 1")
+
+	prompt := generateVerifyAnalyzePrompt(cfg, featureDir, def, state, report)
+
+	if !strings.Contains(prompt, "MyApp") {
+		t.Error("prompt should contain project name")
+	}
+	if !strings.Contains(prompt, "Auth feature") {
+		t.Error("prompt should contain feature description")
+	}
+	if !strings.Contains(prompt, "ralph/auth") {
+		t.Error("prompt should contain branch name")
+	}
+	if !strings.Contains(prompt, "US-001: Login (PASSED)") {
+		t.Error("prompt should contain criteria checklist")
+	}
+	if !strings.Contains(prompt, "VERIFY_PASS") {
+		t.Error("prompt should contain VERIFY_PASS marker instructions")
+	}
+	if !strings.Contains(prompt, "VERIFY_FAIL") {
+		t.Error("prompt should contain VERIFY_FAIL marker instructions")
 	}
 }

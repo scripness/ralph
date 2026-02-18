@@ -150,9 +150,6 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.Config.Provider.Timeout != 1800 {
 		t.Errorf("expected default timeout=1800, got %d", cfg.Config.Provider.Timeout)
 	}
-	if cfg.Config.Browser == nil || !cfg.Config.Browser.Enabled {
-		t.Error("expected browser.enabled=true by default")
-	}
 	if cfg.Config.Commits == nil || !cfg.Config.Commits.PrdChanges {
 		t.Error("expected commits.prdChanges=true by default")
 	}
@@ -946,66 +943,22 @@ func TestCheckReadiness_RalphDirMissing(t *testing.T) {
 	}
 }
 
-func TestCheckReadiness_BrowserExecutablePath(t *testing.T) {
+func TestConfig_SchemaFieldIgnored(t *testing.T) {
 	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, ".git"), 0755)
-	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
+	configJSON := `{
+		"$schema": "https://raw.githubusercontent.com/scripness/ralph/main/ralph.schema.json",
+		"provider": {"command": "claude"},
+		"verify": {"default": ["go test ./..."]},
+		"services": [{"name": "dev", "start": "npm run dev", "ready": "http://localhost:3000"}]
+	}`
+	os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configJSON), 0644)
 
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	t.Cleanup(func() { os.Chdir(origDir) })
-
-	cfg := &RalphConfig{
-		Verify: VerifyConfig{
-			Default: []string{"go version"},
-		},
-		Browser: &BrowserConfig{
-			Enabled:        true,
-			ExecutablePath: "/nonexistent/path/to/chromium",
-		},
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("failed to load config with $schema: %v", err)
 	}
-
-	issues := CheckReadiness(cfg, nil)
-	found := false
-	for _, issue := range issues {
-		if strings.Contains(issue, "browser.executablePath not found") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected 'browser.executablePath not found' issue, got %v", issues)
-	}
-}
-
-func TestCheckReadiness_BrowserExecutablePathValid(t *testing.T) {
-	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, ".git"), 0755)
-	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
-
-	// Create a fake browser binary
-	fakeBin := filepath.Join(dir, "fake-chromium")
-	os.WriteFile(fakeBin, []byte("#!/bin/sh"), 0755)
-
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	t.Cleanup(func() { os.Chdir(origDir) })
-
-	cfg := &RalphConfig{
-		Verify: VerifyConfig{
-			Default: []string{"go version"},
-		},
-		Browser: &BrowserConfig{
-			Enabled:        true,
-			ExecutablePath: fakeBin,
-		},
-	}
-
-	issues := CheckReadiness(cfg, nil)
-	for _, issue := range issues {
-		if strings.Contains(issue, "browser.executablePath") {
-			t.Errorf("unexpected browser issue for valid path: %s", issue)
-		}
+	if cfg.Config.Schema != "https://raw.githubusercontent.com/scripness/ralph/main/ralph.schema.json" {
+		t.Errorf("expected $schema to be preserved, got %q", cfg.Config.Schema)
 	}
 }
 
@@ -1066,42 +1019,3 @@ func TestCheckReadiness_PlaceholderServiceCommand(t *testing.T) {
 	}
 }
 
-func TestCheckReadiness_BrowserStepsButBrowserDisabled(t *testing.T) {
-	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, ".git"), 0755)
-	os.Mkdir(filepath.Join(dir, ".ralph"), 0755)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	t.Cleanup(func() { os.Chdir(origDir) })
-
-	cfg := &RalphConfig{
-		Verify: VerifyConfig{
-			Default: []string{"go version"},
-			UI:      []string{"go version"},
-		},
-		Browser: &BrowserConfig{Enabled: false},
-	}
-	def := &PRDDefinition{
-		UserStories: []StoryDefinition{
-			{
-				ID:   "US-001",
-				Tags: []string{"ui"},
-				BrowserSteps: []BrowserStep{
-					{Action: "navigate", URL: "/"},
-				},
-			},
-		},
-	}
-
-	issues := CheckReadiness(cfg, def)
-	found := false
-	for _, issue := range issues {
-		if strings.Contains(issue, "browserSteps") && strings.Contains(issue, "browser is disabled") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected browserSteps+disabled browser issue, got %v", issues)
-	}
-}

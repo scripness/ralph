@@ -1,0 +1,180 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Ralph Configuration",
+  "description": "Configuration for Ralph CLI (ralph.config.json)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for editor autocompletion"
+    },
+    "maxRetries": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 3,
+      "description": "Maximum retry attempts per story before auto-skipping"
+    },
+    "provider": {
+      "type": "object",
+      "description": "AI provider CLI configuration",
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "AI CLI command (e.g., claude, amp, aider, codex, opencode)"
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional arguments passed to the provider. Auto-detected from command if not set. Set to [] to opt out of defaults."
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 60,
+          "default": 1800,
+          "description": "Timeout per provider iteration in seconds (default: 1800 = 30 minutes)"
+        },
+        "promptMode": {
+          "type": "string",
+          "enum": ["stdin", "arg", "file"],
+          "description": "How to deliver the prompt to the provider. Auto-detected from command if not set."
+        },
+        "promptFlag": {
+          "type": "string",
+          "description": "Flag before prompt in arg/file modes (e.g., --message). Auto-detected if not set."
+        },
+        "knowledgeFile": {
+          "type": "string",
+          "description": "Knowledge file the provider should update (e.g., CLAUDE.md, AGENTS.md). Auto-detected if not set."
+        }
+      }
+    },
+    "services": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Dev server configurations. At least one service is required.",
+      "items": {
+        "type": "object",
+        "required": ["name", "ready"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Service name (e.g., dev)"
+          },
+          "start": {
+            "type": "string",
+            "description": "Command to start the service (e.g., bun run dev)"
+          },
+          "ready": {
+            "type": "string",
+            "pattern": "^https?://",
+            "description": "URL to poll for readiness (must start with http:// or https://)"
+          },
+          "readyTimeout": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 30,
+            "description": "Seconds to wait for service to become ready"
+          },
+          "restartBeforeVerify": {
+            "type": "boolean",
+            "default": false,
+            "description": "Restart this service before running UI verification"
+          }
+        }
+      }
+    },
+    "verify": {
+      "type": "object",
+      "description": "Verification command configuration",
+      "required": ["default"],
+      "properties": {
+        "default": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Default verification commands (typecheck, lint, test)"
+        },
+        "ui": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "UI/e2e test commands (run for UI-tagged stories)"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 10,
+          "default": 300,
+          "description": "Timeout per verification command in seconds"
+        }
+      }
+    },
+    "commits": {
+      "type": "object",
+      "description": "Git commit behavior configuration",
+      "properties": {
+        "prdChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically commit PRD state changes during runs"
+        }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "description": "Observability and logging configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable JSONL event logging"
+        },
+        "maxRuns": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10,
+          "description": "Maximum number of run logs to keep (oldest are rotated)"
+        },
+        "consoleTimestamps": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prefix console output with [HH:MM:SS] timestamps"
+        },
+        "consoleDurations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show durations for verification commands"
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "Framework source code caching configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable automatic framework source code caching"
+        },
+        "cacheDir": {
+          "type": "string",
+          "default": "~/.ralph/resources",
+          "description": "Directory for cached framework source code"
+        },
+        "custom": {
+          "type": "array",
+          "description": "Custom resource definitions",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "Resource identifier" },
+              "url": { "type": "string", "description": "GitHub repo URL" },
+              "branch": { "type": "string", "description": "Branch to clone" },
+              "notes": { "type": "string", "description": "Guidance for AI agent" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": ["provider", "services", "verify"]
+}

@@ -49,7 +49,7 @@ func FindFeatureDir(projectRoot, feature string, create bool) (*FeatureDir, erro
 		name := entry.Name()
 		
 		// Skip special directories
-		if name == "screenshots" || strings.HasPrefix(name, ".") {
+		if strings.HasPrefix(name, ".") {
 			continue
 		}
 
@@ -99,7 +99,7 @@ func ListFeatures(projectRoot string) ([]FeatureDir, error) {
 			continue
 		}
 		name := entry.Name()
-		if name == "screenshots" || strings.HasPrefix(name, ".") {
+		if strings.HasPrefix(name, ".") {
 			continue
 		}
 		if fd := parseFeatureDir(ralphDir, name); fd != nil {
@@ -195,7 +195,3 @@ func (fd *FeatureDir) EnsureExists() error {
 	return os.MkdirAll(fd.Path, 0755)
 }
 
-// LogsDir returns the path to the logs directory
-func (fd *FeatureDir) LogsDir() string {
-	return filepath.Join(fd.Path, "logs")
-}

@@ -81,54 +81,6 @@ func buildStoryMap(def *PRDDefinition, state *RunState, current *StoryDefinition
 	return strings.Join(lines, "\n")
 }
 
-// buildBrowserSteps formats browser verification steps for the run prompt.
-// Returns an empty string if the story has no browser steps.
-func buildBrowserSteps(story *StoryDefinition) string {
-	if len(story.BrowserSteps) == 0 {
-		return ""
-	}
-
-	var lines []string
-	lines = append(lines, "## Browser Verification")
-	lines = append(lines, "")
-	lines = append(lines, "After you signal DONE, the CLI will run these browser steps to verify your UI:")
-	lines = append(lines, "")
-
-	for i, step := range story.BrowserSteps {
-		var desc string
-		switch step.Action {
-		case "navigate":
-			desc = fmt.Sprintf("navigate → %s", step.URL)
-		case "click":
-			desc = fmt.Sprintf("click → %s", step.Selector)
-		case "type":
-			desc = fmt.Sprintf("type → %s = %q", step.Selector, step.Value)
-		case "waitFor":
-			desc = fmt.Sprintf("waitFor → %s", step.Selector)
-		case "assertVisible":
-			desc = fmt.Sprintf("assertVisible → %s", step.Selector)
-		case "assertText":
-			desc = fmt.Sprintf("assertText → %s contains %q", step.Selector, step.Contains)
-		case "assertNotVisible":
-			desc = fmt.Sprintf("assertNotVisible → %s", step.Selector)
-		case "submit":
-			desc = fmt.Sprintf("submit → %s", step.Selector)
-		case "screenshot":
-			desc = "screenshot"
-		case "wait":
-			desc = fmt.Sprintf("wait %ds", step.Timeout)
-		default:
-			desc = step.Action
-		}
-		lines = append(lines, fmt.Sprintf("%d. %s", i+1, desc))
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, "Design your implementation so these steps will pass.")
-	lines = append(lines, "")
-	return strings.Join(lines, "\n")
-}
-
 // generateRunPrompt generates the prompt for story implementation
 func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, story *StoryDefinition) string {
 	// Build acceptance criteria list
@@ -197,7 +149,6 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 		"branchName":         def.BranchName,
 		"progress":           buildProgress(def, state),
 		"storyMap":           buildStoryMap(def, state, story),
-		"browserSteps":       buildBrowserSteps(story),
 		"serviceURLs":                      serviceURLsStr,
 		"timeout":                          fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
 		"resourceVerificationInstructions": resourceStr,
@@ -420,6 +371,50 @@ To verify your implementation:
 
 For frameworks not cached, use web search against official repos.
 `, resourceList, rm.GetCacheDir())
+}
+
+// generateVerifyAnalyzePrompt generates the prompt for AI deep verification.
+func generateVerifyAnalyzePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, report *VerifyReport) string {
+	// Build git diff summary
+	git := NewGitOps(cfg.ProjectRoot)
+	diffStat := git.GetDiffSummary()
+	diffStr := ""
+	if diffStat != "" {
+		diffStr = "```\n" + truncateOutput(diffStat, 60) + "\n```"
+	}
+
+	// Build resource verification instructions
+	resourceStr := buildResourceVerificationInstructions(cfg)
+
+	return getPrompt("verify-analyze", map[string]string{
+		"project":                          def.Project,
+		"description":                      def.Description,
+		"branchName":                       def.BranchName,
+		"criteriaChecklist":                buildCriteriaChecklist(def, state),
+		"verifyResults":                    report.FormatForPrompt(),
+		"diffSummary":                      diffStr,
+		"resourceVerificationInstructions": resourceStr,
+	})
+}
+
+// buildCriteriaChecklist builds a structured checklist of acceptance criteria per story.
+func buildCriteriaChecklist(def *PRDDefinition, state *RunState) string {
+	var lines []string
+	for _, s := range def.UserStories {
+		status := "PENDING"
+		if state.IsPassed(s.ID) {
+			status = "PASSED"
+		} else if state.IsSkipped(s.ID) {
+			status = "SKIPPED"
+		}
+
+		lines = append(lines, fmt.Sprintf("### %s: %s (%s)", s.ID, s.Title, status))
+		for _, c := range s.AcceptanceCriteria {
+			lines = append(lines, fmt.Sprintf("- [ ] %s", c))
+		}
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // buildFallbackVerificationInstructions returns web search instructions.

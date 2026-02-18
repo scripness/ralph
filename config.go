@@ -58,14 +58,6 @@ type VerifyConfig struct {
 	Timeout int      `json:"timeout,omitempty"` // seconds per command, default 300
 }
 
-// BrowserConfig configures built-in browser verification
-type BrowserConfig struct {
-	Enabled        bool   `json:"enabled,omitempty"`
-	ExecutablePath string `json:"executablePath,omitempty"`
-	Headless       bool   `json:"headless,omitempty"`
-	ScreenshotDir  string `json:"screenshotDir,omitempty"`
-}
-
 // CommitsConfig configures git commit behavior
 type CommitsConfig struct {
 	PrdChanges bool `json:"prdChanges,omitempty"`
@@ -73,11 +65,11 @@ type CommitsConfig struct {
 
 // RalphConfig is the main configuration loaded from ralph.config.json
 type RalphConfig struct {
+	Schema     string           `json:"$schema,omitempty"`
 	MaxRetries int              `json:"maxRetries,omitempty"`
 	Provider   ProviderConfig   `json:"provider"`
 	Services   []ServiceConfig  `json:"services"`
 	Verify     VerifyConfig     `json:"verify"`
-	Browser    *BrowserConfig   `json:"browser,omitempty"`
 	Commits    *CommitsConfig   `json:"commits,omitempty"`
 	Logging    *LoggingConfig   `json:"logging,omitempty"`
 	Resources  *ResourcesConfig `json:"resources,omitempty"`
@@ -121,13 +113,6 @@ func LoadConfig(projectRoot string) (*ResolvedConfig, error) {
 
 	// Auto-detect provider defaults based on command
 	applyProviderDefaults(&cfg.Provider)
-	if cfg.Browser == nil {
-		cfg.Browser = &BrowserConfig{
-			Enabled:       true,
-			Headless:      true,
-			ScreenshotDir: ".ralph/screenshots",
-		}
-	}
 	if cfg.Commits == nil {
 		cfg.Commits = &CommitsConfig{
 			PrdChanges: true,
@@ -267,6 +252,7 @@ func WriteDefaultConfig(projectRoot, providerCommand string, verifyCommands []st
 	}
 
 	cfg := RalphConfig{
+		Schema:     "https://raw.githubusercontent.com/scripness/ralph/main/ralph.schema.json",
 		MaxRetries: 3,
 		Provider: ProviderConfig{
 			Command: providerCommand,
@@ -276,11 +262,6 @@ func WriteDefaultConfig(projectRoot, providerCommand string, verifyCommands []st
 			Default: defaultVerify,
 		},
 		Services: services,
-		Browser: &BrowserConfig{
-			Enabled:       true,
-			Headless:      true,
-			ScreenshotDir: ".ralph/screenshots",
-		},
 		Commits: &CommitsConfig{
 			PrdChanges: true,
 		},
@@ -399,30 +380,17 @@ func CheckReadiness(cfg *RalphConfig, def *PRDDefinition) []string {
 		}
 	}
 
-	// Validate browser.executablePath if explicitly set
-	if cfg.Browser != nil && cfg.Browser.Enabled && cfg.Browser.ExecutablePath != "" {
-		if _, err := os.Stat(cfg.Browser.ExecutablePath); err != nil {
-			issues = append(issues, fmt.Sprintf("browser.executablePath not found: %s", cfg.Browser.ExecutablePath))
-		}
-	}
-
-	// UI stories require verify.ui commands; browserSteps require browser enabled
+	// UI stories require verify.ui commands
 	if def != nil {
 		hasUIStories := false
-		hasBrowserSteps := false
 		for _, s := range def.UserStories {
 			if IsUIStory(&s) {
 				hasUIStories = true
-			}
-			if len(s.BrowserSteps) > 0 {
-				hasBrowserSteps = true
+				break
 			}
 		}
 		if hasUIStories && len(cfg.Verify.UI) == 0 {
 			issues = append(issues, "PRD has UI stories but verify.ui has no commands. Add e2e test commands (e.g., 'bun run test:e2e').")
-		}
-		if hasBrowserSteps && (cfg.Browser == nil || !cfg.Browser.Enabled) {
-			issues = append(issues, "PRD has stories with browserSteps but browser is disabled. Set browser.enabled=true in config.")
 		}
 	}
 

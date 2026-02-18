@@ -143,20 +143,7 @@ func TestGitOps_GetLastCommit(t *testing.T) {
 	}
 }
 
-func TestGitOps_GetLastCommitShort(t *testing.T) {
-	_, git := initTestRepo(t)
 
-	hash := git.GetLastCommitShort()
-	if hash == "" {
-		t.Error("expected non-empty short commit hash")
-	}
-	if len(hash) < 7 {
-		t.Errorf("expected short hash >= 7 chars, got '%s'", hash)
-	}
-	if len(hash) > 12 {
-		t.Errorf("expected short hash <= 12 chars, got '%s' (len %d)", hash, len(hash))
-	}
-}
 
 func TestGitOps_DefaultBranch(t *testing.T) {
 	_, git := initTestRepo(t)
@@ -792,6 +779,114 @@ func TestGitOps_EnsureBranch_AllowsSwitchWithCleanTree(t *testing.T) {
 	err := git.EnsureBranch("ralph/feature")
 	if err != nil {
 		t.Fatalf("expected no error when switching with clean tree, got: %v", err)
+	}
+	current, _ := git.CurrentBranch()
+	if current != "ralph/feature" {
+		t.Errorf("expected branch 'ralph/feature', got '%s'", current)
+	}
+}
+
+func TestGitOps_CreateBranchFrom(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	// Add a commit on main so we have a known point
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	mainHash := git.GetLastCommit()
+
+	// Make a commit on a different branch
+	git.CreateBranch("other")
+	os.WriteFile(filepath.Join(dir, "other.txt"), []byte("other"), 0644)
+	run("add", "other.txt")
+	run("commit", "-m", "other branch commit")
+
+	// CreateBranchFrom should create from main, not from current HEAD
+	err := git.CreateBranchFrom("ralph/feature", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	current, _ := git.CurrentBranch()
+	if current != "ralph/feature" {
+		t.Errorf("expected branch 'ralph/feature', got '%s'", current)
+	}
+
+	// The new branch should be at main's commit, not other's
+	newHash := git.GetLastCommit()
+	if newHash != mainHash {
+		t.Errorf("expected branch to start from main (%s), got %s", mainHash, newHash)
+	}
+}
+
+func TestGitOps_EnsureBranch_CreatesFromStartPoint(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	mainHash := git.GetLastCommit()
+
+	// Create a branch and add a commit
+	git.CreateBranch("other")
+	os.WriteFile(filepath.Join(dir, "other.txt"), []byte("other"), 0644)
+	run("add", "other.txt")
+	run("commit", "-m", "other branch commit")
+
+	// EnsureBranch with startPoint should create from main
+	err := git.EnsureBranch("ralph/feature", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	current, _ := git.CurrentBranch()
+	if current != "ralph/feature" {
+		t.Errorf("expected branch 'ralph/feature', got '%s'", current)
+	}
+
+	newHash := git.GetLastCommit()
+	if newHash != mainHash {
+		t.Errorf("expected branch to start from main (%s), got %s", mainHash, newHash)
+	}
+}
+
+func TestGitOps_EnsureBranch_ExistingBranchIgnoresStartPoint(t *testing.T) {
+	_, git := initTestRepo(t)
+
+	// Create the branch first
+	git.CreateBranch("ralph/feature")
+	git.Checkout("main")
+
+	// EnsureBranch with startPoint on existing branch should just checkout
+	err := git.EnsureBranch("ralph/feature", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	current, _ := git.CurrentBranch()
 	if current != "ralph/feature" {

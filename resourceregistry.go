@@ -82,17 +82,6 @@ func (r *ResourceRegistry) UpdateRepo(name string, repo *CachedRepo) {
 	r.Repos[name] = repo
 }
 
-// RemoveRepo removes a repo from the registry.
-func (r *ResourceRegistry) RemoveRepo(name string) {
-	if r.Repos == nil {
-		return
-	}
-	if existing, ok := r.Repos[name]; ok {
-		r.TotalSize -= existing.Size
-		delete(r.Repos, name)
-	}
-}
-
 // GetRepo returns metadata for a cached repo.
 func (r *ResourceRegistry) GetRepo(name string) *CachedRepo {
 	if r.Repos == nil {
@@ -110,10 +99,3 @@ func (r *ResourceRegistry) ListCached() []string {
 	return names
 }
 
-// RecalculateTotalSize recalculates total size from all repos.
-func (r *ResourceRegistry) RecalculateTotalSize() {
-	r.TotalSize = 0
-	for _, repo := range r.Repos {
-		r.TotalSize += repo.Size
-	}
-}

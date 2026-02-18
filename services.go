@@ -42,12 +42,6 @@ func (co *capturedOutput) String() string {
 	return co.buf.String()
 }
 
-func (co *capturedOutput) Reset() {
-	co.mu.Lock()
-	defer co.mu.Unlock()
-	co.buf.Reset()
-}
-
 // ServiceManager manages services (dev server, etc.)
 type ServiceManager struct {
 	projectRoot string

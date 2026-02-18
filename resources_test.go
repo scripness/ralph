@@ -127,28 +127,6 @@ func TestResourceManager_GetResourcePath(t *testing.T) {
 	}
 }
 
-func TestFormatSize(t *testing.T) {
-	tests := []struct {
-		bytes    int64
-		expected string
-	}{
-		{0, "0B"},
-		{500, "500B"},
-		{1024, "1.0KB"},
-		{1024 * 1024, "1.0MB"},
-		{1024 * 1024 * 1024, "1.0GB"},
-		{2 * 1024 * 1024 * 1024, "2.0GB"},
-		{450 * 1024 * 1024, "450.0MB"},
-	}
-
-	for _, tt := range tests {
-		result := FormatSize(tt.bytes)
-		if result != tt.expected {
-			t.Errorf("FormatSize(%d) = '%s', expected '%s'", tt.bytes, result, tt.expected)
-		}
-	}
-}
-
 func TestResourceRegistry_UpdateAndGet(t *testing.T) {
 	dir := t.TempDir()
 
@@ -175,26 +153,6 @@ func TestResourceRegistry_UpdateAndGet(t *testing.T) {
 	}
 	if reg.TotalSize != 1024 {
 		t.Errorf("expected TotalSize=1024, got %d", reg.TotalSize)
-	}
-}
-
-func TestResourceRegistry_RemoveRepo(t *testing.T) {
-	dir := t.TempDir()
-
-	reg, err := LoadResourceRegistry(dir)
-	if err != nil {
-		t.Fatalf("failed to load registry: %v", err)
-	}
-
-	reg.UpdateRepo("test", &CachedRepo{Size: 1024})
-	reg.RemoveRepo("test")
-
-	repo := reg.GetRepo("test")
-	if repo != nil {
-		t.Error("expected repo to be removed")
-	}
-	if reg.TotalSize != 0 {
-		t.Errorf("expected TotalSize=0, got %d", reg.TotalSize)
 	}
 }
 

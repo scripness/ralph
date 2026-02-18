@@ -226,7 +226,7 @@ func TestCmdInit_CreatesGitignore(t *testing.T) {
 
 	// Replicate the gitignore creation logic from cmdInit
 	gitignorePath := filepath.Join(ralphDir, ".gitignore")
-	gitignoreContent := "# Ralph temporary files\nralph.lock\n*.tmp\nscreenshots/\n*/logs/\n"
+	gitignoreContent := "# Ralph temporary files\nralph.lock\n*.tmp\n*/logs/\n"
 	if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
 		t.Fatalf("failed to write .gitignore: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestCmdInit_CreatesGitignore(t *testing.T) {
 	}
 	content := string(data)
 
-	expectedPatterns := []string{"ralph.lock", "*.tmp", "screenshots/", "*/logs/"}
+	expectedPatterns := []string{"ralph.lock", "*.tmp", "*/logs/"}
 	for _, pattern := range expectedPatterns {
 		if !strings.Contains(content, pattern) {
 			t.Errorf(".gitignore should contain %q, got:\n%s", pattern, content)
