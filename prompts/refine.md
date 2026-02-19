@@ -33,6 +33,8 @@ You are resuming work on the **{{feature}}** feature. This is an interactive ses
 
 {{serviceURLs}}
 
+{{resourceGuidance}}
+
 ## What You Can Do
 
 The user may ask you to:

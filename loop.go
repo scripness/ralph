@@ -135,17 +135,7 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	codebaseStr := FormatCodebaseContext(codebaseCtx)
 
 	// Sync source code resources for detected frameworks
-	if cfg.Config.Resources == nil || cfg.Config.Resources.IsEnabled() {
-		depNames := GetDependencyNames(codebaseCtx.Dependencies)
-		rm := NewResourceManager(cfg.Config.Resources, depNames)
-		if rm.HasDetectedResources() {
-			detected := rm.ListDetected()
-			logger.LogPrint("\nSyncing %d framework resources (%s)...\n", len(detected), strings.Join(detected, ", "))
-			if err := rm.EnsureResources(); err != nil {
-				logger.Warning("resource sync failed: " + err.Error())
-			}
-		}
-	}
+	rm := ensureResourceSync(cfg, codebaseCtx)
 
 	iteration := 0
 	for {
@@ -256,8 +246,20 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			diffSummary = "## Changes on Branch\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n"
 		}
 
+		// Resource consultation (before spawning main agent)
+		var resourceGuidance string
+		if rm != nil && rm.HasDetectedResources() {
+			consultResult := ConsultResources(context.Background(), cfg, story, rm, codebaseCtx, featureDir.Path)
+			resourceGuidance = FormatGuidance(consultResult)
+			if len(consultResult.Consultations) > 0 {
+				logger.LogPrint("  Consulted %d framework(s) for %s\n", len(consultResult.Consultations), story.ID)
+			}
+		} else {
+			resourceGuidance = buildResourceFallbackInstructions()
+		}
+
 		// Generate and send prompt
-		prompt := generateRunPrompt(cfg, featureDir, def, state, story, codebaseStr, diffSummary)
+		prompt := generateRunPrompt(cfg, featureDir, def, state, story, codebaseStr, diffSummary, resourceGuidance)
 		logger.LogPrintln("Provider running...")
 		logger.ProviderStart()
 		providerStartTime := time.Now()
@@ -843,7 +845,7 @@ func (r *VerifyReport) FormatForPrompt() string {
 }
 
 // runVerifyChecks runs all verification gates and returns structured results.
-func runVerifyChecks(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, svcMgr *ServiceManager, logger *RunLogger) (*VerifyReport, error) {
+func runVerifyChecks(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, svcMgr *ServiceManager, logger *RunLogger, resourceGuidance string) (*VerifyReport, error) {
 	report := &VerifyReport{}
 
 	// 1. Run verify.default commands
@@ -913,7 +915,7 @@ func runVerifyChecks(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefini
 
 	// 6. AI deep verification (always runs during ralph verify)
 	logger.LogPrintln("  → AI verification analysis...")
-	analyzePrompt := generateVerifyAnalyzePrompt(cfg, featureDir, def, state, report)
+	analyzePrompt := generateVerifyAnalyzePrompt(cfg, featureDir, def, state, report, resourceGuidance)
 	aiResult, aiErr := runVerifySubagent(cfg, analyzePrompt)
 	if aiErr != nil {
 		report.AddFail("AI analysis", aiErr.Error())
@@ -930,7 +932,8 @@ func runVerifyChecks(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefini
 }
 
 // runVerify runs verification checks and opens an interactive session on failure.
-func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
+// resourceGuidance is pre-computed consultation guidance passed from cmdVerify.
+func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance string) error {
 	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
 	if err != nil {
 		return err
@@ -983,7 +986,7 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println()
 
-	report, err := runVerifyChecks(cfg, featureDir, def, state, svcMgr, logger)
+	report, err := runVerifyChecks(cfg, featureDir, def, state, svcMgr, logger, resourceGuidance)
 	if err != nil {
 		logger.RunEnd(false, "verification error")
 		return err
@@ -1015,7 +1018,7 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 	svcMgr.StopAll()
 
 	if promptYesNo("Open interactive AI session to investigate and fix?") {
-		prompt := generateVerifyFixPrompt(cfg, featureDir, def, state, report)
+		prompt := generateVerifyFixPrompt(cfg, featureDir, def, state, report, resourceGuidance)
 		if err := runProviderInteractive(cfg, prompt); err != nil {
 			logger.RunEnd(false, "interactive session error")
 			return err

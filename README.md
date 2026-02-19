@@ -98,15 +98,16 @@ stateDiagram-v2
 3. Creates/switches to `ralph/{feature}` branch
 4. Picks next story (highest priority, not passed, not skipped)
 5. **Verify-at-top**: runs verification first — if story already passes, marks passed and skips implementation
-6. Sends prompt to provider subprocess (includes deduplicated learnings + cross-feature learnings from other completed features)
-7. Provider implements code, writes tests, commits
-8. Provider outputs `<ralph>DONE</ralph>` when finished
-9. Ralph runs `verify.default` commands
-10. If UI story: restarts services, runs `verify.ui` commands (e2e tests)
-11. Service health check: verifies services still respond
-12. Pass → mark story complete, next story
-13. Fail → increment retries, retry or auto-skip at maxRetries
-14. All stories passed or skipped → print summary, exit
+6. **Resource consultation**: spawns lightweight subagents to search cached framework source, producing focused guidance (200-800 tokens per framework)
+7. Sends prompt to provider subprocess (includes consultation guidance, deduplicated learnings + cross-feature learnings from other completed features)
+8. Provider implements code, writes tests, commits
+9. Provider outputs `<ralph>DONE</ralph>` when finished
+10. Ralph runs `verify.default` commands
+11. If UI story: restarts services, runs `verify.ui` commands (e2e tests)
+12. Service health check: verifies services still respond
+13. Pass → mark story complete, next story
+14. Fail → increment retries, retry or auto-skip at maxRetries
+15. All stories passed or skipped → print summary, exit
 
 ## Commands
 
@@ -360,15 +361,16 @@ Frameworks detected: React, Next.js, Vue, Svelte, Express, FastAPI, Gin, Phoenix
 
 ## Framework Source Caching
 
-Ralph automatically detects project dependencies and caches their source code repositories locally in `~/.ralph/resources/`. This enables AI agents to verify implementations against actual framework source code, tests, and examples.
+Ralph automatically detects project dependencies and caches their source code repositories locally in `~/.ralph/resources/`. Before each story, Ralph spawns lightweight consultation subagents that search cached framework source and produce focused, pre-digested guidance (200-800 tokens per framework). The main implementation agent receives curated framework knowledge, never raw source paths.
 
 ### How It Works
 
-1. **Detection**: When you run `ralph run`, Ralph extracts dependencies from package.json, go.mod, pyproject.toml, Cargo.toml, or mix.exs
+1. **Detection**: When you run `ralph run`, `ralph prd`, or `ralph verify`, Ralph extracts dependencies from package.json, go.mod, pyproject.toml, Cargo.toml, or mix.exs
 2. **Mapping**: Dependencies are mapped to their source repositories (e.g., "next" → github.com/vercel/next.js)
 3. **Caching**: Repos are cloned as shallow clones (`--depth 1`) to minimize disk usage
 4. **Sync**: Before each run, repos are synced to latest if out of date
-5. **Verification**: AI agents receive paths to cached source code for implementation verification
+5. **Consultation**: Ralph spawns subagents (using the same provider) that search cached source for APIs, patterns, and pitfalls relevant to the current story or feature. Subagents run in parallel (up to 3 frameworks). Results are cached per story to avoid redundant LLM calls on retries
+6. **Injection**: Consultation guidance is injected into the main agent's prompt via `{{resourceGuidance}}`. Falls back to web search instructions when no resources are cached or consultation fails
 
 ### Built-in Resources
 

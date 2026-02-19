@@ -28,7 +28,7 @@ The following checks were run by the CLI. Fix the failures listed below.
 
 {{verifyCommands}}
 
-{{resourceVerificationInstructions}}
+{{resourceGuidance}}
 
 ## Instructions
 

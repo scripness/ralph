@@ -15,7 +15,7 @@ You are a verification agent for **{{project}}**. Your job is to thoroughly veri
 ## Code Changes on This Branch
 {{diffSummary}}
 
-{{resourceVerificationInstructions}}
+{{resourceGuidance}}
 
 ## Your Verification Process
 

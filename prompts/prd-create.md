@@ -4,6 +4,8 @@ Help create a Product Requirements Document for this feature. Your job is to gat
 
 {{codebaseContext}}
 
+{{resourceGuidance}}
+
 ## Step 1: Clarifying Questions
 
 First, ask 3-5 critical questions to understand the requirements:

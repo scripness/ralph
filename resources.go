@@ -209,3 +209,68 @@ func (rm *ResourceManager) HasDetectedResources() bool {
 	return len(rm.detected) > 0
 }
 
+// CachedResource represents a framework resource that is cached locally.
+type CachedResource struct {
+	Name     string // e.g., "next", "react"
+	Path     string // local filesystem path to cached source
+	URL      string // source repo URL
+	Branch   string // branch name
+	Commit   string // current commit hash (short)
+}
+
+// GetCachedResources returns all detected resources that are actually cached on disk.
+func (rm *ResourceManager) GetCachedResources() []CachedResource {
+	if err := rm.loadRegistry(); err != nil {
+		return nil
+	}
+
+	var cached []CachedResource
+	for name, r := range rm.detected {
+		repoPath := filepath.Join(rm.cacheDir, name)
+		if _, err := os.Stat(repoPath); err != nil {
+			continue // not cached
+		}
+		commit := ""
+		if repo := rm.registry.GetRepo(name); repo != nil {
+			commit = repo.Commit
+		}
+		cached = append(cached, CachedResource{
+			Name:   name,
+			Path:   repoPath,
+			URL:    r.URL,
+			Branch: r.Branch,
+			Commit: commit,
+		})
+	}
+
+	// Sort for deterministic output
+	sort.Slice(cached, func(i, j int) bool {
+		return cached[i].Name < cached[j].Name
+	})
+
+	return cached
+}
+
+// ensureResourceSync syncs framework source code resources.
+// Returns nil ResourceManager if resources are disabled or no deps detected.
+// Non-fatal: prints warnings on errors but does not fail.
+func ensureResourceSync(cfg *ResolvedConfig, codebaseCtx *CodebaseContext) *ResourceManager {
+	if cfg.Config.Resources != nil && !cfg.Config.Resources.IsEnabled() {
+		return nil
+	}
+
+	depNames := GetDependencyNames(codebaseCtx.Dependencies)
+	rm := NewResourceManager(cfg.Config.Resources, depNames)
+	if !rm.HasDetectedResources() {
+		return rm
+	}
+
+	detected := rm.ListDetected()
+	fmt.Printf("  Syncing %d framework resources (%s)...\n", len(detected), strings.Join(detected, ", "))
+	if err := rm.EnsureResources(); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: resource sync failed: %s\n", err.Error())
+	}
+
+	return rm
+}
+

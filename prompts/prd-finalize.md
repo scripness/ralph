@@ -2,6 +2,8 @@
 
 Convert this PRD to prd.json format for execution.
 
+{{resourceGuidance}}
+
 ## PRD Content
 
 {{prdContent}}

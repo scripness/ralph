@@ -27,7 +27,7 @@ func TestGetPrompt_Run(t *testing.T) {
 		"storyMap":           "✓ US-000: Setup\n→ US-001: Test Story [CURRENT]",
 		"codebaseContext":    "",
 		"diffSummary":        "",
-		"resourceVerificationInstructions": "",
+		"resourceGuidance": "",
 	})
 
 	if !strings.Contains(prompt, "US-001") {
@@ -160,7 +160,7 @@ func TestGetPrompt_VerifyFix(t *testing.T) {
 		"serviceURLs":                      "",
 		"knowledgeFile":                    "CLAUDE.md",
 		"featureDir":                       "/project/.ralph/2024-01-15-auth",
-		"resourceVerificationInstructions": "",
+		"resourceGuidance": "",
 	})
 
 	if !strings.Contains(prompt, "TestProject") {
@@ -209,7 +209,7 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"prdPath":            "/test/prd.json",
 			"storyDetails":       "",
 			"serviceURLs":        "",
-			"resourceVerificationInstructions": "",
+			"resourceGuidance": "",
 			"diffSummary":        "",
 			"verifySummary":      "",
 			"verifyResults":      "",
@@ -275,7 +275,7 @@ func TestGenerateRunPrompt(t *testing.T) {
 
 	story := &def.UserStories[0]
 
-	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "")
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "", "")
 
 	if !strings.Contains(prompt, "US-001") {
 		t.Error("prompt should contain story ID")
@@ -334,7 +334,7 @@ func TestGenerateRunPrompt_StoryMap(t *testing.T) {
 
 	story := &def.UserStories[1] // US-002 is current
 
-	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "")
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "", "")
 
 	// Completed story
 	if !strings.Contains(prompt, "✓ US-001: Database setup") {
@@ -504,7 +504,7 @@ func TestGetPrompt_RunWithResourcesCache(t *testing.T) {
 		"storyMap":                          "→ US-001: Test [CURRENT]",
 		"codebaseContext":                   "",
 		"diffSummary":                       "",
-		"resourceVerificationInstructions":resourceInstr,
+		"resourceGuidance":resourceInstr,
 	})
 
 	if !strings.Contains(prompt, "Documentation Verification") {
@@ -535,7 +535,7 @@ func TestGetPrompt_RunWithoutResourcesCache(t *testing.T) {
 		"storyMap":                          "→ US-001: Test [CURRENT]",
 		"codebaseContext":                   "",
 		"diffSummary":                       "",
-		"resourceVerificationInstructions":webSearchInstr,
+		"resourceGuidance":webSearchInstr,
 	})
 
 	if !strings.Contains(prompt, "Documentation Verification") {
@@ -600,7 +600,7 @@ func TestGenerateRefinePrompt(t *testing.T) {
 		},
 	}
 
-	prompt := generateRefinePrompt(cfg, featureDir, def, state)
+	prompt := generateRefinePrompt(cfg, featureDir, def, state, "")
 
 	// Check prd.md content is included
 	if !strings.Contains(prompt, "Auth Feature") {
@@ -791,7 +791,7 @@ func TestGenerateRunPrompt_CrossFeatureLearnings(t *testing.T) {
 	state := NewRunState()
 	story := &def.UserStories[0]
 
-	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "")
+	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "", "")
 
 	if !strings.Contains(prompt, "Learnings from Previous Features") {
 		t.Error("prompt should contain cross-feature learnings heading")
@@ -837,7 +837,7 @@ func TestGenerateVerifyAnalyzePrompt(t *testing.T) {
 	report.AddPass("go vet ./...")
 	report.AddFail("go test ./...", "exit code 1")
 
-	prompt := generateVerifyAnalyzePrompt(cfg, featureDir, def, state, report)
+	prompt := generateVerifyAnalyzePrompt(cfg, featureDir, def, state, report, "")
 
 	if !strings.Contains(prompt, "MyApp") {
 		t.Error("prompt should contain project name")

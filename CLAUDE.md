@@ -26,7 +26,8 @@ atomic.go         Atomic file writes (temp + rename)
 upgrade.go        Self-update via go-selfupdate (scripness/ralph)
 update_check.go   Background update check with 24h cache
 discovery.go      Codebase context discovery (tech stack, frameworks, package manager, dependencies)
-resources.go      Framework source code caching and management (ResourceManager)
+resources.go      Framework source code caching, management (ResourceManager), ensureResourceSync helper
+consultation.go   Resource consultation system (subagent spawning, framework matching, caching, guidance formatting)
 resourcereg.go    Default resource registry mapping dependencies to source repos
 resourceregistry.go  Cache metadata (registry.json) management
 external_git.go   Git operations for external repos (clone, fetch, pull)
@@ -40,6 +41,8 @@ Prompt templates live in `prompts/` and are embedded at compile time:
 - `prd-finalize.md` - PRD to JSON conversion prompt
 - `refine.md` - interactive refine session context prompt (used by `ralph prd` refine options)
 - `verify-analyze.md` - AI deep verification analysis prompt (used by `ralph verify`)
+- `consult.md` - story-level resource consultation prompt (subagent searches cached framework source)
+- `consult-feature.md` - feature-level resource consultation prompt (subagent searches cached framework source)
 
 ## Build and Test
 
@@ -54,14 +57,15 @@ Go version: 1.25.6. Key dependency: `github.com/creativeprojects/go-selfupdate` 
 ## How the CLI Works (End-to-End)
 
 1. `ralph init` detects the project's tech stack, prompts for provider selection, verify commands (with auto-detected defaults from package.json/go.mod/Cargo.toml/pyproject.toml/mix.exs/requirements.txt), and dev server config (services are required), then creates `ralph.config.json` and `.ralph/` directory (with `.ralph/.gitignore`). Use `--force` to overwrite existing config.
-2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> finalize to prd.json. When prd.md exists but no prd.json, offers Finalize/Refine with AI/Edit/Quit. When both exist, offers Refine with AI/Regenerate prd.json/Edit prd.md/Edit prd.json/Quit. Refine opens an interactive AI session pre-loaded with comprehensive feature context (prd.md, prd.json, progress, story status, learnings, git diff, codebase context, verify commands, service URLs). Regenerate safely re-runs finalization because run-state.json is separate from prd.json. When creating a new PRD, discovery runs first to detect the codebase context (tech stack, frameworks, verify commands) and includes it in the prompt.
+2. `ralph prd <feature>` runs an interactive state machine with a menu-driven flow: create prd.md -> finalize to prd.json. When prd.md exists but no prd.json, offers Finalize/Refine with AI/Edit/Quit. When both exist, offers Refine with AI/Regenerate prd.json/Edit prd.md/Edit prd.json/Quit. Refine opens an interactive AI session pre-loaded with comprehensive feature context (prd.md, prd.json, progress, story status, learnings, git diff, codebase context, verify commands, service URLs, resource consultation guidance). Regenerate safely re-runs finalization because run-state.json is separate from prd.json. When creating a new PRD, discovery runs first to detect the codebase context (tech stack, frameworks, verify commands), resource consultation produces framework briefs, and both are included in the prompt.
 3. `ralph run <feature>` enters the main loop:
    - Readiness gate: refuses to run if not inside a git repo, `sh` is missing, `.ralph/` is not writable, QA commands are missing/placeholder, or command binaries aren't in PATH
    - Signal handling: SIGINT/SIGTERM releases the lock and exits with code 130
    - Loads PRDDefinition + RunState, acquires lock, ensures git branch, starts services
    - Each iteration: picks next story (highest priority, not passed/skipped)
    - **Verify-at-top**: runs verification first — if story already passes, mark passed and skip to next
-   - Generates prompt, spawns provider subprocess, captures output with marker detection
+   - **Resource consultation**: spawns lightweight subagent(s) to search cached framework source and produce focused guidance (200-800 tokens per framework)
+   - Generates prompt (with consultation guidance injected), spawns provider subprocess, captures output with marker detection
    - After provider signals `<ralph>DONE</ralph>`, CLI runs verification commands + service health checks
    - Pass -> mark story complete; Fail -> retry (up to maxRetries, then auto-skip)
    - When all stories are passed or skipped -> print summary, exit
@@ -89,6 +93,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Service management**: CLI starts/stops/restarts dev servers; captures output; checks health during verification
 - **Learning management**: CLI deduplicates learnings and saves them on every code path (including timeout/error)
 - **Concurrency control**: CLI uses lock file to prevent parallel runs
+- **Resource consultation**: CLI spawns lightweight subagents to search cached framework source and inject pre-digested guidance into prompts. The main agent never reads raw framework repos directly.
 - **PRD persistence**: CLI commits prd.md, prd.json, and run-state.json. `ralph prd` commits prd.md after creation and both prd files after finalization. `ralph run` commits run-state.json state changes atomically (including STUCK/timeout/no-DONE paths)
 
 ### Provider handles (told via prompts in prompts/run.md):
@@ -99,7 +104,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Signal markers**: Output `<ralph>DONE</ralph>`, `<ralph>STUCK</ralph>`, etc.
 - **Knowledge updates**: Update AGENTS.md/CLAUDE.md with discovered patterns
 - **Learnings**: Output `<ralph>LEARNING:...</ralph>` for cross-iteration memory
-- **Documentation verification**: Check implementations against cached framework source code or web search
+- **Documentation verification**: Verify implementations using pre-digested framework guidance (provided by CLI consultation) or web search
 
 ### User Contract
 
@@ -285,8 +290,9 @@ Story lifecycle: `pending` -> provider implements -> CLI verifies -> `passed` or
 - **Cross-feature learnings**: `CollectCrossFeatureLearnings(projectRoot, excludeFeature)` in feature.go aggregates learnings from other features' run-state.json files at prompt time. Skips the current feature (case-insensitive), features with zero passed stories, and deduplicates using `normalizeLearning()`. Returns most-recent-feature first. Injected into `generateRunPrompt()` only (not verify-fix or refine). Read-only — does not modify any feature's run-state.json.
 - **Prompt templates**: Embedded via `//go:embed prompts/*`. Simple `{{var}}` string replacement (not Go templates).
 - **Update check**: Background goroutine with 5s timeout, cached to `~/.config/ralph/update-check.json` for 24h (falls back to `/tmp/ralph-update-check.json` if home directory is unavailable). Non-blocking: skipped silently if check hasn't finished by CLI exit. Disabled for `dev` builds and `ralph upgrade`. Cache uses `isNewerVersion()` for proper semver comparison (not just string inequality) to avoid suggesting downgrades after upgrades.
-- **Resources module**: `ResourceManager` auto-detects project dependencies via `ExtractDependencies()`, maps them to source repos via `MapDependencyToResource()`, and caches full repos in `~/.ralph/resources/`. Shallow clones (`--depth 1 --single-branch`) minimize disk usage. `EnsureResources()` is called before the story loop to sync detected frameworks. Cache metadata is stored in `registry.json`. `ralph doctor` shows cache status.
-- **Resource verification instructions**: Prompts include `{{resourceVerificationInstructions}}` which tells the agent about cached framework source code. When resources are cached, agents can read actual source to verify implementations. Falls back to web search instructions when no resources are cached.
+- **Resources module**: `ResourceManager` auto-detects project dependencies via `ExtractDependencies()`, maps them to source repos via `MapDependencyToResource()`, and caches full repos in `~/.ralph/resources/`. Shallow clones (`--depth 1 --single-branch`) minimize disk usage. `EnsureResources()` is called before the story loop to sync detected frameworks. Cache metadata is stored in `registry.json`. `ralph doctor` shows cache status. `ensureResourceSync()` in resources.go is a reusable helper that creates a ResourceManager, syncs if dependencies are detected, and returns the manager (or nil if resources disabled). Used by `cmdRun`, `cmdPrd`, and `cmdVerify`.
+- **Resource consultation**: Instead of pointing agents at raw framework source paths, Ralph spawns lightweight consultation subagents that search cached repos and return focused guidance (200-800 tokens). `ConsultResources()` handles story-level consultation (filters by tags + keywords), `ConsultResourcesForFeature()` handles feature-level consultation (all cached frameworks, capped at 3). Consultation results are injected into prompts via `{{resourceGuidance}}`. Consultants run in parallel (goroutines + WaitGroup). Results are cached to `.ralph/<feature>/consultations/` by SHA256 hash of story/framework/commit. `GUIDANCE_START`/`GUIDANCE_END` markers delimit consultant output. Falls back gracefully: failed consultation → file paths with search instructions; no cached resources → web search fallback via `buildResourceFallbackInstructions()`.
+- **Framework matching**: `relevantFrameworks()` in consultation.go deterministically filters cached resources for a story using tag matching (`frameworkTagMap`: `ui` → React/Vue/Svelte, `db` → Prisma/Drizzle, `api` → Express/Fastify, etc.) and keyword matching (`frameworkKeywords`: 2+ keyword hits required). Caps at 3 frameworks per consultation. Feature-level consultation uses `allCachedFrameworks()` which returns all cached resources (capped at 3) without filtering.
 - **VerifyReport**: `runVerifyChecks()` runs all verification gates (verify commands, service health, AI deep analysis) and returns a structured `*VerifyReport` with PASS/FAIL/WARN items. `FormatForConsole()` renders a colored summary table; `FormatForPrompt()` renders detailed output for the AI verify-fix session.
 - **AI deep verification**: `ralph verify` always runs an AI subagent after mechanical checks. The subagent reads changed files, checks acceptance criteria, verifies best practices, and outputs `VERIFY_PASS` or `VERIFY_FAIL:reason` markers. `runVerifySubagent()` spawns the provider non-interactively and scans for these markers. Multiple `VERIFY_FAIL` markers are collected. NOT run during `ralph run` (per-story verification stays fast).
 - **Branch from default branch**: `cmdPrd` passes `git.DefaultBranch()` as startPoint to `EnsureBranch`, so new feature branches always start from main/master instead of the current HEAD. `EnsureBranch(branchName, startPoint ...string)` uses `CreateBranchFrom` when creating a new branch with a startPoint.
@@ -317,7 +323,7 @@ Story lifecycle: `pending` -> provider implements -> CLI verifies -> `passed` or
 - **EnsureBranch dirty-tree guard**: `EnsureBranch` refuses to switch to an existing branch with uncommitted changes (returns error). Creating a new branch with dirty tree is allowed (changes carry over safely). Already on the right branch skips the check entirely.
 - **`commitPrdOnly` error handling**: `commitPrdOnly(projectRoot, filePath, message)` commits a single file (typically run-state.json during runs). All call sites check the returned error and log a warning via `logger.Warning()`. PRD state commit failures are non-fatal (the loop continues) but are surfaced.
 - **Scanner buffer overflow logging**: Both stdout and stderr scanners in `runProvider` check `scanner.Err()` after completion and log warnings for buffer overflows (lines >1MB).
-- **Refine context loading**: `generateRefinePrompt()` reads prd.md + prd.json from disk, discovers codebase context, builds git diff summary, and includes verify commands + service URLs. The resulting prompt gives the AI comprehensive feature context for free-form interactive work. Called from `prdRefineInteractive()` in prd.go.
+- **Refine context loading**: `generateRefinePrompt()` reads prd.md + prd.json from disk, discovers codebase context, builds git diff summary, includes verify commands + service URLs, and injects resource consultation guidance. The resulting prompt gives the AI comprehensive feature context for free-form interactive work. Called from `prdRefineInteractive()` in prd.go.
 
 ## Prompt Template Variables
 
@@ -325,12 +331,14 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 
 | Template | Variables |
 |----------|-----------|
-| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `serviceURLs`, `timeout`, `codebaseContext`, `diffSummary`, `resourceVerificationInstructions` |
-| `verify-fix.md` | `project`, `description`, `branchName`, `progress`, `storyDetails`, `verifyResults`, `verifyCommands`, `learnings`, `knowledgeFile`, `serviceURLs`, `diffSummary`, `featureDir`, `resourceVerificationInstructions` |
-| `verify-analyze.md` | `project`, `description`, `branchName`, `criteriaChecklist`, `verifyResults`, `diffSummary`, `resourceVerificationInstructions` |
-| `prd-create.md` | `feature`, `outputPath`, `codebaseContext` |
-| `prd-finalize.md` | `feature`, `prdContent`, `outputPath` |
-| `refine.md` | `feature`, `prdMdContent`, `prdJsonContent`, `progress`, `storyDetails`, `learnings`, `diffSummary`, `codebaseContext`, `verifyCommands`, `serviceURLs`, `knowledgeFile`, `branchName`, `featureDir` |
+| `run.md` | `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `tags`, `retryInfo`, `verifyCommands`, `learnings`, `knowledgeFile`, `project`, `description`, `branchName`, `progress`, `storyMap`, `serviceURLs`, `timeout`, `codebaseContext`, `diffSummary`, `resourceGuidance` |
+| `verify-fix.md` | `project`, `description`, `branchName`, `progress`, `storyDetails`, `verifyResults`, `verifyCommands`, `learnings`, `knowledgeFile`, `serviceURLs`, `diffSummary`, `featureDir`, `resourceGuidance` |
+| `verify-analyze.md` | `project`, `description`, `branchName`, `criteriaChecklist`, `verifyResults`, `diffSummary`, `resourceGuidance` |
+| `prd-create.md` | `feature`, `outputPath`, `codebaseContext`, `resourceGuidance` |
+| `prd-finalize.md` | `feature`, `prdContent`, `outputPath`, `resourceGuidance` |
+| `refine.md` | `feature`, `prdMdContent`, `prdJsonContent`, `progress`, `storyDetails`, `learnings`, `diffSummary`, `codebaseContext`, `verifyCommands`, `serviceURLs`, `knowledgeFile`, `branchName`, `featureDir`, `resourceGuidance` |
+| `consult.md` | `framework`, `frameworkPath`, `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `techStack` |
+| `consult-feature.md` | `framework`, `frameworkPath`, `feature`, `techStack` |
 
 ## Non-obvious Behaviors
 
@@ -352,6 +360,11 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 - **Refine options don't acquire lock**: Both `prdRefineDraft` (pre-finalization) and `prdRefineInteractive` (post-finalization) open interactive AI sessions without acquiring a lock. These are interactive sessions, not automated runs.
 - **Cross-feature learnings are ephemeral**: `CollectCrossFeatureLearnings` computes learnings at prompt time by scanning other features' run-state.json files. They are never copied into the current feature's run-state.json — purely read-only aggregation. Only injected into `generateRunPrompt` (the story implementation prompt), not into verify-fix or refine prompts.
 - **Feature completion prints learnings and knowledge file warning**: When `AllComplete` triggers in the run loop, captured learnings are printed as a numbered list and a warning is shown if the knowledge file was not modified on the branch.
+- **Resource consultation is always-on**: Consultation runs automatically whenever cached resources exist — not configurable separately from `resources.enabled`. When resources are disabled or no dependencies are cached, `FormatGuidance` returns a web search fallback instruction.
+- **Consultation caching prevents redundant LLM calls**: Consultation results are cached to `.ralph/<feature>/consultations/<hash>.md`. Cache keys are SHA256 hashes of (story ID + framework name + commit hash + story description) for story-level, or (feature name + framework name + commit hash) for feature-level. On retry, cached results are reused without spawning subagents.
+- **Consultation uses GUIDANCE_START/GUIDANCE_END markers**: Similar to VERIFY_PASS/VERIFY_FAIL, consultation subagents output guidance between `<ralph>GUIDANCE_START</ralph>` and `<ralph>GUIDANCE_END</ralph>` markers. Missing markers = failed consultation (falls back to file path).
+- **Consultation validates source citations**: Successful consultations must contain `Source:` lines (evidence the subagent read actual framework source). Missing citations = treated as failed (likely hallucinated). Falls back to file path with search instructions.
+- **Framework keyword matching requires 2+ hits**: `relevantFrameworks()` requires at least 2 keyword matches from `frameworkKeywords` to associate a framework with a story. This prevents false positives from single keyword coincidences. Tag matching via `frameworkTagMap` is exact (1 tag hit suffices).
 
 ## Testing
 
@@ -361,7 +374,7 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `schema_test.go` - PRD definition validation, RunState methods (MarkPassed/MarkFailed/MarkSkipped/UnmarkPassed), GetNextStory, AllComplete, GetPendingStories, learning deduplication, LoadPRDDefinition, ValidatePRDDefinition, LoadRunState, SaveRunState, v2 error, IsUIStory
 - `discovery_test.go` - tech stack detection (including Elixir), framework detection (including Phoenix), codebase context formatting, verify command auto-detection, Elixir dependency extraction
 - `services_test.go` - output capture, service manager, health checks
-- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism, generateRefinePrompt, buildRefinementStoryDetails, generateVerifyAnalyzePrompt, buildCriteriaChecklist, cross-feature learnings in run prompt
+- `prompts_test.go` - prompt generation, variable substitution, provider-agnosticism, generateRefinePrompt, buildRefinementStoryDetails, generateVerifyAnalyzePrompt, buildCriteriaChecklist, cross-feature learnings in run prompt, resourceGuidance injection
 - `loop_test.go` - marker detection (DONE, STUCK with note, LEARNING, whole-line matching, embedded marker rejection, whitespace tolerance), nil ProviderResult guard, provider result parsing, command timeout, runCommand, VERIFY_PASS/VERIFY_FAIL marker detection
 - `feature_test.go` - directory parsing, timestamp formats, case-insensitive matching, cross-feature learnings (dedup, exclusion, skip-no-passed, empty, case-insensitive)
 - `lock_test.go` - lock acquisition, stale detection (including age-based isLockStale)
@@ -370,7 +383,8 @@ Tests are in `*_test.go` files alongside source. Key test files:
 - `git_test.go` - git operations (branch, commit, checkout, EnsureBranch, EnsureBranch dirty-tree guard, CreateBranchFrom, EnsureBranch with startPoint, DefaultBranch fallback chain including origin/main and origin/master, GetDiffSummary, HasNewCommitSince, IsWorkingTreeClean, GetChangedFiles two-dot fallback, HasTestFileChanges)
 - `update_check_test.go` - update check cache path, isNewerVersion semver comparison
 - `logger_test.go` - event logging, run numbering, log rotation, event filtering, run summaries
-- `resources_test.go` - ResourceManager, ResourcesConfig, cache operations
+- `resources_test.go` - ResourceManager, ResourcesConfig, cache operations, ensureResourceSync, GetCachedResources
+- `consultation_test.go` - relevantFrameworks (tag matching, keyword matching, 2-hit threshold, cap, nil story), FormatGuidance (success, failed, mixed, empty, nil), extractBetweenMarkers, consultation cache keys (deterministic, save/load), allCachedFrameworks cap, buildResourceFallbackInstructions, consult/consult-feature prompt templates, resourceGuidance in prd-create/refine/prd-finalize prompts
 - `resourcereg_test.go` - MapDependencyToResource, MergeWithCustom, DefaultResources validation (including Phoenix/Elixir ecosystem entries)
 - `loop_test.go` also includes VerifyReport tests (FormatForConsole, FormatForPrompt, Finalize, AddWarn)
 - `prd_test.go` - editor validation in prdEditManual, stripNonInteractiveArgs

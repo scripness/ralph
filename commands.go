@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -345,12 +346,25 @@ func cmdVerify(args []string) {
 	}
 	defer lock.Release()
 
+	// Discover codebase context and sync resources
+	codebaseCtx := DiscoverCodebase(projectRoot, &cfg.Config)
+	rm := ensureResourceSync(cfg, codebaseCtx)
+
+	// Feature-level consultation for verify
+	var resourceGuidance string
+	if rm != nil && rm.HasDetectedResources() {
+		consultResult := ConsultResourcesForFeature(context.Background(), cfg, feature, rm, codebaseCtx, featureDir.Path)
+		resourceGuidance = FormatGuidance(consultResult)
+	} else {
+		resourceGuidance = buildResourceFallbackInstructions()
+	}
+
 	fmt.Printf("Feature: %s\n", feature)
 	fmt.Printf("Project: %s\n", def.Project)
 	fmt.Printf("Path: %s\n", featureDir.Path)
 	fmt.Println()
 
-	if err := runVerify(cfg, featureDir); err != nil {
+	if err := runVerify(cfg, featureDir, resourceGuidance); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -399,7 +413,20 @@ func cmdPrd(args []string) {
 		os.Exit(1)
 	}
 
-	if err := runPrdStateMachine(cfg, featureDir); err != nil {
+	// Discover codebase context and sync resources for PRD consultation
+	codebaseCtx := DiscoverCodebase(projectRoot, &cfg.Config)
+	rm := ensureResourceSync(cfg, codebaseCtx)
+
+	// Feature-level consultation for PRD
+	var resourceGuidance string
+	if rm != nil && rm.HasDetectedResources() {
+		consultResult := ConsultResourcesForFeature(context.Background(), cfg, feature, rm, codebaseCtx, featureDir.Path)
+		resourceGuidance = FormatGuidance(consultResult)
+	} else {
+		resourceGuidance = buildResourceFallbackInstructions()
+	}
+
+	if err := runPrdStateMachine(cfg, featureDir, resourceGuidance); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

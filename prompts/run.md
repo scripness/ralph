@@ -76,7 +76,7 @@ Implement the following story:
 5. Commit your changes with message: `feat: {{storyId}} - {{storyTitle}}`
 6. Signal completion ONLY when all local checks pass
 
-{{resourceVerificationInstructions}}
+{{resourceGuidance}}
 
 ## Verification
 

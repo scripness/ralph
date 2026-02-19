@@ -83,7 +83,8 @@ func buildStoryMap(def *PRDDefinition, state *RunState, current *StoryDefinition
 
 // generateRunPrompt generates the prompt for story implementation.
 // codebaseStr and diffSummary are pre-computed in runLoop to avoid redundant per-iteration I/O.
-func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, story *StoryDefinition, codebaseStr, diffSummary string) string {
+// resourceGuidance is the pre-computed consultation guidance (or fallback instructions).
+func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, story *StoryDefinition, codebaseStr, diffSummary, resourceGuidance string) string {
 	// Build acceptance criteria list
 	var criteria []string
 	for _, c := range story.AcceptanceCriteria {
@@ -138,9 +139,6 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 		}
 	}
 
-	// Build resource verification instructions
-	resourceStr := buildResourceVerificationInstructions(cfg)
-
 	return getPrompt("run", map[string]string{
 		"storyId":            story.ID,
 		"storyTitle":         story.Title,
@@ -156,16 +154,16 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 		"branchName":         def.BranchName,
 		"progress":           buildProgress(def, state),
 		"storyMap":           buildStoryMap(def, state, story),
-		"serviceURLs":                      serviceURLsStr,
-		"timeout":                          fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
-		"codebaseContext":                  codebaseStr,
-		"diffSummary":                      diffSummary,
-		"resourceVerificationInstructions": resourceStr,
+		"serviceURLs":       serviceURLsStr,
+		"timeout":           fmt.Sprintf("%d minutes", cfg.Config.Provider.Timeout/60),
+		"codebaseContext":   codebaseStr,
+		"diffSummary":       diffSummary,
+		"resourceGuidance":  resourceGuidance,
 	})
 }
 
 // generateVerifyFixPrompt generates the prompt for an interactive fix session after verification failure.
-func generateVerifyFixPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, report *VerifyReport) string {
+func generateVerifyFixPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, report *VerifyReport, resourceGuidance string) string {
 	// Build verify commands list
 	var verifyLines []string
 	for _, cmd := range cfg.Config.Verify.Default {
@@ -196,38 +194,36 @@ func generateVerifyFixPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *P
 		}
 	}
 
-	// Build resource verification instructions
-	resourceStr := buildResourceVerificationInstructions(cfg)
-
 	return getPrompt("verify-fix", map[string]string{
-		"project":                           def.Project,
-		"description":                       def.Description,
-		"branchName":                        def.BranchName,
-		"progress":                          buildProgress(def, state),
-		"storyDetails":                      buildRefinementStoryDetails(def, state),
-		"verifyResults":                     report.FormatForPrompt(),
-		"verifyCommands":                    verifyStr,
-		"learnings":                         learningsStr,
-		"diffSummary":                       diffStr,
-		"serviceURLs":                       serviceURLsStr,
-		"knowledgeFile":                     cfg.Config.Provider.KnowledgeFile,
-		"featureDir":                        featureDir.Path,
-		"resourceVerificationInstructions":  resourceStr,
+		"project":          def.Project,
+		"description":      def.Description,
+		"branchName":       def.BranchName,
+		"progress":         buildProgress(def, state),
+		"storyDetails":     buildRefinementStoryDetails(def, state),
+		"verifyResults":    report.FormatForPrompt(),
+		"verifyCommands":   verifyStr,
+		"learnings":        learningsStr,
+		"diffSummary":      diffStr,
+		"serviceURLs":      serviceURLsStr,
+		"knowledgeFile":    cfg.Config.Provider.KnowledgeFile,
+		"featureDir":       featureDir.Path,
+		"resourceGuidance": resourceGuidance,
 	})
 }
 
 // generatePrdCreatePrompt generates the prompt for creating a new PRD
-func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, codebaseCtx *CodebaseContext) string {
+func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, codebaseCtx *CodebaseContext, resourceGuidance string) string {
 	return getPrompt("prd-create", map[string]string{
-		"feature":         featureDir.Feature,
-		"outputPath":      featureDir.PrdMdPath(),
-		"codebaseContext": FormatCodebaseContext(codebaseCtx),
+		"feature":          featureDir.Feature,
+		"outputPath":       featureDir.PrdMdPath(),
+		"codebaseContext":  FormatCodebaseContext(codebaseCtx),
+		"resourceGuidance": resourceGuidance,
 	})
 }
 
 // generateRefinePrompt generates the prompt for an interactive refine session.
 // Loads prd.md + prd.json content, discovers codebase context, builds git diff.
-func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState) string {
+func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, resourceGuidance string) string {
 	// Read prd.md content (expected to exist alongside prd.json)
 	prdMdContent := "(prd.md not found)"
 	if data, err := os.ReadFile(featureDir.PrdMdPath()); err == nil {
@@ -277,19 +273,20 @@ func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDD
 	}
 
 	return getPrompt("refine", map[string]string{
-		"feature":         featureDir.Feature,
-		"prdMdContent":    prdMdContent,
-		"prdJsonContent":  prdJsonContent,
-		"progress":        progress,
-		"storyDetails":    storyDetails,
-		"learnings":       learnings,
-		"diffSummary":     diffStr,
-		"codebaseContext": codebaseStr,
-		"verifyCommands":  verifyStr,
-		"serviceURLs":     serviceURLsStr,
-		"knowledgeFile":   cfg.Config.Provider.KnowledgeFile,
-		"branchName":      def.BranchName,
-		"featureDir":      featureDir.Path,
+		"feature":          featureDir.Feature,
+		"prdMdContent":     prdMdContent,
+		"prdJsonContent":   prdJsonContent,
+		"progress":         progress,
+		"storyDetails":     storyDetails,
+		"learnings":        learnings,
+		"diffSummary":      diffStr,
+		"codebaseContext":  codebaseStr,
+		"verifyCommands":   verifyStr,
+		"serviceURLs":      serviceURLsStr,
+		"knowledgeFile":    cfg.Config.Provider.KnowledgeFile,
+		"branchName":       def.BranchName,
+		"featureDir":       featureDir.Path,
+		"resourceGuidance": resourceGuidance,
 	})
 }
 
@@ -328,62 +325,17 @@ func buildRefinementStoryDetails(def *PRDDefinition, state *RunState) string {
 }
 
 // generatePrdFinalizePrompt generates the prompt for finalizing a PRD
-func generatePrdFinalizePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content string) string {
+func generatePrdFinalizePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content, resourceGuidance string) string {
 	return getPrompt("prd-finalize", map[string]string{
-		"feature":    featureDir.Feature,
-		"prdContent": content,
-		"outputPath": featureDir.PrdJsonPath(),
+		"feature":          featureDir.Feature,
+		"prdContent":       content,
+		"outputPath":       featureDir.PrdJsonPath(),
+		"resourceGuidance": resourceGuidance,
 	})
 }
 
-// buildResourceVerificationInstructions returns instructions for verifying
-// implementations against cached source code resources.
-func buildResourceVerificationInstructions(cfg *ResolvedConfig) string {
-	if cfg.Config.Resources != nil && !cfg.Config.Resources.IsEnabled() {
-		return buildFallbackVerificationInstructions()
-	}
-
-	// Detect dependencies from codebase
-	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
-	depNames := GetDependencyNames(codebaseCtx.Dependencies)
-	rm := NewResourceManager(cfg.Config.Resources, depNames)
-
-	cached, _ := rm.ListCached()
-	if len(cached) == 0 {
-		// Resources enabled but none cached yet - show detected
-		detected := rm.ListDetected()
-		if len(detected) > 0 {
-			return fmt.Sprintf(`## Documentation Verification
-
-Framework source code will be available after first sync. Detected frameworks:
-%s
-
-For now, use web search to verify your implementation against official documentation.
-`, strings.Join(detected, ", "))
-		}
-		return buildFallbackVerificationInstructions()
-	}
-
-	resourceList := strings.Join(cached, ", ")
-	return fmt.Sprintf(`## Documentation Verification
-
-The following framework source code is cached locally:
-%s
-
-**Available at:** %s/<framework>/
-
-To verify your implementation:
-1. Check how the framework implements similar patterns in its source
-2. Look at tests for usage examples
-3. Read inline comments for API intentions
-4. Compare your patterns against framework conventions
-
-For frameworks not cached, use web search against official repos.
-`, resourceList, rm.GetCacheDir())
-}
-
 // generateVerifyAnalyzePrompt generates the prompt for AI deep verification.
-func generateVerifyAnalyzePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, report *VerifyReport) string {
+func generateVerifyAnalyzePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, report *VerifyReport, resourceGuidance string) string {
 	// Build git diff summary
 	git := NewGitOps(cfg.ProjectRoot)
 	diffStat := git.GetDiffSummary()
@@ -392,17 +344,14 @@ func generateVerifyAnalyzePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, de
 		diffStr = "```\n" + truncateOutput(diffStat, 60) + "\n```"
 	}
 
-	// Build resource verification instructions
-	resourceStr := buildResourceVerificationInstructions(cfg)
-
 	return getPrompt("verify-analyze", map[string]string{
-		"project":                          def.Project,
-		"description":                      def.Description,
-		"branchName":                       def.BranchName,
-		"criteriaChecklist":                buildCriteriaChecklist(def, state),
-		"verifyResults":                    report.FormatForPrompt(),
-		"diffSummary":                      diffStr,
-		"resourceVerificationInstructions": resourceStr,
+		"project":            def.Project,
+		"description":        def.Description,
+		"branchName":         def.BranchName,
+		"criteriaChecklist":  buildCriteriaChecklist(def, state),
+		"verifyResults":      report.FormatForPrompt(),
+		"diffSummary":        diffStr,
+		"resourceGuidance":   resourceGuidance,
 	})
 }
 
@@ -426,17 +375,3 @@ func buildCriteriaChecklist(def *PRDDefinition, state *RunState) string {
 	return strings.Join(lines, "\n")
 }
 
-// buildFallbackVerificationInstructions returns web search instructions.
-func buildFallbackVerificationInstructions() string {
-	return `## Documentation Verification
-
-Before committing, verify your implementation against current official documentation using web search:
-
-- Search for the official docs of any library or framework you used
-- Confirm APIs you used are current and not deprecated
-- Verify configuration patterns follow current best practices
-- Check security patterns (input validation, auth, etc.) are up to date
-
-Do not rely on memory alone — docs change between versions. Verify against the latest.
-`
-}
