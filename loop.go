@@ -203,8 +203,11 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 			return fmt.Errorf("all remaining stories skipped")
 		}
 
-		// Verify-at-top: if this story already passes, mark it and skip implementation
-		if !state.IsPassed(story.ID) {
+		// Verify-at-top: if this story already passes, mark it and skip implementation.
+		// Only runs when the branch has non-.ralph/ changes (real implementation work).
+		// On fresh branches with only PRD state, skip verify-at-top to avoid false positives
+		// where the existing test suite passes vacuously (it doesn't test the new feature yet).
+		if !state.IsPassed(story.ID) && git.HasNonRalphChanges() {
 			verifyResult, verifyErr := runStoryVerification(cfg, featureDir, story, svcMgr, logger)
 			if verifyErr == nil && verifyResult.passed {
 				logger.LogPrint("\n✓ %s already passes verification, marking complete\n", story.ID)

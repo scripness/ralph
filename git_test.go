@@ -593,6 +593,78 @@ func TestGitOps_HasTestFileChanges_TestsDir(t *testing.T) {
 	}
 }
 
+func TestGitOps_HasNonRalphChanges(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	// No changes → false
+	if git.HasNonRalphChanges() {
+		t.Error("expected false with no changes")
+	}
+
+	// Only .ralph/ files → false
+	os.MkdirAll(filepath.Join(dir, ".ralph", "2024-01-15-auth"), 0755)
+	os.WriteFile(filepath.Join(dir, ".ralph", "2024-01-15-auth", "run-state.json"), []byte("{}"), 0644)
+	run("add", ".ralph/2024-01-15-auth/run-state.json")
+	run("commit", "-m", "ralph state")
+	if git.HasNonRalphChanges() {
+		t.Error("expected false with only .ralph/ files")
+	}
+
+	// Add source file → true
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
+	run("add", "main.go")
+	run("commit", "-m", "add source")
+	if !git.HasNonRalphChanges() {
+		t.Error("expected true with source file outside .ralph/")
+	}
+}
+
+func TestGitOps_HasNonRalphChanges_OnlySourceFiles(t *testing.T) {
+	dir, git := initTestRepo(t)
+	git.CreateBranch("ralph/feature")
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %s\n%s", args, err, out)
+		}
+	}
+
+	// Only source files (no .ralph/) → true
+	os.WriteFile(filepath.Join(dir, "app.ts"), []byte("console.log('hi')"), 0644)
+	run("add", "app.ts")
+	run("commit", "-m", "add app")
+	if !git.HasNonRalphChanges() {
+		t.Error("expected true with only source files")
+	}
+}
+
 func TestGitOps_DefaultBranch_FallbackToOriginMain(t *testing.T) {
 	// Create a repo with no local main/master, but an "origin/main" branch ref
 	dir := t.TempDir()

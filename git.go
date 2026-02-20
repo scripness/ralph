@@ -214,6 +214,18 @@ func (g *GitOps) HasTestFileChanges() bool {
 	return false
 }
 
+// HasNonRalphChanges returns true if any changed files on the branch
+// are outside the .ralph/ directory. This distinguishes branches with
+// real implementation work from fresh branches that only have PRD state.
+func (g *GitOps) HasNonRalphChanges() bool {
+	for _, f := range g.GetChangedFiles() {
+		if !strings.HasPrefix(f, ".ralph/") {
+			return true
+		}
+	}
+	return false
+}
+
 // run executes a git command and returns the output
 func (g *GitOps) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
