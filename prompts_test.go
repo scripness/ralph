@@ -858,3 +858,203 @@ func TestGenerateVerifyAnalyzePrompt(t *testing.T) {
 		t.Error("prompt should contain VERIFY_FAIL marker instructions")
 	}
 }
+
+func TestGenerateVerifyFixPrompt(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "claude", KnowledgeFile: "CLAUDE.md"},
+			Verify: VerifyConfig{
+				Default: []string{"bun run typecheck", "bun run test"},
+				UI:      []string{"bun run test:e2e"},
+			},
+			Services: []ServiceConfig{{Name: "dev", Ready: "http://localhost:3000"}},
+		},
+	}
+	featureDir := &FeatureDir{Feature: "auth", Path: filepath.Join(dir, ".ralph", "2024-01-15-auth")}
+	def := &PRDDefinition{
+		Project: "MyApp", Description: "Auth feature", BranchName: "ralph/auth",
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Form renders"}},
+			{ID: "US-002", Title: "Logout", AcceptanceCriteria: []string{"Session cleared"}},
+		},
+	}
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.Learnings = []string{"Use bcrypt for passwords"}
+
+	report := &VerifyReport{}
+	report.AddPass("bun run typecheck")
+	report.AddFail("bun run test", "FAIL login_test.ts\nexit code 1")
+	report.Finalize()
+
+	prompt := generateVerifyFixPrompt(cfg, featureDir, def, state, report, "")
+
+	// Project metadata
+	if !strings.Contains(prompt, "MyApp") {
+		t.Error("prompt should contain project name")
+	}
+	if !strings.Contains(prompt, "Auth feature") {
+		t.Error("prompt should contain description")
+	}
+	if !strings.Contains(prompt, "ralph/auth") {
+		t.Error("prompt should contain branch name")
+	}
+
+	// Verify results from report.FormatForPrompt()
+	if !strings.Contains(prompt, "FAIL login_test.ts") {
+		t.Error("prompt should contain verify failure output")
+	}
+
+	// Story details from buildRefinementStoryDetails()
+	if !strings.Contains(prompt, "US-001: Login** — PASSED") {
+		t.Error("prompt should contain story status")
+	}
+
+	// Verify commands
+	if !strings.Contains(prompt, "bun run typecheck") {
+		t.Error("prompt should contain verify commands")
+	}
+	if !strings.Contains(prompt, "bun run test:e2e") {
+		t.Error("prompt should contain UI verify commands")
+	}
+
+	// Knowledge file
+	if !strings.Contains(prompt, "CLAUDE.md") {
+		t.Error("prompt should contain knowledge file")
+	}
+
+	// Feature dir
+	if !strings.Contains(prompt, featureDir.Path) {
+		t.Error("prompt should contain feature directory path")
+	}
+
+	// Learnings
+	if !strings.Contains(prompt, "bcrypt") {
+		t.Error("prompt should contain learnings")
+	}
+
+	// Service URLs
+	if !strings.Contains(prompt, "localhost:3000") {
+		t.Error("prompt should contain service URLs")
+	}
+}
+
+func TestGenerateVerifyFixPrompt_WithResourceGuidance(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "claude", KnowledgeFile: "CLAUDE.md"},
+			Verify:   VerifyConfig{Default: []string{"echo ok"}},
+		},
+	}
+	featureDir := &FeatureDir{Feature: "auth", Path: filepath.Join(dir, ".ralph", "auth")}
+	def := &PRDDefinition{
+		Project: "MyApp", Description: "Auth", BranchName: "ralph/auth",
+		UserStories: []StoryDefinition{{ID: "US-001", Title: "Login"}},
+	}
+	state := NewRunState()
+	report := &VerifyReport{}
+	report.AddFail("echo ok", "failed")
+	report.Finalize()
+
+	guidance := "## Framework Guidance\n\n### next\nUse app router.\n\nSource: src/server.ts"
+	prompt := generateVerifyFixPrompt(cfg, featureDir, def, state, report, guidance)
+
+	if !strings.Contains(prompt, "Framework Guidance") {
+		t.Error("prompt should contain resource guidance heading")
+	}
+	if !strings.Contains(prompt, "app router") {
+		t.Error("prompt should contain guidance content")
+	}
+	if !strings.Contains(prompt, "Source: src/server.ts") {
+		t.Error("prompt should contain source citation")
+	}
+}
+
+func TestGenerateRefinePrompt_WithResourceGuidance(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := &FeatureDir{
+		Feature:    "auth",
+		Path:       dir,
+		HasPrdMd:   true,
+		HasPrdJson: true,
+	}
+
+	os.WriteFile(featureDir.PrdMdPath(), []byte("# Auth Feature"), 0644)
+
+	def := &PRDDefinition{
+		SchemaVersion: 3, Project: "MyApp", BranchName: "ralph/auth", Description: "Auth",
+		UserStories: []StoryDefinition{{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Works"}}},
+	}
+	state := NewRunState()
+
+	prdJSON, _ := json.Marshal(def)
+	os.WriteFile(featureDir.PrdJsonPath(), prdJSON, 0644)
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "claude", KnowledgeFile: "CLAUDE.md"},
+			Verify:   VerifyConfig{Default: []string{"echo ok"}},
+		},
+	}
+
+	guidance := "## Framework Guidance\n\n### react\nUse hooks for state.\n\nSource: packages/react/src/hooks.ts"
+	prompt := generateRefinePrompt(cfg, featureDir, def, state, guidance)
+
+	if !strings.Contains(prompt, "Framework Guidance") {
+		t.Error("prompt should contain resource guidance heading")
+	}
+	if !strings.Contains(prompt, "hooks") {
+		t.Error("prompt should contain guidance content")
+	}
+	if !strings.Contains(prompt, "Source: packages/react/src/hooks.ts") {
+		t.Error("prompt should contain source citation")
+	}
+
+	// Baseline content still present
+	if !strings.Contains(prompt, "Auth Feature") {
+		t.Error("prompt should still contain prd.md content")
+	}
+}
+
+func TestGenerateVerifyAnalyzePrompt_WithResourceGuidance(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "claude", KnowledgeFile: "CLAUDE.md"},
+			Verify:   VerifyConfig{Default: []string{"echo ok"}},
+		},
+	}
+	featureDir := &FeatureDir{Feature: "auth", Path: filepath.Join(dir, ".ralph", "auth")}
+	def := &PRDDefinition{
+		Project: "MyApp", Description: "Auth", BranchName: "ralph/auth",
+		UserStories: []StoryDefinition{{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Works"}}},
+	}
+	state := NewRunState()
+	report := &VerifyReport{}
+	report.AddPass("echo ok")
+	report.Finalize()
+
+	guidance := "## Framework Guidance\n\n### react\nUse hooks.\n\nSource: packages/react/src/hooks.ts"
+	prompt := generateVerifyAnalyzePrompt(cfg, featureDir, def, state, report, guidance)
+
+	if !strings.Contains(prompt, "Framework Guidance") {
+		t.Error("prompt should contain resource guidance heading")
+	}
+	if !strings.Contains(prompt, "hooks") {
+		t.Error("prompt should contain guidance content")
+	}
+	if !strings.Contains(prompt, "Source: packages/react/src/hooks.ts") {
+		t.Error("prompt should contain source citation")
+	}
+
+	// Baseline still present
+	if !strings.Contains(prompt, "VERIFY_PASS") {
+		t.Error("prompt should still contain VERIFY_PASS marker instructions")
+	}
+}

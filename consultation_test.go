@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRelevantFrameworks_TagMatching(t *testing.T) {
@@ -444,6 +446,47 @@ func TestGetCachedResources_WithCachedRepo(t *testing.T) {
 	}
 }
 
+func TestFrameworkKeywords_NonEmpty(t *testing.T) {
+	for name, keywords := range frameworkKeywords {
+		if len(keywords) == 0 {
+			t.Errorf("frameworkKeywords[%q] has empty keyword list", name)
+		}
+	}
+}
+
+func TestFrameworkKeywords_NoEmptyStrings(t *testing.T) {
+	for name, keywords := range frameworkKeywords {
+		for i, kw := range keywords {
+			if kw == "" {
+				t.Errorf("frameworkKeywords[%q][%d] is empty string", name, i)
+			}
+		}
+	}
+}
+
+func TestFrameworkKeywords_NoDuplicates(t *testing.T) {
+	for name, keywords := range frameworkKeywords {
+		seen := make(map[string]bool)
+		for _, kw := range keywords {
+			lower := strings.ToLower(kw)
+			if seen[lower] {
+				t.Errorf("frameworkKeywords[%q] has duplicate keyword %q", name, kw)
+			}
+			seen[lower] = true
+		}
+	}
+}
+
+func TestFrameworkTagMap_ValidFrameworks(t *testing.T) {
+	for tag, frameworks := range frameworkTagMap {
+		for _, fw := range frameworks {
+			if _, ok := frameworkKeywords[fw]; !ok {
+				t.Errorf("frameworkTagMap[%q] references %q which is not in frameworkKeywords", tag, fw)
+			}
+		}
+	}
+}
+
 func TestGetPrompt_Consult(t *testing.T) {
 	prompt := getPrompt("consult", map[string]string{
 		"framework":          "next",
@@ -540,5 +583,356 @@ func TestGetPrompt_PrdFinalizeWithResourceGuidance(t *testing.T) {
 
 	if !strings.Contains(prompt, "Framework Guidance") {
 		t.Error("prompt should contain resource guidance")
+	}
+}
+
+// --- runConsultSubagent subprocess tests ---
+
+func TestRunConsultSubagent_Success(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "sh",
+				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Use hooks for state management.'; echo ''; echo 'Source: src/hooks.ts'; echo '<ralph>GUIDANCE_END</ralph>'`},
+				PromptMode: "arg",
+			},
+		},
+	}
+	result, err := runConsultSubagent(cfg, "test prompt", 10*time.Second)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !strings.Contains(result, "Use hooks") {
+		t.Error("expected guidance content in result")
+	}
+	if !strings.Contains(result, "Source: src/hooks.ts") {
+		t.Error("expected source citation in result")
+	}
+}
+
+func TestRunConsultSubagent_MissingMarkers(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "sh",
+				Args:       []string{"-c", `echo 'Some output without markers'`},
+				PromptMode: "arg",
+			},
+		},
+	}
+	_, err := runConsultSubagent(cfg, "test prompt", 10*time.Second)
+	if err == nil {
+		t.Fatal("expected error for missing markers")
+	}
+	if !strings.Contains(err.Error(), "no guidance") {
+		t.Errorf("expected 'no guidance' in error, got: %v", err)
+	}
+}
+
+func TestRunConsultSubagent_MissingSourceCitation(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "sh",
+				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Use hooks.'; echo '<ralph>GUIDANCE_END</ralph>'`},
+				PromptMode: "arg",
+			},
+		},
+	}
+	_, err := runConsultSubagent(cfg, "test prompt", 10*time.Second)
+	if err == nil {
+		t.Fatal("expected error for missing source citation")
+	}
+	if !strings.Contains(err.Error(), "source citations") {
+		t.Errorf("expected 'source citations' in error, got: %v", err)
+	}
+}
+
+func TestRunConsultSubagent_Timeout(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "sh",
+				Args:       []string{"-c", "sleep 30"},
+				PromptMode: "arg",
+			},
+		},
+	}
+	_, err := runConsultSubagent(cfg, "test prompt", 1*time.Second)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected 'timed out' in error, got: %v", err)
+	}
+}
+
+func TestRunConsultSubagent_StderrMarkers(t *testing.T) {
+	dir := t.TempDir()
+	// Output markers on stderr instead of stdout
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "sh",
+				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>' >&2; echo 'Guidance via stderr.' >&2; echo 'Source: lib/core.ts' >&2; echo '<ralph>GUIDANCE_END</ralph>' >&2`},
+				PromptMode: "arg",
+			},
+		},
+	}
+	result, err := runConsultSubagent(cfg, "test prompt", 10*time.Second)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !strings.Contains(result, "Guidance via stderr") {
+		t.Error("expected guidance from stderr")
+	}
+}
+
+// --- ConsultResources integration tests ---
+
+// setupConsultTestResources creates a temp dir with a fake cached resource and registry.
+func setupConsultTestResources(t *testing.T, name string) (string, *ResourceManager) {
+	t.Helper()
+	dir := t.TempDir()
+
+	// Create fake cached repo directory
+	repoDir := filepath.Join(dir, name)
+	os.MkdirAll(repoDir, 0755)
+
+	// Create registry with repo metadata
+	reg, _ := LoadResourceRegistry(dir)
+	reg.UpdateRepo(name, &CachedRepo{
+		URL:    "https://github.com/example/" + name,
+		Branch: "main",
+		Commit: "abc123",
+	})
+	reg.Save(dir)
+
+	resCfg := &ResourcesConfig{CacheDir: dir}
+	rm := NewResourceManager(resCfg, []string{name})
+
+	return dir, rm
+}
+
+func TestConsultResources_Integration(t *testing.T) {
+	_, rm := setupConsultTestResources(t, "react")
+	featurePath := t.TempDir()
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "sh",
+				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Use hooks for state.'; echo ''; echo 'Source: packages/react/src/hooks.ts'; echo '<ralph>GUIDANCE_END</ralph>'`},
+				PromptMode: "arg",
+			},
+		},
+	}
+
+	// Story with "ui" tag → relevantFrameworks should match "react"
+	story := &StoryDefinition{
+		ID:          "US-001",
+		Title:       "Add login form",
+		Description: "Create a react component for the login form",
+		Tags:        []string{"ui"},
+	}
+
+	result := ConsultResources(context.Background(), cfg, story, rm, nil, featurePath)
+
+	if len(result.Consultations) != 1 {
+		t.Fatalf("expected 1 consultation, got %d", len(result.Consultations))
+	}
+	if result.Consultations[0].Framework != "react" {
+		t.Errorf("expected framework 'react', got '%s'", result.Consultations[0].Framework)
+	}
+	if !strings.Contains(result.Consultations[0].Guidance, "Use hooks") {
+		t.Error("expected guidance content")
+	}
+	if len(result.FallbackPaths) != 0 {
+		t.Errorf("expected 0 fallbacks, got %d", len(result.FallbackPaths))
+	}
+
+	// Verify cache was written
+	cacheKey := consultCacheKey("US-001", "react", "abc123", story.Description)
+	if _, ok := loadCachedConsultation(featurePath, cacheKey); !ok {
+		t.Error("expected consultation to be cached")
+	}
+}
+
+func TestConsultResources_CacheHit(t *testing.T) {
+	_, rm := setupConsultTestResources(t, "react")
+	featurePath := t.TempDir()
+
+	story := &StoryDefinition{
+		ID:          "US-001",
+		Title:       "Add login form",
+		Description: "Create a react component for the login form",
+		Tags:        []string{"ui"},
+	}
+
+	// Pre-populate cache with the exact key ConsultResources will compute
+	cacheKey := consultCacheKey(story.ID, "react", "abc123", story.Description)
+	cachedGuidance := "Cached: Use hooks.\n\nSource: cached/path.ts"
+	saveCachedConsultation(featurePath, cacheKey, cachedGuidance)
+
+	// Provider that would fail if called (use "false" command which exits with 1)
+	cfg := &ResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "false",
+				PromptMode: "arg",
+			},
+		},
+	}
+
+	result := ConsultResources(context.Background(), cfg, story, rm, nil, featurePath)
+
+	if len(result.Consultations) != 1 {
+		t.Fatalf("expected 1 consultation from cache, got %d", len(result.Consultations))
+	}
+	if result.Consultations[0].Guidance != cachedGuidance {
+		t.Errorf("expected cached guidance, got: %s", result.Consultations[0].Guidance)
+	}
+	if len(result.FallbackPaths) != 0 {
+		t.Errorf("expected 0 fallbacks, got %d", len(result.FallbackPaths))
+	}
+}
+
+func TestConsultResources_NoRelevantFrameworks(t *testing.T) {
+	_, rm := setupConsultTestResources(t, "react")
+	featurePath := t.TempDir()
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "echo", PromptMode: "arg"},
+		},
+	}
+
+	// Story with no matching tags and no matching keywords
+	story := &StoryDefinition{
+		ID:          "US-001",
+		Title:       "Configure CI pipeline",
+		Description: "Set up GitHub Actions",
+		Tags:        []string{},
+	}
+
+	result := ConsultResources(context.Background(), cfg, story, rm, nil, featurePath)
+
+	if len(result.Consultations) != 0 {
+		t.Errorf("expected 0 consultations for irrelevant story, got %d", len(result.Consultations))
+	}
+	if len(result.FallbackPaths) != 0 {
+		t.Errorf("expected 0 fallbacks, got %d", len(result.FallbackPaths))
+	}
+}
+
+func TestConsultResources_SubagentFailureFallback(t *testing.T) {
+	_, rm := setupConsultTestResources(t, "react")
+	featurePath := t.TempDir()
+
+	// Provider that outputs nothing (no markers → consultation fails → fallback)
+	cfg := &ResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "sh",
+				Args:       []string{"-c", "echo 'no markers here'"},
+				PromptMode: "arg",
+			},
+		},
+	}
+
+	story := &StoryDefinition{
+		ID:    "US-001",
+		Title: "Add login form",
+		Tags:  []string{"ui"},
+	}
+
+	result := ConsultResources(context.Background(), cfg, story, rm, nil, featurePath)
+
+	if len(result.Consultations) != 0 {
+		t.Errorf("expected 0 consultations (should fail), got %d", len(result.Consultations))
+	}
+	if len(result.FallbackPaths) != 1 {
+		t.Fatalf("expected 1 fallback, got %d", len(result.FallbackPaths))
+	}
+	if result.FallbackPaths[0].Name != "react" {
+		t.Errorf("expected fallback for 'react', got '%s'", result.FallbackPaths[0].Name)
+	}
+}
+
+// --- ConsultResourcesForFeature integration tests ---
+
+func TestConsultResourcesForFeature_Integration(t *testing.T) {
+	_, rm := setupConsultTestResources(t, "react")
+	featurePath := t.TempDir()
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "sh",
+				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Feature-level react guidance.'; echo ''; echo 'Source: packages/react/src/index.ts'; echo '<ralph>GUIDANCE_END</ralph>'`},
+				PromptMode: "arg",
+			},
+		},
+	}
+
+	result := ConsultResourcesForFeature(context.Background(), cfg, "auth", rm, nil, featurePath)
+
+	if len(result.Consultations) != 1 {
+		t.Fatalf("expected 1 consultation, got %d", len(result.Consultations))
+	}
+	if result.Consultations[0].Framework != "react" {
+		t.Errorf("expected framework 'react', got '%s'", result.Consultations[0].Framework)
+	}
+	if !strings.Contains(result.Consultations[0].Guidance, "Feature-level react guidance") {
+		t.Error("expected feature-level guidance content")
+	}
+
+	// Verify cache was written
+	cacheKey := featureConsultCacheKey("auth", "react", "abc123")
+	if _, ok := loadCachedConsultation(featurePath, cacheKey); !ok {
+		t.Error("expected feature consultation to be cached")
+	}
+}
+
+func TestConsultResourcesForFeature_CacheHit(t *testing.T) {
+	_, rm := setupConsultTestResources(t, "react")
+	featurePath := t.TempDir()
+
+	// Pre-populate cache
+	cacheKey := featureConsultCacheKey("auth", "react", "abc123")
+	cachedGuidance := "Cached feature guidance.\n\nSource: cached/index.ts"
+	saveCachedConsultation(featurePath, cacheKey, cachedGuidance)
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: RalphConfig{
+			Provider: ProviderConfig{
+				Command:    "false",
+				PromptMode: "arg",
+			},
+		},
+	}
+
+	result := ConsultResourcesForFeature(context.Background(), cfg, "auth", rm, nil, featurePath)
+
+	if len(result.Consultations) != 1 {
+		t.Fatalf("expected 1 consultation from cache, got %d", len(result.Consultations))
+	}
+	if result.Consultations[0].Guidance != cachedGuidance {
+		t.Errorf("expected cached guidance, got: %s", result.Consultations[0].Guidance)
 	}
 }
