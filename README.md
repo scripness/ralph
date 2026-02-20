@@ -358,78 +358,85 @@ rm .ralph/ralph.lock      # Remove stale lock (if the process is gone)
 
 ## How It Works
 
-### Complete Lifecycle
+### User Journey
+
+```mermaid
+flowchart LR
+    init["<b>ralph init</b><br/>Detect stack · Configure"]:::setup
+    prd["<b>ralph prd</b><br/>Brainstorm · Finalize"]:::setup
+    run["<b>ralph run</b><br/>Agent loop"]:::exec
+    verify["<b>ralph verify</b><br/>Tests + AI analysis"]:::exec
+
+    init --> prd --> run --> verify
+    verify -. "refine & re-run" .-> prd
+
+    classDef setup fill:#f1f5f9,stroke:#94a3b8,stroke-width:1.5px,color:#334155
+    classDef exec fill:#dbeafe,stroke:#3b82f6,stroke-width:1.5px,color:#1e40af
+```
+
+### The Agent Loop
 
 ```mermaid
 flowchart TD
-    classDef action fill:#4a9eff,color:#fff,stroke:none
-    classDef success fill:#2ecc71,color:#fff,stroke:none
-    classDef failure fill:#e74c3c,color:#fff,stroke:none
-    classDef decision fill:#f39c12,color:#fff,stroke:none
+    start([ralph run feature]):::terminal
+    load["Load PRD + RunState<br/>Acquire lock · Start services"]:::process
+    pick{"Pick next<br/>story"}:::decision
+    done(["All complete"]):::terminal
+    vat{"Verify-at-top:<br/>passes?"}:::decision
+    impl["Consult frameworks<br/>Spawn AI provider"]:::process
+    check{"DONE marker +<br/>new commit?"}:::decision
+    verify{"Verification<br/>passes?"}:::decision
+    pass["Mark passed"]:::success
+    fail["Mark failed"]:::failure
+    skip["Auto-skip"]:::skip
 
-    subgraph Init["ralph init"]
-        I1[Detect tech stack]:::action --> I2[Select provider]:::action
-        I2 --> I3[Configure verify commands]:::action
-        I3 --> I4[Configure services]:::action
-        I4 --> I5[Write ralph.config.json + .ralph/]:::action
-    end
+    start --> load --> pick
+    pick -->|"All done"| done
+    pick -->|"Got story"| vat
+    vat -->|"Yes"| pass
+    vat -->|"No"| impl --> check
+    check -->|"No"| fail
+    check -->|"Yes"| verify
+    verify -->|"Pass"| pass
+    verify -->|"Fail"| fail
+    pass --> pick
+    fail -->|"Retry"| pick
+    fail -->|"Max retries"| skip --> pick
 
-    subgraph PRD["ralph prd feature"]
-        P1{State?}:::decision
-        P1 -->|New| P2[AI brainstorms prd.md]:::action
-        P2 --> P3[Finalize to prd.json]:::action
-        P1 -->|Draft| P4["Menu: Finalize / Refine / Edit"]:::action
-        P1 -->|Finalized| P5["Menu: Refine / Regenerate / Edit"]:::action
-        P4 --> P3
-        P5 --> P3
-    end
-
-    subgraph Run["ralph run feature"]
-        R1[Load PRD + state]:::action --> R2[Acquire lock, start services]:::action
-        R2 --> R3{Next story?}:::decision
-        R3 -->|None| R10[Print summary]:::success
-        R3 -->|Got story| R4{Verify-at-top: passes?}:::decision
-        R4 -->|Yes| R11[Mark passed]:::success
-        R11 --> R3
-        R4 -->|No| R5[Consult resources + spawn provider]:::action
-        R5 --> R6{DONE marker + commit?}:::decision
-        R6 -->|No| R8[Mark failed]:::failure
-        R6 -->|Yes| R7{Verify passes?}:::decision
-        R7 -->|Yes| R9[Mark passed]:::success
-        R7 -->|No| R8
-        R8 --> R3
-        R9 --> R3
-    end
-
-    subgraph Verify["ralph verify feature"]
-        V1[Run verify commands]:::action --> V2[Service health checks]:::action
-        V2 --> V3[AI deep analysis]:::action
-        V3 --> V4{All pass?}:::decision
-        V4 -->|Yes| V5[VerifyReport: all PASS]:::success
-        V4 -->|No| V6[Offer interactive fix session]:::failure
-    end
-
-    I5 --> P1
-    P3 --> R1
-    R10 --> V1
+    classDef terminal fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#334155
+    classDef process fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e40af
+    classDef decision fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#92400e
+    classDef success fill:#d1fae5,stroke:#10b981,stroke-width:2px,color:#065f46
+    classDef failure fill:#fee2e2,stroke:#ef4444,stroke-width:2px,color:#991b1b
+    classDef skip fill:#e2e8f0,stroke:#94a3b8,stroke-width:2px,color:#475569
 ```
 
-### Story State Machine
+### Story Lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending: Story created in prd.json
+    [*] --> Pending
 
-    Pending --> Passed: Verification succeeds
+    Pending --> Passed: Verify succeeds
     Pending --> Failed: STUCK / no DONE / no commit / verify fails
 
-    Failed --> Pending: retries < maxRetries
-    Failed --> Skipped: retries >= maxRetries (auto-skip)
+    Failed --> Pending: Retry
+    Failed --> Skipped: Max retries exceeded
 
-    Passed --> Pending: Verify-at-top detects regression
+    Passed --> Pending: Regression detected
 
-    Passed --> [*]: All stories complete
-    Skipped --> [*]: Doesn't block completion
+    Passed --> [*]
+    Skipped --> [*]
+
+    classDef pending fill:#dbeafe,stroke:#3b82f6,color:#1e40af
+    classDef passed fill:#d1fae5,stroke:#10b981,color:#065f46
+    classDef failed fill:#fee2e2,stroke:#ef4444,color:#991b1b
+    classDef skipped fill:#e2e8f0,stroke:#94a3b8,color:#475569
+
+    class Pending pending
+    class Passed passed
+    class Failed failed
+    class Skipped skipped
 ```
 
 ### CLI vs Provider Responsibilities
