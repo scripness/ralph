@@ -196,7 +196,7 @@ ralph upgrade                  # Update to latest version
 
 | Section | Field | Type | Default | Description |
 |---------|-------|------|---------|-------------|
-| root | `maxRetries` | int | `3` | Max failed attempts per story before blocking |
+| root | `maxRetries` | int | `3` | Max failed attempts per story before auto-skipping |
 | provider | `command` | string | **required** | AI CLI command (amp, claude, opencode, aider, codex) |
 | provider | `args` | string[] | auto-detected | Arguments to pass to provider |
 | provider | `timeout` | int | `1800` | Seconds per iteration (30 minutes) |

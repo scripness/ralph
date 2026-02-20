@@ -168,8 +168,7 @@
             "properties": {
               "name": { "type": "string", "description": "Resource identifier" },
               "url": { "type": "string", "description": "GitHub repo URL" },
-              "branch": { "type": "string", "description": "Branch to clone" },
-              "notes": { "type": "string", "description": "Guidance for AI agent" }
+              "branch": { "type": "string", "description": "Branch to clone" }
             }
           }
         }
