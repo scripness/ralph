@@ -148,7 +148,7 @@
     },
     "resources": {
       "type": "object",
-      "description": "Framework source code caching configuration",
+      "description": "Framework source code caching configuration. Dependencies are auto-resolved from project manifests and cloned at their exact versions.",
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -159,18 +159,6 @@
           "type": "string",
           "default": "~/.ralph/resources",
           "description": "Directory for cached framework source code"
-        },
-        "custom": {
-          "type": "array",
-          "description": "Custom resource definitions",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": { "type": "string", "description": "Resource identifier" },
-              "url": { "type": "string", "description": "GitHub repo URL" },
-              "branch": { "type": "string", "description": "Branch to clone" }
-            }
-          }
         }
       }
     }

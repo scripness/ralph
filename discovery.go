@@ -749,11 +749,3 @@ func readPackageJSONScripts(projectRoot string) map[string]string {
 	return pkg.Scripts
 }
 
-// GetDependencyNames returns just the names of dependencies
-func GetDependencyNames(deps []Dependency) []string {
-	var names []string
-	for _, d := range deps {
-		names = append(names, d.Name)
-	}
-	return names
-}

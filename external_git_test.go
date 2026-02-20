@@ -15,16 +15,16 @@ func TestExternalGitOps_NewWithDefaults(t *testing.T) {
 	if ops.url != "https://github.com/example/repo" {
 		t.Errorf("unexpected url: %s", ops.url)
 	}
-	if ops.branch != "main" {
-		t.Errorf("expected default branch 'main', got '%s'", ops.branch)
+	if ops.ref != "main" {
+		t.Errorf("expected default branch 'main', got '%s'", ops.ref)
 	}
 }
 
 func TestExternalGitOps_NewWithBranch(t *testing.T) {
 	ops := NewExternalGitOps("/path/to/repo", "https://github.com/example/repo", "canary")
 
-	if ops.branch != "canary" {
-		t.Errorf("expected branch 'canary', got '%s'", ops.branch)
+	if ops.ref != "canary" {
+		t.Errorf("expected branch 'canary', got '%s'", ops.ref)
 	}
 }
 

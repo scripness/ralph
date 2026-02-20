@@ -13,18 +13,18 @@ import (
 type ExternalGitOps struct {
 	repoPath string
 	url      string
-	branch   string
+	ref      string // branch name OR tag name
 }
 
 // NewExternalGitOps creates a git operations helper for an external repo.
-func NewExternalGitOps(repoPath, url, branch string) *ExternalGitOps {
-	if branch == "" {
-		branch = "main"
+func NewExternalGitOps(repoPath, url, ref string) *ExternalGitOps {
+	if ref == "" {
+		ref = "main"
 	}
 	return &ExternalGitOps{
 		repoPath: repoPath,
 		url:      url,
-		branch:   branch,
+		ref:      ref,
 	}
 }
 
@@ -42,7 +42,7 @@ func (g *ExternalGitOps) Clone(shallow bool) error {
 	if shallow {
 		args = append(args, "--depth", "1", "--single-branch")
 	}
-	args = append(args, "--branch", g.branch, g.url, g.repoPath)
+	args = append(args, "--branch", g.ref, g.url, g.repoPath)
 
 	cmd := exec.Command("git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
@@ -55,7 +55,7 @@ func (g *ExternalGitOps) Clone(shallow bool) error {
 
 // Fetch fetches latest from remote without merging.
 func (g *ExternalGitOps) Fetch() error {
-	cmd := exec.Command("git", "fetch", "origin", g.branch)
+	cmd := exec.Command("git", "fetch", "origin", g.ref)
 	cmd.Dir = g.repoPath
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	output, err := cmd.CombinedOutput()
@@ -65,7 +65,7 @@ func (g *ExternalGitOps) Fetch() error {
 	return nil
 }
 
-// Pull fast-forwards to latest (fetch + reset --hard origin/branch).
+// Pull fast-forwards to latest (fetch + reset --hard origin/ref).
 // For shallow clones, this updates to the latest commit.
 func (g *ExternalGitOps) Pull() error {
 	// Fetch first
@@ -73,8 +73,8 @@ func (g *ExternalGitOps) Pull() error {
 		return err
 	}
 
-	// Reset to remote branch
-	cmd := exec.Command("git", "reset", "--hard", "origin/"+g.branch)
+	// Reset to remote ref
+	cmd := exec.Command("git", "reset", "--hard", "origin/"+g.ref)
 	cmd.Dir = g.repoPath
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -108,7 +108,7 @@ func (g *ExternalGitOps) GetCurrentCommitShort() string {
 // GetRemoteHeadCommit returns remote HEAD without full fetch (ls-remote).
 // This is faster than fetch for checking if update is needed.
 func (g *ExternalGitOps) GetRemoteHeadCommit() (string, error) {
-	cmd := exec.Command("git", "ls-remote", g.url, "refs/heads/"+g.branch)
+	cmd := exec.Command("git", "ls-remote", g.url, "refs/heads/"+g.ref)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	output, err := cmd.Output()
 	if err != nil {
@@ -117,7 +117,7 @@ func (g *ExternalGitOps) GetRemoteHeadCommit() (string, error) {
 	// Output format: "commit_hash\trefs/heads/branch"
 	parts := strings.Fields(string(output))
 	if len(parts) == 0 {
-		return "", fmt.Errorf("no remote HEAD found for branch %s", g.branch)
+		return "", fmt.Errorf("no remote HEAD found for ref %s", g.ref)
 	}
 	return parts[0], nil
 }

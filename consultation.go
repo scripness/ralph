@@ -122,7 +122,8 @@ var frameworkTagMap = map[string][]string{
 }
 
 // relevantFrameworks returns cached resources relevant to a story.
-// Uses tag matching and keyword matching (requires 2+ keyword hits).
+// Uses tag matching, keyword matching (requires 2+ keyword hits), and
+// name-based matching for auto-resolved deps without keyword entries.
 // Caps at maxFrameworks.
 func relevantFrameworks(story *StoryDefinition, cached []CachedResource, maxFrameworks int) []CachedResource {
 	if len(cached) == 0 || story == nil {
@@ -157,7 +158,7 @@ func relevantFrameworks(story *StoryDefinition, cached []CachedResource, maxFram
 			score += 2
 		}
 
-		// Keyword matching
+		// Keyword matching (for deps with keyword entries)
 		if keywords, ok := frameworkKeywords[cr.Name]; ok {
 			hits := 0
 			for _, kw := range keywords {
@@ -166,6 +167,15 @@ func relevantFrameworks(story *StoryDefinition, cached []CachedResource, maxFram
 				}
 			}
 			score += hits
+		} else {
+			// Name-based matching for auto-resolved deps without keyword entries.
+			// Check if any name variant appears in the story text.
+			variants := dependencyNameVariants(cr.Name)
+			for _, v := range variants {
+				if len(v) >= 3 && strings.Contains(searchText, v) {
+					score++
+				}
+			}
 		}
 
 		// Require at least 2 to include
@@ -350,8 +360,13 @@ func consultFramework(ctx context.Context, cfg *ResolvedConfig, story *StoryDefi
 		techStack = codebaseCtx.TechStack
 	}
 
+	frameworkLabel := resource.Name
+	if resource.Version != "" {
+		frameworkLabel = resource.Name + " v" + resource.Version
+	}
+
 	prompt := getPrompt("consult", map[string]string{
-		"framework":          resource.Name,
+		"framework":          frameworkLabel,
 		"frameworkPath":      resource.Path,
 		"storyId":            story.ID,
 		"storyTitle":         story.Title,
@@ -378,8 +393,13 @@ func consultFrameworkForFeature(ctx context.Context, cfg *ResolvedConfig, featur
 		techStack = codebaseCtx.TechStack
 	}
 
+	frameworkLabel := resource.Name
+	if resource.Version != "" {
+		frameworkLabel = resource.Name + " v" + resource.Version
+	}
+
 	prompt := getPrompt("consult-feature", map[string]string{
-		"framework":     resource.Name,
+		"framework":     frameworkLabel,
 		"frameworkPath": resource.Path,
 		"feature":       feature,
 		"techStack":     techStack,
@@ -566,10 +586,14 @@ func FormatGuidance(result *ConsultationResult) string {
 	if len(result.FallbackPaths) > 0 {
 		sections = append(sections, "## Additional Framework References")
 		sections = append(sections, "")
-		sections = append(sections, "Consultation failed for these frameworks. Their source is cached locally — search for specific patterns:")
+		sections = append(sections, "Source code is cached locally for these frameworks — search for specific patterns:")
 		sections = append(sections, "")
 		for _, fb := range result.FallbackPaths {
-			sections = append(sections, fmt.Sprintf("- **%s**: `%s` — grep for specific APIs/patterns you need", fb.Name, fb.Path))
+			label := fb.Name
+			if fb.Version != "" {
+				label = fb.Name + " v" + fb.Version
+			}
+			sections = append(sections, fmt.Sprintf("- **%s**: `%s` — search this source for APIs/patterns you need", label, fb.Path))
 		}
 		sections = append(sections, "")
 	}

@@ -186,8 +186,7 @@ ralph upgrade                  # Update to latest version
   },
   "resources": {
     "enabled": true,
-    "cacheDir": "~/.ralph/resources",
-    "custom": []
+    "cacheDir": "~/.ralph/resources"
   }
 }
 ```
@@ -218,7 +217,6 @@ ralph upgrade                  # Update to latest version
 | logging | `consoleDurations` | bool | `true` | Show durations in console output |
 | resources | `enabled` | bool | `true` | Enable framework source caching |
 | resources | `cacheDir` | string | `~/.ralph/resources` | Where to cache framework repos |
-| resources | `custom` | Resource[] | `[]` | Custom framework mappings |
 
 ### Provider Auto-Detection
 
@@ -365,47 +363,22 @@ Ralph automatically detects project dependencies and caches their source code re
 
 ### How It Works
 
-1. **Detection**: When you run `ralph run`, `ralph prd`, or `ralph verify`, Ralph extracts dependencies from package.json, go.mod, pyproject.toml, Cargo.toml, or mix.exs
-2. **Mapping**: Dependencies are mapped to their source repositories (e.g., "next" → github.com/vercel/next.js)
-3. **Caching**: Repos are cloned as shallow clones (`--depth 1`) to minimize disk usage
-4. **Sync**: Before each run, repos are synced to latest if out of date
+1. **Detection**: When you run `ralph run`, `ralph prd`, or `ralph verify`, Ralph extracts ALL dependencies from package.json, go.mod, pyproject.toml, Cargo.toml, or mix.exs
+2. **Version Resolution**: Exact versions are read from lock files (bun.lock, package-lock.json, yarn.lock, pnpm-lock.yaml) to ensure version-specific caching
+3. **Repo Resolution**: Repository URLs are resolved automatically from package registries (npm, PyPI, crates.io, hex.pm) and Go module paths — no hardcoded list
+4. **Caching**: Repos are cloned as shallow clones (`--depth 1 --single-branch --branch <tag>`) at the exact version tag, cached at `~/.ralph/resources/name@version/`
 5. **Consultation**: Ralph spawns subagents (using the same provider) that search cached source for APIs, patterns, and pitfalls relevant to the current story or feature. Subagents run in parallel (up to 3 frameworks). Results are cached per story to avoid redundant LLM calls on retries
 6. **Injection**: Consultation guidance is injected into the main agent's prompt via `{{resourceGuidance}}`. Falls back to web search instructions when no resources are cached or consultation fails
 
-### Built-in Resources
+### Supported Ecosystems
 
-~30 popular frameworks are mapped by default:
-
-| Category | Frameworks |
-|----------|------------|
-| **Frontend** | React, Next.js, Vue, Nuxt, Svelte, SvelteKit, Angular |
-| **Styling** | Tailwind CSS |
-| **Backend (JS/TS)** | Express, Fastify, Hono, Koa |
-| **Backend (Go)** | Gin, Echo, Fiber, Chi |
-| **Backend (Elixir)** | Phoenix, Phoenix LiveView, Absinthe, Oban |
-| **ORM/Database** | Prisma, Drizzle, Ecto |
-| **Testing** | Vitest, Jest, Playwright |
-| **Validation** | Zod |
-| **Build Tools** | Vite, esbuild, Webpack |
-| **State** | Zustand, Jotai |
-
-### Custom Resources
-
-Add custom framework mappings in `ralph.config.json`:
-
-```json
-{
-  "resources": {
-    "custom": [
-      {
-        "name": "internal-ui",
-        "url": "https://github.com/company/ui-library",
-        "branch": "main"
-      }
-    ]
-  }
-}
-```
+| Ecosystem | Registry | Lock Files |
+|-----------|----------|------------|
+| **npm** (JS/TS) | registry.npmjs.org | bun.lock, package-lock.json, yarn.lock, pnpm-lock.yaml |
+| **Go** | Module paths (GitHub/GitLab/vanity URLs) | go.mod (versions are exact) |
+| **Python** | pypi.org | Manifest version specs (cleaned) |
+| **Rust** | crates.io | Manifest version specs (cleaned) |
+| **Elixir** | hex.pm | Manifest version specs (cleaned) |
 
 ### Disk Usage
 

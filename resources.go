@@ -11,9 +11,8 @@ import (
 
 // ResourcesConfig for ralph.config.json
 type ResourcesConfig struct {
-	Enabled  *bool      `json:"enabled,omitempty"`  // default: true
-	CacheDir string     `json:"cacheDir,omitempty"` // default: ~/.ralph/resources
-	Custom   []Resource `json:"custom,omitempty"`   // user overrides/additions
+	Enabled  *bool  `json:"enabled,omitempty"`  // default: true
+	CacheDir string `json:"cacheDir,omitempty"` // default: ~/.ralph/resources
 }
 
 // IsEnabled returns whether resources are enabled (defaults to true).
@@ -55,40 +54,59 @@ func expandHomePath(path string) string {
 
 // ResourceManager handles source code repo lifecycle.
 type ResourceManager struct {
-	cacheDir     string
-	resources    []Resource           // all available resources (defaults + custom)
-	detected     map[string]*Resource // detected dependency name -> resource
-	registry     *ResourceRegistry
+	cacheDir    string
+	detected    map[string]*Resource // key: "name@version" → resource
+	registry    *ResourceRegistry
+	ecosystem   string
+	projectRoot string
 }
 
 // NewResourceManager creates a manager for detected dependencies.
-func NewResourceManager(cfg *ResourcesConfig, detectedDeps []string) *ResourceManager {
+// It resolves repo URLs and exact versions for all dependencies.
+func NewResourceManager(cfg *ResourcesConfig, deps []Dependency, ecosystem, projectRoot string) *ResourceManager {
 	cacheDir := DefaultResourcesCacheDir()
 	if cfg != nil && cfg.CacheDir != "" {
 		cacheDir = cfg.GetCacheDir()
 	}
 
-	// Merge default resources with custom
-	var custom []Resource
-	if cfg != nil {
-		custom = cfg.Custom
+	rm := &ResourceManager{
+		cacheDir:    cacheDir,
+		detected:    make(map[string]*Resource),
+		ecosystem:   ecosystem,
+		projectRoot: projectRoot,
 	}
-	resources := MergeWithCustom(custom)
 
-	// Map detected dependencies to resources
-	detected := make(map[string]*Resource)
-	for _, dep := range detectedDeps {
-		if r := MapDependencyToResource(dep, resources); r != nil {
-			// Use the resource name as key to dedupe
-			detected[r.Name] = r
+	if len(deps) == 0 {
+		return rm
+	}
+
+	// Load registry for resolution caching
+	reg, err := LoadResourceRegistry(cacheDir)
+	if err != nil {
+		fmt.Printf("  Warning: failed to load resource registry: %v\n", err)
+		reg = &ResourceRegistry{Repos: make(map[string]*CachedRepo)}
+	}
+	rm.registry = reg
+
+	// Resolve all dependencies
+	resolved := ResolveAll(deps, ecosystem, projectRoot, reg)
+
+	for _, r := range resolved {
+		key := r.Name + "@" + r.Version
+		rm.detected[key] = &Resource{
+			Name:    r.Name,
+			URL:     r.URL,
+			Branch:  r.Tag, // tag or empty (default branch)
+			Version: r.Version,
 		}
 	}
 
-	return &ResourceManager{
-		cacheDir:  cacheDir,
-		resources: resources,
-		detected:  detected,
+	// Save registry (URL cache + unresolvable markers)
+	if err := reg.Save(cacheDir); err != nil {
+		fmt.Printf("  Warning: failed to save resource registry: %v\n", err)
 	}
+
+	return rm
 }
 
 // loadRegistry lazily loads the registry.
@@ -105,7 +123,6 @@ func (rm *ResourceManager) loadRegistry() error {
 }
 
 // EnsureResources clones/syncs all resources for detected dependencies.
-// Called automatically before ralph run.
 func (rm *ResourceManager) EnsureResources() error {
 	if len(rm.detected) == 0 {
 		return nil
@@ -116,21 +133,31 @@ func (rm *ResourceManager) EnsureResources() error {
 	}
 
 	var synced, cloned, failed int
-	for name, r := range rm.detected {
-		repoPath := filepath.Join(rm.cacheDir, name)
-		gitOps := NewExternalGitOps(repoPath, r.URL, r.Branch)
+	for key, r := range rm.detected {
+		repoPath := filepath.Join(rm.cacheDir, key) // name@version
+		ref := r.Branch
+		if ref == "" {
+			ref = "main" // default branch fallback
+		}
+		gitOps := NewExternalGitOps(repoPath, r.URL, ref)
 
 		if gitOps.Exists() {
-			// Already cloned - sync if needed
+			// Already cloned — for version-pinned repos, no sync needed
+			// (the tag content doesn't change)
+			if r.Version != "" && r.Branch != "" {
+				// Tag-based clone: content is immutable, skip sync
+				continue
+			}
+			// Default branch clone: check for updates
 			upToDate, err := gitOps.IsUpToDate()
 			if err != nil {
-				fmt.Printf("  Warning: could not check %s for updates: %v\n", name, err)
+				fmt.Printf("  Warning: could not check %s for updates: %v\n", key, err)
 				continue
 			}
 			if !upToDate {
-				fmt.Printf("  Syncing %s...\n", name)
+				fmt.Printf("  Syncing %s...\n", key)
 				if err := gitOps.Pull(); err != nil {
-					fmt.Printf("  Warning: failed to sync %s: %v\n", name, err)
+					fmt.Printf("  Warning: failed to sync %s: %v\n", key, err)
 					failed++
 					continue
 				}
@@ -138,9 +165,21 @@ func (rm *ResourceManager) EnsureResources() error {
 			}
 		} else {
 			// Clone new
-			fmt.Printf("  Cloning %s...\n", name)
+			fmt.Printf("  Cloning %s...\n", key)
+
+			// If no tag was found during resolution, try to find one now
+			if r.Branch == "" && r.Version != "" {
+				tag := findVersionTag(r.URL, r.Version)
+				if tag != "" {
+					r.Branch = tag
+					gitOps = NewExternalGitOps(repoPath, r.URL, tag)
+				} else {
+					fmt.Printf("  Warning: no version tag found for %s v%s, using default branch\n", r.Name, r.Version)
+				}
+			}
+
 			if err := gitOps.Clone(true); err != nil {
-				fmt.Printf("  Warning: failed to clone %s: %v\n", name, err)
+				fmt.Printf("  Warning: failed to clone %s: %v\n", key, err)
 				failed++
 				continue
 			}
@@ -149,9 +188,10 @@ func (rm *ResourceManager) EnsureResources() error {
 
 		// Update registry
 		size, _ := gitOps.GetRepoSize()
-		rm.registry.UpdateRepo(name, &CachedRepo{
+		rm.registry.UpdateRepo(key, &CachedRepo{
 			URL:      r.URL,
-			Branch:   r.Branch,
+			Tag:      r.Branch,
+			Version:  r.Version,
 			Commit:   gitOps.GetCurrentCommitShort(),
 			SyncedAt: time.Now(),
 			Size:     size,
@@ -164,7 +204,8 @@ func (rm *ResourceManager) EnsureResources() error {
 	}
 
 	if cloned > 0 || synced > 0 {
-		fmt.Printf("  Resources: %d cloned, %d synced", cloned, synced)
+		cached := len(rm.detected) - cloned - synced - failed
+		fmt.Printf("  Resources: %d cloned, %d synced, %d cached", cloned, synced, cached)
 		if failed > 0 {
 			fmt.Printf(", %d failed", failed)
 		}
@@ -179,21 +220,11 @@ func (rm *ResourceManager) GetResourcePath(name string) string {
 	return filepath.Join(rm.cacheDir, name)
 }
 
-// ListCached returns names of all cached resources.
-func (rm *ResourceManager) ListCached() ([]string, error) {
-	if err := rm.loadRegistry(); err != nil {
-		return nil, err
-	}
-	names := rm.registry.ListCached()
-	sort.Strings(names)
-	return names, nil
-}
-
 // ListDetected returns names of detected resources (may not be cached yet).
 func (rm *ResourceManager) ListDetected() []string {
 	var names []string
-	for name := range rm.detected {
-		names = append(names, name)
+	for key := range rm.detected {
+		names = append(names, key)
 	}
 	sort.Strings(names)
 	return names
@@ -204,18 +235,19 @@ func (rm *ResourceManager) GetCacheDir() string {
 	return rm.cacheDir
 }
 
-// HasDetectedResources returns true if any dependencies map to known resources.
+// HasDetectedResources returns true if any dependencies were resolved.
 func (rm *ResourceManager) HasDetectedResources() bool {
 	return len(rm.detected) > 0
 }
 
 // CachedResource represents a framework resource that is cached locally.
 type CachedResource struct {
-	Name     string // e.g., "next", "react"
-	Path     string // local filesystem path to cached source
-	URL      string // source repo URL
-	Branch   string // branch name
-	Commit   string // current commit hash (short)
+	Name    string // e.g., "next", "react"
+	Version string // e.g., "15.0.0"
+	Path    string // local filesystem path to cached source
+	URL     string // source repo URL
+	Ref     string // tag or branch name
+	Commit  string // current commit hash (short)
 }
 
 // GetCachedResources returns all detected resources that are actually cached on disk.
@@ -225,21 +257,22 @@ func (rm *ResourceManager) GetCachedResources() []CachedResource {
 	}
 
 	var cached []CachedResource
-	for name, r := range rm.detected {
-		repoPath := filepath.Join(rm.cacheDir, name)
+	for key, r := range rm.detected {
+		repoPath := filepath.Join(rm.cacheDir, key) // name@version
 		if _, err := os.Stat(repoPath); err != nil {
 			continue // not cached
 		}
 		commit := ""
-		if repo := rm.registry.GetRepo(name); repo != nil {
+		if repo := rm.registry.GetRepo(key); repo != nil {
 			commit = repo.Commit
 		}
 		cached = append(cached, CachedResource{
-			Name:   name,
-			Path:   repoPath,
-			URL:    r.URL,
-			Branch: r.Branch,
-			Commit: commit,
+			Name:    r.Name,
+			Version: r.Version,
+			Path:    repoPath,
+			URL:     r.URL,
+			Ref:     r.Branch,
+			Commit:  commit,
 		})
 	}
 
@@ -259,18 +292,17 @@ func ensureResourceSync(cfg *ResolvedConfig, codebaseCtx *CodebaseContext) *Reso
 		return nil
 	}
 
-	depNames := GetDependencyNames(codebaseCtx.Dependencies)
-	rm := NewResourceManager(cfg.Config.Resources, depNames)
+	ecosystem := ecosystemFromTechStack(codebaseCtx.TechStack)
+	rm := NewResourceManager(cfg.Config.Resources, codebaseCtx.Dependencies, ecosystem, cfg.ProjectRoot)
 	if !rm.HasDetectedResources() {
 		return rm
 	}
 
 	detected := rm.ListDetected()
-	fmt.Printf("  Syncing %d framework resources (%s)...\n", len(detected), strings.Join(detected, ", "))
+	fmt.Printf("  Resolving %d dependencies...\n", len(detected))
 	if err := rm.EnsureResources(); err != nil {
 		fmt.Fprintf(os.Stderr, "  Warning: resource sync failed: %s\n", err.Error())
 	}
 
 	return rm
 }
-

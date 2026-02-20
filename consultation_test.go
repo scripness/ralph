@@ -9,6 +9,22 @@ import (
 	"time"
 )
 
+// newTestResourceManager creates a ResourceManager with manually populated detected resources.
+// Bypasses network resolution for testing.
+func newTestResourceManager(cacheDir string, resources map[string]*Resource) *ResourceManager {
+	if cacheDir == "" {
+		cacheDir = DefaultResourcesCacheDir()
+	}
+	detected := resources
+	if detected == nil {
+		detected = make(map[string]*Resource)
+	}
+	return &ResourceManager{
+		cacheDir: cacheDir,
+		detected: detected,
+	}
+}
+
 func TestRelevantFrameworks_TagMatching(t *testing.T) {
 	cached := []CachedResource{
 		{Name: "next", Path: "/cache/next"},
@@ -141,6 +157,61 @@ func TestRelevantFrameworks_NilStory(t *testing.T) {
 	}
 }
 
+func TestRelevantFrameworks_NameBasedMatching(t *testing.T) {
+	// Auto-resolved dep without frameworkKeywords entry.
+	// Scoped package "@scope/name" produces 2 variants: ["scope", "name"],
+	// so if both appear in story text, score reaches 2.
+	cached := []CachedResource{
+		{Name: "@sentry/node", Path: "/cache/@sentry/node@8.0.0", Version: "8.0.0"},
+	}
+
+	// Story mentioning both "sentry" and "node" → 2 variant hits → qualifies
+	story := &StoryDefinition{
+		ID:          "US-001",
+		Title:       "Add sentry error tracking to node API",
+		Description: "Integrate error monitoring",
+	}
+	result := relevantFrameworks(story, cached, 3)
+	found := false
+	for _, r := range result {
+		if r.Name == "@sentry/node" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected name-based matching to find '@sentry/node' (both variants 'sentry' and 'node' appear)")
+	}
+
+	// Single-word dep without keywords: only 1 variant, so score=1, NOT enough
+	cached2 := []CachedResource{
+		{Name: "pino", Path: "/cache/pino@8.0.0", Version: "8.0.0"},
+	}
+	story2 := &StoryDefinition{
+		ID:          "US-002",
+		Title:       "Add pino logging",
+		Description: "Use pino for structured logging",
+	}
+	result2 := relevantFrameworks(story2, cached2, 3)
+	if len(result2) != 0 {
+		t.Error("single-word dep without keywords should not qualify on name alone (score=1)")
+	}
+
+	// Single-word dep WITH tag match: tag gives 2 points, name adds 1 → qualifies
+	cached3 := []CachedResource{
+		{Name: "pino", Path: "/cache/pino@8.0.0", Version: "8.0.0"},
+	}
+	story3 := &StoryDefinition{
+		ID:    "US-003",
+		Title: "Add pino logging",
+		Tags:  []string{"api"}, // "api" tag maps to known frameworks, not pino
+	}
+	result3 := relevantFrameworks(story3, cached3, 3)
+	// pino is not in frameworkTagMap["api"], so no tag points either
+	if len(result3) != 0 {
+		t.Error("pino should not match api tag")
+	}
+}
+
 func TestFormatGuidance_Success(t *testing.T) {
 	result := &ConsultationResult{
 		Consultations: []ResourceConsultation{
@@ -171,8 +242,8 @@ func TestFormatGuidance_Success(t *testing.T) {
 func TestFormatGuidance_Failed(t *testing.T) {
 	result := &ConsultationResult{
 		FallbackPaths: []CachedResource{
-			{Name: "next", Path: "/cache/next"},
-			{Name: "prisma", Path: "/cache/prisma"},
+			{Name: "next", Version: "15.0.0", Path: "/cache/next@15.0.0"},
+			{Name: "prisma", Path: "/cache/prisma@5.22.0"},
 		},
 	}
 
@@ -181,10 +252,10 @@ func TestFormatGuidance_Failed(t *testing.T) {
 	if !strings.Contains(output, "Additional Framework References") {
 		t.Error("expected fallback heading")
 	}
-	if !strings.Contains(output, "**next**") {
-		t.Error("expected next in fallback")
+	if !strings.Contains(output, "**next v15.0.0**") {
+		t.Error("expected next with version in fallback")
 	}
-	if !strings.Contains(output, "/cache/prisma") {
+	if !strings.Contains(output, "/cache/prisma@5.22.0") {
 		t.Error("expected prisma path in fallback")
 	}
 }
@@ -372,80 +443,6 @@ func TestBuildResourceFallbackInstructions(t *testing.T) {
 	}
 }
 
-func TestEnsureResourceSync_Disabled(t *testing.T) {
-	disabled := false
-	cfg := &ResolvedConfig{
-		Config: RalphConfig{
-			Resources: &ResourcesConfig{Enabled: &disabled},
-		},
-	}
-	codebaseCtx := &CodebaseContext{}
-	rm := ensureResourceSync(cfg, codebaseCtx)
-	if rm != nil {
-		t.Error("expected nil ResourceManager when resources disabled")
-	}
-}
-
-func TestEnsureResourceSync_NoDeps(t *testing.T) {
-	cfg := &ResolvedConfig{
-		Config: RalphConfig{},
-	}
-	codebaseCtx := &CodebaseContext{
-		Dependencies: []Dependency{},
-	}
-	rm := ensureResourceSync(cfg, codebaseCtx)
-	// Should return a ResourceManager even with no deps (no sync needed)
-	if rm == nil {
-		t.Error("expected non-nil ResourceManager")
-	}
-	if rm.HasDetectedResources() {
-		t.Error("expected no detected resources")
-	}
-}
-
-func TestGetCachedResources_Empty(t *testing.T) {
-	rm := NewResourceManager(nil, []string{"next"})
-	// next is detected but not cached on disk
-	cached := rm.GetCachedResources()
-	if len(cached) != 0 {
-		t.Errorf("expected 0 cached resources (nothing on disk), got %d", len(cached))
-	}
-}
-
-func TestGetCachedResources_WithCachedRepo(t *testing.T) {
-	dir := t.TempDir()
-
-	// Create a fake cached repo directory
-	repoDir := filepath.Join(dir, "next")
-	os.MkdirAll(repoDir, 0755)
-
-	// Create a registry with repo metadata
-	reg, _ := LoadResourceRegistry(dir)
-	reg.UpdateRepo("next", &CachedRepo{
-		URL:    "https://github.com/vercel/next.js",
-		Branch: "canary",
-		Commit: "abc123",
-	})
-	reg.Save(dir)
-
-	cfg := &ResourcesConfig{CacheDir: dir}
-	rm := NewResourceManager(cfg, []string{"next"})
-
-	cached := rm.GetCachedResources()
-	if len(cached) != 1 {
-		t.Fatalf("expected 1 cached resource, got %d", len(cached))
-	}
-	if cached[0].Name != "next" {
-		t.Errorf("expected name 'next', got '%s'", cached[0].Name)
-	}
-	if cached[0].Commit != "abc123" {
-		t.Errorf("expected commit 'abc123', got '%s'", cached[0].Commit)
-	}
-	if cached[0].Path != repoDir {
-		t.Errorf("expected path '%s', got '%s'", repoDir, cached[0].Path)
-	}
-}
-
 func TestFrameworkKeywords_NonEmpty(t *testing.T) {
 	for name, keywords := range frameworkKeywords {
 		if len(keywords) == 0 {
@@ -489,8 +486,8 @@ func TestFrameworkTagMap_ValidFrameworks(t *testing.T) {
 
 func TestGetPrompt_Consult(t *testing.T) {
 	prompt := getPrompt("consult", map[string]string{
-		"framework":          "next",
-		"frameworkPath":      "/cache/next",
+		"framework":          "next v15.0.0",
+		"frameworkPath":      "/cache/next@15.0.0",
 		"storyId":            "US-001",
 		"storyTitle":         "Add login form",
 		"storyDescription":   "As a user...",
@@ -498,10 +495,10 @@ func TestGetPrompt_Consult(t *testing.T) {
 		"techStack":          "typescript",
 	})
 
-	if !strings.Contains(prompt, "next") {
-		t.Error("prompt should contain framework name")
+	if !strings.Contains(prompt, "next v15.0.0") {
+		t.Error("prompt should contain framework name with version")
 	}
-	if !strings.Contains(prompt, "/cache/next") {
+	if !strings.Contains(prompt, "/cache/next@15.0.0") {
 		t.Error("prompt should contain framework path")
 	}
 	if !strings.Contains(prompt, "US-001") {
@@ -520,14 +517,14 @@ func TestGetPrompt_Consult(t *testing.T) {
 
 func TestGetPrompt_ConsultFeature(t *testing.T) {
 	prompt := getPrompt("consult-feature", map[string]string{
-		"framework":     "react",
-		"frameworkPath":  "/cache/react",
+		"framework":     "react v18.2.0",
+		"frameworkPath":  "/cache/react@18.2.0",
 		"feature":       "auth",
 		"techStack":     "typescript",
 	})
 
-	if !strings.Contains(prompt, "react") {
-		t.Error("prompt should contain framework name")
+	if !strings.Contains(prompt, "react v18.2.0") {
+		t.Error("prompt should contain framework name with version")
 	}
 	if !strings.Contains(prompt, "auth") {
 		t.Error("prompt should contain feature name")
@@ -697,28 +694,32 @@ func TestRunConsultSubagent_StderrMarkers(t *testing.T) {
 	}
 }
 
-// --- ConsultResources integration tests ---
+// --- setupConsultTestResources helper ---
 
 // setupConsultTestResources creates a temp dir with a fake cached resource and registry.
 func setupConsultTestResources(t *testing.T, name string) (string, *ResourceManager) {
 	t.Helper()
 	dir := t.TempDir()
 
-	// Create fake cached repo directory
-	repoDir := filepath.Join(dir, name)
+	key := name + "@1.0.0"
+
+	// Create fake cached repo directory using versioned key
+	repoDir := filepath.Join(dir, key)
 	os.MkdirAll(repoDir, 0755)
 
 	// Create registry with repo metadata
 	reg, _ := LoadResourceRegistry(dir)
-	reg.UpdateRepo(name, &CachedRepo{
-		URL:    "https://github.com/example/" + name,
-		Branch: "main",
-		Commit: "abc123",
+	reg.UpdateRepo(key, &CachedRepo{
+		URL:     "https://github.com/example/" + name,
+		Tag:     "v1.0.0",
+		Version: "1.0.0",
+		Commit:  "abc123",
 	})
 	reg.Save(dir)
 
-	resCfg := &ResourcesConfig{CacheDir: dir}
-	rm := NewResourceManager(resCfg, []string{name})
+	rm := newTestResourceManager(dir, map[string]*Resource{
+		key: {Name: name, URL: "https://github.com/example/" + name, Branch: "v1.0.0", Version: "1.0.0"},
+	})
 
 	return dir, rm
 }
@@ -934,5 +935,29 @@ func TestConsultResourcesForFeature_CacheHit(t *testing.T) {
 	}
 	if result.Consultations[0].Guidance != cachedGuidance {
 		t.Errorf("expected cached guidance, got: %s", result.Consultations[0].Guidance)
+	}
+}
+
+func TestDependencyNameVariants(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected []string
+	}{
+		{"pino", []string{"pino"}},
+		{"@prisma/client", []string{"prisma", "client"}},
+		{"react", []string{"react"}},
+		{"@types/node", []string{"types", "node"}},
+	}
+	for _, tt := range tests {
+		result := dependencyNameVariants(tt.name)
+		if len(result) != len(tt.expected) {
+			t.Errorf("dependencyNameVariants(%q) = %v, expected %v", tt.name, result, tt.expected)
+			continue
+		}
+		for i, v := range result {
+			if v != tt.expected[i] {
+				t.Errorf("dependencyNameVariants(%q)[%d] = %q, expected %q", tt.name, i, v, tt.expected[i])
+			}
+		}
 	}
 }

@@ -59,71 +59,35 @@ func TestResourcesConfig_GetCacheDir(t *testing.T) {
 	}
 }
 
-func TestNewResourceManager(t *testing.T) {
-	deps := []string{"next", "react", "unknown-lib"}
-	rm := NewResourceManager(nil, deps)
-
+func TestNewResourceManager_NoDeps(t *testing.T) {
+	rm := NewResourceManager(nil, nil, "npm", "/tmp/test")
 	if rm == nil {
 		t.Fatal("expected non-nil ResourceManager")
 	}
-
-	// Should detect next and react, not unknown-lib
-	detected := rm.ListDetected()
-	if len(detected) < 2 {
-		t.Errorf("expected at least 2 detected resources, got %d", len(detected))
-	}
-
-	// Verify deduplication (next and react are separate)
-	hasNext := false
-	hasReact := false
-	for _, d := range detected {
-		if d == "next" {
-			hasNext = true
-		}
-		if d == "react" {
-			hasReact = true
-		}
-	}
-	if !hasNext {
-		t.Error("expected 'next' to be detected")
-	}
-	if !hasReact {
-		t.Error("expected 'react' to be detected")
+	if rm.HasDetectedResources() {
+		t.Error("expected no detected resources with nil deps")
 	}
 }
 
-func TestResourceManager_HasDetectedResources(t *testing.T) {
-	// With detected deps
-	rm := NewResourceManager(nil, []string{"next", "react"})
-	if !rm.HasDetectedResources() {
-		t.Error("expected HasDetectedResources to be true with known deps")
+func TestNewResourceManager_EmptyDeps(t *testing.T) {
+	rm := NewResourceManager(nil, []Dependency{}, "npm", "/tmp/test")
+	if rm == nil {
+		t.Fatal("expected non-nil ResourceManager")
 	}
-
-	// Without detected deps
-	rm = NewResourceManager(nil, []string{"unknown-lib"})
 	if rm.HasDetectedResources() {
-		t.Error("expected HasDetectedResources to be false with unknown deps")
-	}
-
-	// Empty deps
-	rm = NewResourceManager(nil, []string{})
-	if rm.HasDetectedResources() {
-		t.Error("expected HasDetectedResources to be false with empty deps")
+		t.Error("expected no detected resources with empty deps")
 	}
 }
 
 func TestResourceManager_GetResourcePath(t *testing.T) {
-	rm := NewResourceManager(nil, nil)
-	path := rm.GetResourcePath("next")
+	rm := NewResourceManager(nil, nil, "npm", "/tmp/test")
+	path := rm.GetResourcePath("next@15.0.0")
 
 	if path == "" {
 		t.Error("expected non-empty path")
 	}
-	if !filepath.IsAbs(path) || !filepath.IsAbs(rm.GetCacheDir()) {
-		// At least one should be abs or both should end with the name
-	}
-	if filepath.Base(path) != "next" {
-		t.Errorf("expected path to end with 'next', got '%s'", path)
+	if filepath.Base(path) != "next@15.0.0" {
+		t.Errorf("expected path to end with 'next@15.0.0', got '%s'", path)
 	}
 }
 
@@ -136,17 +100,18 @@ func TestResourceRegistry_UpdateAndGet(t *testing.T) {
 	}
 
 	// Update a repo
-	reg.UpdateRepo("test", &CachedRepo{
-		URL:    "https://example.com/test",
-		Branch: "main",
-		Commit: "abc123",
-		Size:   1024,
+	reg.UpdateRepo("test@1.0.0", &CachedRepo{
+		URL:     "https://example.com/test",
+		Tag:     "v1.0.0",
+		Version: "1.0.0",
+		Commit:  "abc123",
+		Size:    1024,
 	})
 
 	// Get it back
-	repo := reg.GetRepo("test")
+	repo := reg.GetRepo("test@1.0.0")
 	if repo == nil {
-		t.Fatal("expected to get repo 'test'")
+		t.Fatal("expected to get repo 'test@1.0.0'")
 	}
 	if repo.URL != "https://example.com/test" {
 		t.Errorf("unexpected URL: %s", repo.URL)
@@ -161,11 +126,12 @@ func TestResourceRegistry_SaveAndLoad(t *testing.T) {
 
 	// Create and save
 	reg, _ := LoadResourceRegistry(dir)
-	reg.UpdateRepo("test", &CachedRepo{
-		URL:    "https://example.com/test",
-		Branch: "main",
-		Commit: "abc123",
-		Size:   2048,
+	reg.UpdateRepo("test@2.0.0", &CachedRepo{
+		URL:     "https://example.com/test",
+		Tag:     "v2.0.0",
+		Version: "2.0.0",
+		Commit:  "abc123",
+		Size:    2048,
 	})
 	if err := reg.Save(dir); err != nil {
 		t.Fatalf("failed to save registry: %v", err)
@@ -177,9 +143,9 @@ func TestResourceRegistry_SaveAndLoad(t *testing.T) {
 		t.Fatalf("failed to load registry: %v", err)
 	}
 
-	repo := reg2.GetRepo("test")
+	repo := reg2.GetRepo("test@2.0.0")
 	if repo == nil {
-		t.Fatal("expected to find repo 'test' after reload")
+		t.Fatal("expected to find repo 'test@2.0.0' after reload")
 	}
 	if repo.URL != "https://example.com/test" {
 		t.Errorf("unexpected URL after reload: %s", repo.URL)
@@ -193,9 +159,9 @@ func TestResourceRegistry_ListCached(t *testing.T) {
 	dir := t.TempDir()
 
 	reg, _ := LoadResourceRegistry(dir)
-	reg.UpdateRepo("a", &CachedRepo{})
-	reg.UpdateRepo("b", &CachedRepo{})
-	reg.UpdateRepo("c", &CachedRepo{})
+	reg.UpdateRepo("a@1.0", &CachedRepo{})
+	reg.UpdateRepo("b@2.0", &CachedRepo{})
+	reg.UpdateRepo("c@3.0", &CachedRepo{})
 
 	cached := reg.ListCached()
 	if len(cached) != 3 {
@@ -224,23 +190,59 @@ func TestExpandHomePath(t *testing.T) {
 	}
 }
 
-func TestResourceManager_WithCustomResources(t *testing.T) {
-	custom := []Resource{
-		{Name: "my-lib", URL: "https://github.com/me/my-lib", Branch: "main"},
+func TestEnsureResourceSync_Disabled(t *testing.T) {
+	disabled := false
+	cfg := &ResolvedConfig{
+		Config: RalphConfig{
+			Resources: &ResourcesConfig{Enabled: &disabled},
+		},
 	}
-	cfg := &ResourcesConfig{Custom: custom}
-
-	rm := NewResourceManager(cfg, []string{"my-lib"})
-	detected := rm.ListDetected()
-
-	found := false
-	for _, d := range detected {
-		if d == "my-lib" {
-			found = true
-			break
-		}
+	codebaseCtx := &CodebaseContext{}
+	rm := ensureResourceSync(cfg, codebaseCtx)
+	if rm != nil {
+		t.Error("expected nil ResourceManager when resources disabled")
 	}
-	if !found {
-		t.Error("expected custom 'my-lib' to be detected")
+}
+
+func TestEnsureResourceSync_NoDeps(t *testing.T) {
+	cfg := &ResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config:      RalphConfig{},
+	}
+	codebaseCtx := &CodebaseContext{
+		TechStack:    "typescript",
+		Dependencies: []Dependency{},
+	}
+	rm := ensureResourceSync(cfg, codebaseCtx)
+	// Should return a ResourceManager even with no deps (no sync needed)
+	if rm == nil {
+		t.Error("expected non-nil ResourceManager")
+	}
+	if rm.HasDetectedResources() {
+		t.Error("expected no detected resources")
+	}
+}
+
+func TestGetCachedResources_Empty(t *testing.T) {
+	rm := NewResourceManager(nil, nil, "npm", t.TempDir())
+	cached := rm.GetCachedResources()
+	if len(cached) != 0 {
+		t.Errorf("expected 0 cached resources, got %d", len(cached))
+	}
+}
+
+func TestCachedResource_VersionField(t *testing.T) {
+	cr := CachedResource{
+		Name:    "zod",
+		Version: "3.24.4",
+		Path:    "/cache/zod@3.24.4",
+		URL:     "https://github.com/colinhacks/zod",
+		Ref:     "v3.24.4",
+	}
+	if cr.Version != "3.24.4" {
+		t.Errorf("expected version '3.24.4', got '%s'", cr.Version)
+	}
+	if cr.Ref != "v3.24.4" {
+		t.Errorf("expected ref 'v3.24.4', got '%s'", cr.Ref)
 	}
 }

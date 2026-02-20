@@ -2,163 +2,153 @@ package main
 
 import (
 	"testing"
+	"time"
 )
 
-func TestMapDependencyToResource_DirectMatch(t *testing.T) {
-	resources := DefaultResources
-
-	// Test direct match
-	r := MapDependencyToResource("next", resources)
-	if r == nil {
-		t.Fatal("expected to find 'next' resource")
+func TestResourceType_HasFields(t *testing.T) {
+	r := Resource{
+		Name:    "next",
+		URL:     "https://github.com/vercel/next.js",
+		Branch:  "v15.0.0",
+		Version: "15.0.0",
 	}
 	if r.Name != "next" {
-		t.Errorf("expected name 'next', got '%s'", r.Name)
+		t.Errorf("unexpected Name: %s", r.Name)
 	}
-	if r.URL != "https://github.com/vercel/next.js" {
-		t.Errorf("unexpected URL: %s", r.URL)
-	}
-}
-
-func TestMapDependencyToResource_ScopedPackage(t *testing.T) {
-	resources := DefaultResources
-
-	// Test scoped package match
-	r := MapDependencyToResource("@sveltejs/kit", resources)
-	if r == nil {
-		t.Fatal("expected to find '@sveltejs/kit' resource")
-	}
-	if r.Name != "@sveltejs/kit" {
-		t.Errorf("expected name '@sveltejs/kit', got '%s'", r.Name)
+	if r.Version != "15.0.0" {
+		t.Errorf("unexpected Version: %s", r.Version)
 	}
 }
 
-func TestMapDependencyToResource_RelatedPackage(t *testing.T) {
-	resources := DefaultResources
-
-	// Test related package match (react-dom -> react)
-	r := MapDependencyToResource("react-dom", resources)
-	if r == nil {
-		t.Fatal("expected to find resource for 'react-dom'")
-	}
-	if r.Name != "react" {
-		t.Errorf("expected 'react-dom' to map to 'react', got '%s'", r.Name)
-	}
-}
-
-func TestMapDependencyToResource_NoMatch(t *testing.T) {
-	resources := DefaultResources
-
-	// Test no match
-	r := MapDependencyToResource("some-unknown-package", resources)
-	if r != nil {
-		t.Errorf("expected nil for unknown package, got %+v", r)
-	}
-}
-
-func TestMapDependencyToResource_ScopedToBase(t *testing.T) {
-	resources := DefaultResources
-
-	// Test @next/font -> next
-	r := MapDependencyToResource("@next/font", resources)
-	if r == nil {
-		t.Fatal("expected to find resource for '@next/font'")
-	}
-	if r.Name != "next" {
-		t.Errorf("expected '@next/font' to map to 'next', got '%s'", r.Name)
-	}
-}
-
-func TestMergeWithCustom_Override(t *testing.T) {
-	custom := []Resource{
-		{Name: "next", URL: "https://custom.url/next", Branch: "custom-branch"},
+func TestResourceRegistry_ResolvedURLCache(t *testing.T) {
+	dir := t.TempDir()
+	reg, err := LoadResourceRegistry(dir)
+	if err != nil {
+		t.Fatalf("failed to load registry: %v", err)
 	}
 
-	merged := MergeWithCustom(custom)
-
-	// Find next in merged
-	var next *Resource
-	for i := range merged {
-		if merged[i].Name == "next" {
-			next = &merged[i]
-			break
-		}
+	// Not cached yet
+	if _, ok := reg.GetResolvedURL("zod"); ok {
+		t.Error("expected no cached URL for 'zod'")
 	}
 
-	if next == nil {
-		t.Fatal("expected to find 'next' in merged resources")
+	// Set and get
+	reg.SetResolvedURL("zod", "https://github.com/colinhacks/zod")
+	url, ok := reg.GetResolvedURL("zod")
+	if !ok {
+		t.Fatal("expected cached URL for 'zod'")
 	}
-	if next.URL != "https://custom.url/next" {
-		t.Errorf("expected custom URL, got '%s'", next.URL)
+	if url != "https://github.com/colinhacks/zod" {
+		t.Errorf("unexpected URL: %s", url)
 	}
-	if next.Branch != "custom-branch" {
-		t.Errorf("expected custom branch, got '%s'", next.Branch)
+
+	// Persist and reload
+	if err := reg.Save(dir); err != nil {
+		t.Fatalf("failed to save: %v", err)
+	}
+	reg2, err := LoadResourceRegistry(dir)
+	if err != nil {
+		t.Fatalf("failed to reload: %v", err)
+	}
+	url2, ok := reg2.GetResolvedURL("zod")
+	if !ok || url2 != url {
+		t.Errorf("expected persisted URL, got ok=%v url=%s", ok, url2)
 	}
 }
 
-func TestMergeWithCustom_Add(t *testing.T) {
-	custom := []Resource{
-		{Name: "my-custom-lib", URL: "https://github.com/me/my-lib", Branch: "main"},
+func TestResourceRegistry_Unresolvable(t *testing.T) {
+	dir := t.TempDir()
+	reg, _ := LoadResourceRegistry(dir)
+
+	if reg.IsUnresolvable("unknown-pkg") {
+		t.Error("should not be unresolvable before marking")
 	}
 
-	merged := MergeWithCustom(custom)
+	reg.MarkUnresolvable("unknown-pkg")
 
-	// Find custom lib in merged
-	var customLib *Resource
-	for i := range merged {
-		if merged[i].Name == "my-custom-lib" {
-			customLib = &merged[i]
-			break
-		}
+	if !reg.IsUnresolvable("unknown-pkg") {
+		t.Error("should be unresolvable after marking")
 	}
 
-	if customLib == nil {
-		t.Fatal("expected to find 'my-custom-lib' in merged resources")
-	}
-	if customLib.URL != "https://github.com/me/my-lib" {
-		t.Errorf("expected custom URL, got '%s'", customLib.URL)
-	}
-
-	// Verify defaults are still present
-	var next *Resource
-	for i := range merged {
-		if merged[i].Name == "next" {
-			next = &merged[i]
-			break
-		}
-	}
-	if next == nil {
-		t.Error("expected default 'next' resource to still be present")
+	// Persist and reload
+	reg.Save(dir)
+	reg2, _ := LoadResourceRegistry(dir)
+	if !reg2.IsUnresolvable("unknown-pkg") {
+		t.Error("unresolvable status should persist")
 	}
 }
 
-func TestDefaultResourcesHasExpectedEntries(t *testing.T) {
-	expected := []string{"next", "react", "svelte", "vue", "tailwindcss", "prisma", "vitest", "vite", "phoenix", "ecto", "phoenix_live_view"}
+func TestResourceRegistry_UnresolvableExpiry(t *testing.T) {
+	reg := &ResourceRegistry{
+		Repos:        make(map[string]*CachedRepo),
+		Unresolvable: map[string]time.Time{
+			"old-pkg": time.Now().Add(-8 * 24 * time.Hour), // 8 days ago → expired
+		},
+	}
 
-	for _, name := range expected {
-		found := false
-		for _, r := range DefaultResources {
-			if r.Name == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected default resource '%s' to exist", name)
-		}
+	if reg.IsUnresolvable("old-pkg") {
+		t.Error("expired unresolvable entry should not be considered unresolvable")
 	}
 }
 
-func TestDefaultResourcesHaveValidFields(t *testing.T) {
-	for _, r := range DefaultResources {
-		if r.Name == "" {
-			t.Error("resource has empty name")
-		}
-		if r.URL == "" {
-			t.Errorf("resource '%s' has empty URL", r.Name)
-		}
-		if r.Branch == "" {
-			t.Errorf("resource '%s' has empty branch", r.Name)
-		}
+func TestResourceRegistry_ResolvedURLExpiry(t *testing.T) {
+	reg := &ResourceRegistry{
+		Repos: make(map[string]*CachedRepo),
+		Resolved: map[string]*ResolvedEntry{
+			"old-pkg": {
+				URL:        "https://github.com/old/repo",
+				ResolvedAt: time.Now().Add(-31 * 24 * time.Hour), // 31 days ago → expired
+			},
+			"fresh-pkg": {
+				URL:        "https://github.com/fresh/repo",
+				ResolvedAt: time.Now().Add(-1 * 24 * time.Hour), // 1 day ago → fresh
+			},
+		},
+	}
+
+	// Old entry should be expired
+	if _, ok := reg.GetResolvedURL("old-pkg"); ok {
+		t.Error("expired resolved URL should not be returned")
+	}
+
+	// Fresh entry should still be valid
+	url, ok := reg.GetResolvedURL("fresh-pkg")
+	if !ok || url != "https://github.com/fresh/repo" {
+		t.Errorf("fresh resolved URL should be returned, got ok=%v url=%s", ok, url)
+	}
+}
+
+func TestCachedRepo_VersionField(t *testing.T) {
+	dir := t.TempDir()
+	reg, _ := LoadResourceRegistry(dir)
+
+	reg.UpdateRepo("zod@3.24.4", &CachedRepo{
+		URL:     "https://github.com/colinhacks/zod",
+		Tag:     "v3.24.4",
+		Version: "3.24.4",
+		Commit:  "abc123",
+		Size:    1024,
+	})
+
+	repo := reg.GetRepo("zod@3.24.4")
+	if repo == nil {
+		t.Fatal("expected to get repo")
+	}
+	if repo.Version != "3.24.4" {
+		t.Errorf("expected version '3.24.4', got '%s'", repo.Version)
+	}
+	if repo.Tag != "v3.24.4" {
+		t.Errorf("expected tag 'v3.24.4', got '%s'", repo.Tag)
+	}
+
+	// Save and reload
+	reg.Save(dir)
+	reg2, _ := LoadResourceRegistry(dir)
+	repo2 := reg2.GetRepo("zod@3.24.4")
+	if repo2 == nil {
+		t.Fatal("expected to find repo after reload")
+	}
+	if repo2.Version != "3.24.4" {
+		t.Errorf("version not persisted: %s", repo2.Version)
 	}
 }
