@@ -420,13 +420,13 @@ stateDiagram-v2
     Pending --> Passed: Verify succeeds
     Pending --> Failed: STUCK / no DONE / no commit / verify fails
 
-    Failed --> Pending: Retry
-    Failed --> Skipped: Max retries exceeded
+    Failed --> Pending: Retry (retries < maxRetries)
+    Failed --> Skipped: Auto-skip (retries ≥ maxRetries)
 
-    Passed --> Pending: Regression detected
+    Passed --> Pending: Verify-at-top detects regression
 
-    Passed --> [*]
-    Skipped --> [*]
+    Passed --> [*]: All stories complete
+    Skipped --> [*]: Doesn't block completion
 
     classDef pending fill:#dbeafe,stroke:#3b82f6,color:#1e40af
     classDef passed fill:#d1fae5,stroke:#10b981,color:#065f46
