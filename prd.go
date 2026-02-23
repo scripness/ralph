@@ -387,12 +387,17 @@ func commitPrdFile(cfg *ResolvedConfig, path, message string) {
 	}
 }
 
-// promptYesNo prompts for a yes/no answer
+// promptYesNo prompts for a yes/no answer.
+// Returns false on EOF/error (safe default — declines interactive sessions).
 func promptYesNo(question string) bool {
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Printf("%s (y/n): ", question)
-		input, _ := reader.ReadString('\n')
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println()
+			return false
+		}
 		input = strings.TrimSpace(strings.ToLower(input))
 		if input == "y" || input == "yes" {
 			return true
@@ -404,13 +409,18 @@ func promptYesNo(question string) bool {
 	}
 }
 
-// promptChoice prompts for a choice from options
+// promptChoice prompts for a choice from options.
+// Returns empty string on EOF/error (callers handle unknown values).
 func promptChoice(question string, options []string) string {
 	reader := bufio.NewReader(os.Stdin)
 	optStr := strings.Join(options, "/")
 	for {
 		fmt.Printf("%s (%s): ", question, optStr)
-		input, _ := reader.ReadString('\n')
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println()
+			return ""
+		}
 		input = strings.TrimSpace(strings.ToLower(input))
 		for _, opt := range options {
 			if input == opt {
