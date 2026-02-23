@@ -231,6 +231,41 @@ func TestGetCachedResources_Empty(t *testing.T) {
 	}
 }
 
+func TestEnsureResources_VersionedRepoEmptyBranch_SkipsSync(t *testing.T) {
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "cache")
+	os.MkdirAll(cacheDir, 0755)
+
+	rm := &ResourceManager{
+		cacheDir: cacheDir,
+		detected: map[string]*Resource{
+			"pino-pretty@13.0.0": {
+				Name:    "pino-pretty",
+				URL:     "https://github.com/pinojs/pino-pretty",
+				Branch:  "", // empty — resolved via URL cache, no tag info
+				Version: "13.0.0",
+			},
+		},
+	}
+
+	// Create a fake cached repo so Exists() returns true
+	repoPath := filepath.Join(cacheDir, "pino-pretty@13.0.0")
+	os.MkdirAll(filepath.Join(repoPath, ".git"), 0755)
+
+	// Load a minimal registry
+	reg, _ := LoadResourceRegistry(cacheDir)
+	rm.registry = reg
+
+	// EnsureResources should skip sync (no IsUpToDate/Pull calls)
+	// because Version is set — content is immutable
+	err := rm.EnsureResources()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// If it tried to sync, it would fail with git errors on the fake repo.
+	// Success means it correctly skipped.
+}
+
 func TestCachedResource_VersionField(t *testing.T) {
 	cr := CachedResource{
 		Name:    "zod",

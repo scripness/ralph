@@ -142,10 +142,9 @@ func (rm *ResourceManager) EnsureResources() error {
 		gitOps := NewExternalGitOps(repoPath, r.URL, ref)
 
 		if gitOps.Exists() {
-			// Already cloned — for version-pinned repos, no sync needed
-			// (the tag content doesn't change)
-			if r.Version != "" && r.Branch != "" {
-				// Tag-based clone: content is immutable, skip sync
+			// Already cloned — versioned repos are immutable (version bumps
+			// produce a new cache key), so no sync is needed
+			if r.Version != "" {
 				continue
 			}
 			// Default branch clone: check for updates
@@ -174,7 +173,12 @@ func (rm *ResourceManager) EnsureResources() error {
 					r.Branch = tag
 					gitOps = NewExternalGitOps(repoPath, r.URL, tag)
 				} else {
-					fmt.Printf("  Warning: no version tag found for %s v%s, using default branch\n", r.Name, r.Version)
+					// Detect actual default branch (may be master, develop, etc.)
+					detected := DetectDefaultBranch(r.URL)
+					if detected != ref {
+						gitOps = NewExternalGitOps(repoPath, r.URL, detected)
+					}
+					fmt.Printf("  Warning: no version tag found for %s v%s, using default branch (%s)\n", r.Name, r.Version, detected)
 				}
 			}
 

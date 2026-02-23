@@ -99,6 +99,14 @@ func TestExternalGitOps_GetRepoSize_NoRepo(t *testing.T) {
 	}
 }
 
+func TestDetectDefaultBranch_Fallback(t *testing.T) {
+	// Invalid URL should fall back to "main"
+	branch := DetectDefaultBranch("https://invalid-url-that-wont-work.example.com/repo")
+	if branch != "main" {
+		t.Errorf("expected fallback to 'main', got '%s'", branch)
+	}
+}
+
 func TestExternalGitOps_GetRepoSize_WithFiles(t *testing.T) {
 	dir := t.TempDir()
 	repoPath := dir

@@ -145,6 +145,29 @@ func (g *ExternalGitOps) Exists() bool {
 	return err == nil && info.IsDir()
 }
 
+// DetectDefaultBranch uses git ls-remote to detect a remote repo's default branch.
+// Falls back to "main" if detection fails.
+func DetectDefaultBranch(url string) string {
+	cmd := exec.Command("git", "ls-remote", "--symref", url, "HEAD")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	output, err := cmd.Output()
+	if err != nil {
+		return "main"
+	}
+	// Output format: "ref: refs/heads/<branch>\tHEAD\n<hash>\tHEAD\n"
+	// strings.Fields splits on all whitespace (spaces + tabs), producing:
+	//   ["ref:", "refs/heads/<branch>", "HEAD"]
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(line, "ref: refs/heads/") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				return strings.TrimPrefix(parts[1], "refs/heads/")
+			}
+		}
+	}
+	return "main"
+}
+
 // GetRepoSize returns the approximate size of the repo in bytes.
 func (g *ExternalGitOps) GetRepoSize() (int64, error) {
 	var size int64
