@@ -296,6 +296,7 @@ Features live in date-prefixed directories under `.ralph/` (e.g., `.ralph/2024-0
 
 | Section | Field | Default | Description |
 |---------|-------|---------|-------------|
+| root | `project` | auto (repo dir name) | Project name injected into PRD finalization |
 | root | `maxRetries` | `3` | Failed attempts per story before auto-skip |
 | provider | `command` | **required** | AI CLI command |
 | provider | `args` | auto | Arguments passed to provider |

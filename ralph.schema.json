@@ -8,6 +8,10 @@
       "type": "string",
       "description": "JSON Schema reference for editor autocompletion"
     },
+    "project": {
+      "type": "string",
+      "description": "Project name (auto-derived from repository directory during ralph init)"
+    },
     "maxRetries": {
       "type": "integer",
       "minimum": 1,

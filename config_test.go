@@ -184,6 +184,45 @@ func TestWriteDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestWriteDefaultConfig_PersistsProject(t *testing.T) {
+	dir := t.TempDir()
+
+	err := WriteDefaultConfig(dir, "my-app", "claude", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("failed to load written config: %v", err)
+	}
+
+	if cfg.Config.Project != "my-app" {
+		t.Errorf("expected project='my-app', got %q", cfg.Config.Project)
+	}
+}
+
+func TestLoadConfig_BackfillsProjectFromDirName(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write config without project field
+	err := WriteDefaultConfig(dir, "", "claude", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	// Should backfill from directory name
+	expected := filepath.Base(dir)
+	if cfg.Config.Project != expected {
+		t.Errorf("expected project=%q (from dir name), got %q", expected, cfg.Config.Project)
+	}
+}
+
 func TestApplyProviderDefaults_AllProviders(t *testing.T) {
 	tests := []struct {
 		name          string

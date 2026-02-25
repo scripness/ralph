@@ -104,6 +104,11 @@ func LoadConfig(projectRoot string) (*ResolvedConfig, error) {
 		return nil, fmt.Errorf("invalid ralph.config.json: %w", err)
 	}
 
+	// Backward compatibility: older configs may not have "project".
+	if cfg.Project == "" {
+		cfg.Project = filepath.Base(projectRoot)
+	}
+
 	// Apply defaults
 	if cfg.MaxRetries <= 0 {
 		cfg.MaxRetries = 3
