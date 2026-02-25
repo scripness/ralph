@@ -420,7 +420,7 @@ Run with `go test ./...` or `go test -v ./...` for verbose output.
 9. **PRD Refinement** — Conditional: resets skipped stories in run-state.json if not all passed
 10. **Second Run** — Conditional: re-run with refined PRD (20 min timeout)
 11. **Status + Logs** — status (no-arg), logs --list/--summary/--json/--run/--type/--story
-12. **ralph verify** — Conditional: verification if all stories passed
+12. **ralph verify** — Requires all stories passed, fails test otherwise
 13. **Post-Run Doctor** — Verify doctor still passes after full run (no stale locks, etc.)
 14. **Report** — Comprehensive summary with per-story breakdown
 
