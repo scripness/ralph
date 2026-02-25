@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## Maintenance Rule
+
+Do not bloat this file. Only add non-obvious invariants and gotchas that cannot be inferred by reading the code. If the code explains it, it doesn't belong here. Prefer reading source files over expanding this document.
+
 ## Project Overview
 
 Ralph v2 is a Go CLI that orchestrates AI coding agents to autonomously implement software features defined in a PRD. It spawns fresh AI instances per user story, verifies each with automated tests, persists learnings, and repeats until all stories pass. Complete rewrite of [snarktank/ralph](https://github.com/snarktank/ralph).
