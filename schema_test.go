@@ -596,6 +596,91 @@ func TestNewRunState(t *testing.T) {
 	}
 }
 
+func TestIsAttempted_FalseForUnknown(t *testing.T) {
+	state := NewRunState()
+	if state.IsAttempted("US-999") {
+		t.Error("expected IsAttempted=false for unknown story")
+	}
+}
+
+func TestMarkAttempted(t *testing.T) {
+	state := NewRunState()
+	state.MarkAttempted("US-001")
+
+	if !state.IsAttempted("US-001") {
+		t.Error("expected IsAttempted=true after MarkAttempted")
+	}
+	if state.IsAttempted("US-002") {
+		t.Error("expected IsAttempted=false for unattempted story")
+	}
+}
+
+func TestMarkAttempted_Idempotent(t *testing.T) {
+	state := NewRunState()
+	state.MarkAttempted("US-001")
+	state.MarkAttempted("US-001")
+	state.MarkAttempted("US-001")
+
+	if len(state.Attempted) != 1 {
+		t.Errorf("expected 1 entry after idempotent MarkAttempted, got %d", len(state.Attempted))
+	}
+}
+
+func TestIsAttempted_NilSlice(t *testing.T) {
+	// Simulates loading old run-state.json without "attempted" field
+	state := &RunState{
+		Passed:  []string{},
+		Skipped: []string{},
+	}
+	if state.IsAttempted("US-001") {
+		t.Error("expected IsAttempted=false on nil Attempted slice")
+	}
+}
+
+func TestSaveLoadRunState_AttemptedRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "run-state.json")
+
+	original := NewRunState()
+	original.MarkAttempted("US-001")
+	original.MarkAttempted("US-003")
+
+	if err := SaveRunState(statePath, original); err != nil {
+		t.Fatalf("SaveRunState failed: %v", err)
+	}
+
+	loaded, err := LoadRunState(statePath)
+	if err != nil {
+		t.Fatalf("LoadRunState failed: %v", err)
+	}
+	if !loaded.IsAttempted("US-001") {
+		t.Error("expected US-001 attempted after roundtrip")
+	}
+	if !loaded.IsAttempted("US-003") {
+		t.Error("expected US-003 attempted after roundtrip")
+	}
+	if loaded.IsAttempted("US-002") {
+		t.Error("expected US-002 not attempted after roundtrip")
+	}
+}
+
+func TestLoadRunState_MissingAttemptedField(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "run-state.json")
+
+	// Write old-format run-state.json without "attempted" field
+	oldJSON := `{"passed":["US-001"],"skipped":[]}`
+	os.WriteFile(statePath, []byte(oldJSON), 0644)
+
+	loaded, err := LoadRunState(statePath)
+	if err != nil {
+		t.Fatalf("LoadRunState failed: %v", err)
+	}
+	if loaded.IsAttempted("US-001") {
+		t.Error("expected IsAttempted=false when field missing from JSON")
+	}
+}
+
 func TestGetRetries_ZeroForUnknown(t *testing.T) {
 	state := NewRunState()
 	if state.GetRetries("US-999") != 0 {

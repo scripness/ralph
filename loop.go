@@ -204,10 +204,10 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		}
 
 		// Verify-at-top: if this story already passes, mark it and skip implementation.
-		// Only runs when the branch has non-.ralph/ changes (real implementation work).
-		// On fresh branches with only PRD state, skip verify-at-top to avoid false positives
-		// where the existing test suite passes vacuously (it doesn't test the new feature yet).
-		if !state.IsPassed(story.ID) && git.HasNonRalphChanges() {
+		// Only runs for stories that were previously attempted (given to a provider).
+		// This prevents false positives where a story's generic tests pass vacuously
+		// before any story-specific implementation exists on the branch.
+		if !state.IsPassed(story.ID) && state.IsAttempted(story.ID) {
 			verifyResult, verifyErr := runStoryVerification(cfg, featureDir, story, svcMgr, logger)
 			if verifyErr == nil && verifyResult.passed {
 				logger.LogPrint("\n✓ %s already passes verification, marking complete\n", story.ID)
@@ -232,6 +232,9 @@ func runLoop(cfg *ResolvedConfig, featureDir *FeatureDir) error {
 		// Log iteration and story start
 		logger.SetCurrentStory(story.ID)
 		logger.IterationStart(story.ID, story.Title, state.GetRetries(story.ID))
+
+		// Mark story as attempted before provider spawn (enables verify-at-top on restart)
+		state.MarkAttempted(story.ID)
 
 		// Commit state change
 		if cfg.Config.Commits.PrdChanges {

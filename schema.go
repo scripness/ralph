@@ -38,6 +38,7 @@ type RunState struct {
 	Retries     map[string]int    `json:"retries,omitempty"`
 	LastFailure map[string]string `json:"lastFailure,omitempty"`
 	Learnings   []string          `json:"learnings,omitempty"`
+	Attempted   []string          `json:"attempted,omitempty"`
 }
 
 // NewRunState creates an empty RunState.
@@ -131,6 +132,24 @@ func (s *RunState) GetRetries(id string) int {
 // GetLastFailure returns the last failure reason for a story ("" if none).
 func (s *RunState) GetLastFailure(id string) string {
 	return s.LastFailure[id]
+}
+
+// IsAttempted returns true if the story has been given to a provider at least once.
+func (s *RunState) IsAttempted(id string) bool {
+	for _, a := range s.Attempted {
+		if a == id {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkAttempted records that a story was given to a provider. Idempotent.
+func (s *RunState) MarkAttempted(id string) {
+	if s.IsAttempted(id) {
+		return
+	}
+	s.Attempted = append(s.Attempted, id)
 }
 
 // normalizeLearning normalizes a learning string for deduplication comparison.
