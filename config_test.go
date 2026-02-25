@@ -169,7 +169,7 @@ func TestIsCommandAvailable(t *testing.T) {
 func TestWriteDefaultConfig(t *testing.T) {
 	dir := t.TempDir()
 
-	err := WriteDefaultConfig(dir, "claude", nil, nil)
+	err := WriteDefaultConfig(dir, "", "claude", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestWriteDefaultConfig_AutoDetection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 
-			err := WriteDefaultConfig(dir, tt.command, nil, nil)
+			err := WriteDefaultConfig(dir, "", tt.command, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -819,7 +819,7 @@ func TestWriteDefaultConfig_WithVerifyCommands(t *testing.T) {
 	dir := t.TempDir()
 
 	commands := []string{"go vet ./...", "golangci-lint run", "go test ./..."}
-	err := WriteDefaultConfig(dir, "claude", commands, nil)
+	err := WriteDefaultConfig(dir, "", "claude", commands, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -846,7 +846,7 @@ func TestWriteDefaultConfig_WithVerifyCommands(t *testing.T) {
 func TestWriteDefaultConfig_EmptyVerifyCommands(t *testing.T) {
 	dir := t.TempDir()
 
-	err := WriteDefaultConfig(dir, "claude", []string{}, nil)
+	err := WriteDefaultConfig(dir, "", "claude", []string{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -865,7 +865,7 @@ func TestWriteDefaultConfig_EmptyVerifyCommands(t *testing.T) {
 func TestWriteDefaultConfig_NoCommitsMessage(t *testing.T) {
 	dir := t.TempDir()
 
-	err := WriteDefaultConfig(dir, "claude", nil, nil)
+	err := WriteDefaultConfig(dir, "", "claude", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

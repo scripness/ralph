@@ -260,6 +260,7 @@ Features live in date-prefixed directories under `.ralph/` (e.g., `.ralph/2024-0
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/scripness/ralph/main/ralph.schema.json",
+  "project": "my-app",
   "maxRetries": 3,
   "provider": {
     "command": "claude",

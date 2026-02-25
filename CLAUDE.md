@@ -183,6 +183,7 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/scripness/ralph/main/ralph.schema.json",
+  "project": "my-app",
   "maxRetries": 3,
   "provider": {
     "command": "claude"
@@ -217,7 +218,7 @@ The fundamental shift: v1 trusted the AI to manage its own workflow. v2 treats t
 }
 ```
 
-`promptMode`, `promptFlag`, `args`, and `knowledgeFile` are auto-detected from `provider.command` if not set. Only `command` is required. `verify.timeout` sets the per-command timeout in seconds (default: 300). `logging` controls the observability system (all options default to shown values). `resources` configures framework source code caching (enabled by default). Dependencies are auto-resolved from project manifests and cached at version-specific paths (e.g., `~/.ralph/resources/zod@3.24.4/`).
+`project` is auto-derived from the repository directory name during `ralph init`. `promptMode`, `promptFlag`, `args`, and `knowledgeFile` are auto-detected from `provider.command` if not set. Only `command` is required. `verify.timeout` sets the per-command timeout in seconds (default: 300). `logging` controls the observability system (all options default to shown values). `resources` configures framework source code caching (enabled by default). Dependencies are auto-resolved from project manifests and cached at version-specific paths (e.g., `~/.ralph/resources/zod@3.24.4/`).
 
 ## PRD Schema (v3) — State Separation
 
@@ -300,6 +301,7 @@ Story lifecycle: `pending` -> provider implements -> CLI verifies -> `passed` or
 - **AI deep verification**: `ralph verify` always runs an AI subagent after mechanical checks. The subagent reads changed files, checks acceptance criteria, verifies best practices, and outputs `VERIFY_PASS` or `VERIFY_FAIL:reason` markers. `runVerifySubagent()` spawns the provider non-interactively and scans for these markers. Multiple `VERIFY_FAIL` markers are collected. NOT run during `ralph run` (per-story verification stays fast).
 - **Branch from default branch**: `cmdPrd` passes `git.DefaultBranch()` as startPoint to `EnsureBranch`, so new feature branches always start from main/master instead of the current HEAD. `EnsureBranch(branchName, startPoint ...string)` uses `CreateBranchFrom` when creating a new branch with a startPoint.
 - **$schema field**: `RalphConfig` has a `Schema string \`json:"$schema,omitempty"\`` field. `WriteDefaultConfig` includes a `$schema` URL pointing to `ralph.schema.json` for editor autocompletion. The value is ignored at runtime.
+- **Project name**: `RalphConfig` has a `Project string \`json:"project,omitempty"\`` field, auto-derived from the repository directory name during `ralph init`. Passed to `prd-finalize.md` as `{{project}}` so the AI writes the correct `project` field in prd.json instead of guessing from the PRD content.
 - **Git diff in verify prompt**: `GetDiffSummary()` provides `git diff --stat` output from the default branch to HEAD, used in verify-fix and refine prompts.
 - **KnowledgeFile change detection**: `HasFileChanged()` in git.go checks if a file was modified on the current branch vs default branch using `git diff --name-only`. Used in verification to report whether the knowledgeFile was updated.
 - **Commit-exists gate**: After provider signals DONE, CLI checks HEAD changed from pre-run snapshot (captured AFTER PRD commit to avoid false positives). No new commit = automatic retry counted toward maxRetries.
@@ -339,7 +341,7 @@ Each prompt template uses `{{var}}` placeholders replaced by `prompts.go`:
 | `verify-fix.md` | `project`, `description`, `branchName`, `progress`, `storyDetails`, `verifyResults`, `verifyCommands`, `learnings`, `knowledgeFile`, `serviceURLs`, `diffSummary`, `featureDir`, `resourceGuidance` |
 | `verify-analyze.md` | `project`, `description`, `branchName`, `criteriaChecklist`, `verifyResults`, `diffSummary`, `resourceGuidance` |
 | `prd-create.md` | `feature`, `outputPath`, `codebaseContext`, `resourceGuidance` |
-| `prd-finalize.md` | `feature`, `prdContent`, `outputPath`, `resourceGuidance` |
+| `prd-finalize.md` | `feature`, `project`, `prdContent`, `outputPath`, `resourceGuidance` |
 | `refine.md` | `feature`, `prdMdContent`, `prdJsonContent`, `progress`, `storyDetails`, `learnings`, `diffSummary`, `codebaseContext`, `verifyCommands`, `serviceURLs`, `knowledgeFile`, `branchName`, `featureDir`, `resourceGuidance` |
 | `consult.md` | `framework`, `frameworkPath`, `storyId`, `storyTitle`, `storyDescription`, `acceptanceCriteria`, `techStack` |
 | `consult-feature.md` | `framework`, `frameworkPath`, `feature`, `techStack` |

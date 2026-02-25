@@ -328,6 +328,7 @@ func buildRefinementStoryDetails(def *PRDDefinition, state *RunState) string {
 func generatePrdFinalizePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content, resourceGuidance string) string {
 	return getPrompt("prd-finalize", map[string]string{
 		"feature":          featureDir.Feature,
+		"project":          cfg.Config.Project,
 		"prdContent":       content,
 		"outputPath":       featureDir.PrdJsonPath(),
 		"resourceGuidance": resourceGuidance,

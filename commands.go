@@ -156,8 +156,12 @@ func cmdInit(args []string) {
 		os.Exit(1)
 	}
 
-	// Prompt user to select a provider
+	// Derive project name from directory
+	projectName := filepath.Base(projectRoot)
+
 	reader := bufio.NewReader(os.Stdin)
+
+	// Prompt user to select a provider
 	providerCommand := promptProviderSelection(reader)
 
 	// Detect verify commands from project config files
@@ -171,7 +175,7 @@ func cmdInit(args []string) {
 	svcConfig := promptServiceConfig(reader)
 
 	// Create ralph.config.json
-	if err := WriteDefaultConfig(projectRoot, providerCommand, verifyCommands, svcConfig); err != nil {
+	if err := WriteDefaultConfig(projectRoot, projectName, providerCommand, verifyCommands, svcConfig); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write config: %v\n", err)
 		os.Exit(1)
 	}
