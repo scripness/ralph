@@ -436,8 +436,15 @@ func (l *RunLogger) Error(msg string, err error) {
 func (l *RunLogger) LogPrint(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	if l.config != nil && l.config.ConsoleTimestamps {
-		timestamp := time.Now().Format("15:04:05")
-		fmt.Printf("[%s] %s", timestamp, msg)
+		// Print leading newlines before the timestamp so content stays aligned
+		for len(msg) > 0 && msg[0] == '\n' {
+			fmt.Print("\n")
+			msg = msg[1:]
+		}
+		if len(msg) > 0 {
+			timestamp := time.Now().Format("15:04:05")
+			fmt.Printf("[%s] %s", timestamp, msg)
+		}
 	} else {
 		fmt.Print(msg)
 	}
@@ -447,6 +454,11 @@ func (l *RunLogger) LogPrint(format string, args ...interface{}) {
 func (l *RunLogger) LogPrintln(args ...interface{}) {
 	msg := fmt.Sprint(args...)
 	if l.config != nil && l.config.ConsoleTimestamps {
+		// Print leading newlines before the timestamp so content stays aligned
+		for len(msg) > 0 && msg[0] == '\n' {
+			fmt.Print("\n")
+			msg = msg[1:]
+		}
 		timestamp := time.Now().Format("15:04:05")
 		fmt.Printf("[%s] %s\n", timestamp, msg)
 	} else {
