@@ -6,6 +6,18 @@ Ralph v2 is a Go CLI that orchestrates AI coding agents in an infinite loop to a
 
 The core idea ("the Ralph Pattern"): break work into small user stories, spawn fresh AI instances to implement them one at a time, verify each with automated tests, persist learnings for future iterations, and repeat until all stories pass.
 
+## Context File Strategy (Evidence-Based)
+
+Use this file as a high-signal operating manual, not a full repo dump.
+
+- Keep instructions minimal and actionable. Extra requirements increase agent steps/cost and can lower success.
+- Prefer non-obvious, repository-specific constraints (design intent, product invariants, gotchas) over obvious directory summaries.
+- Prefer deterministic enforcement (tests, linters, checks, hooks) over prose-only rules whenever possible.
+- Use positive, explicit instructions (what to do), not long lists of negatives.
+- Add or edit guidance only when a failure/retry revealed a durable lesson that should generalize to future tasks.
+- Do not add task-specific or one-off notes here; keep those in code comments, tests, commits, or issue/PR history.
+- Keep root guidance stable; add scoped `CLAUDE.md` files in subdirectories only when domain-specific constraints are genuinely different.
+
 ## Architecture
 
 ```
@@ -103,7 +115,7 @@ This is the most important architectural decision. In the original v1, the AI ag
 - **Local checks**: Run linters/tests before committing (as a sanity check)
 - **Git commits**: Commit implementation with `feat: US-XXX - Title` format
 - **Signal markers**: Output `<ralph>DONE</ralph>`, `<ralph>STUCK</ralph>`, etc.
-- **Knowledge updates**: Update AGENTS.md/CLAUDE.md with discovered patterns
+- **Knowledge updates**: Only update AGENTS.md/CLAUDE.md when a durable, non-obvious, repo-wide lesson was learned from this task
 - **Learnings**: Output `<ralph>LEARNING:...</ralph>` for cross-iteration memory
 - **Documentation verification**: Verify implementations using pre-digested framework guidance (provided by CLI consultation) or web search
 
@@ -489,9 +501,12 @@ Config: `.goreleaser.yaml`. Release workflow: `.github/workflows/release.yml`. C
 
 After completing any task or set of tasks that changes behavior, adds features, or modifies interfaces, you MUST verify that documentation and tests reflect the current state of the codebase. Nothing should be outdated.
 
+Before updating documentation, apply this filter: only add information that is durable, task-relevant, and not obvious from code discovery.
+
 ### Documentation sync
 
 1. **CLAUDE.md** — Check every section that could be affected by your changes:
+   - Update only when the change introduces a reusable repo-level rule/constraint. Skip one-off details.
    - Architecture table (file descriptions)
    - Codebase Patterns (any new or changed patterns)
    - Prompt Template Variables table (if you added/removed/renamed a `{{var}}`)
