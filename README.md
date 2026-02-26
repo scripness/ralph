@@ -11,7 +11,8 @@ curl -fsSL https://raw.githubusercontent.com/scripness/ralph/main/install.sh | b
 ralph init                # detect project, pick provider, configure verification
 ralph prd auth            # brainstorm and finalize a PRD with AI
 ralph run auth            # infinite loop until every story passes verification
-ralph verify auth         # comprehensive verification with AI deep analysis
+ralph verify auth         # comprehensive verification + archive to summary
+ralph refine auth         # interactive AI session using summary as context
 ```
 
 Ralph orchestrates AI coding agents in a deterministic loop: pick the next story, spawn a fresh AI instance, verify the implementation with your project's own test suite, persist learnings, repeat. The CLI controls everything — story selection, state management, verification, service lifecycle — while the AI provider is a pure code implementer.
@@ -45,25 +46,13 @@ Providers communicate with Ralph through three markers detected on stdout/stderr
 
 Markers are matched as whole lines (not substrings) to prevent spoofing.
 
-### Interactive PRD Workflow
+### PRD Workflow
 
-`ralph prd <feature>` drives a state machine that walks you through creating, refining, and finalizing a PRD:
+`ralph prd <feature>` creates and maintains your PRD:
 
 **New feature** — AI brainstorms a `prd.md` draft, then prompts you to finalize it into structured `prd.json`.
 
-**Draft exists** (prd.md, no prd.json):
-- Finalize to prd.json
-- Refine with AI
-- Edit prd.md manually
-- Quit
-
-**Finalized** (both files exist):
-- Refine with AI — opens an interactive session pre-loaded with the full feature context: PRD content, progress, learnings, git diff, codebase discovery, resource consultation guidance
-- Regenerate prd.json — safe because execution state lives in a separate `run-state.json`
-- Edit prd.md / Edit prd.json manually
-- Quit
-
-If `prd.json` is corrupted or has a wrong schema version, a recovery menu offers to regenerate or edit.
+**Existing PRD** — Opens an interactive AI session to refine `prd.md` (pre-loaded with codebase context, resource consultation, and the current PRD content), then auto-finalizes to `prd.json`. No menus — running `ralph prd` again always means "refine and re-finalize."
 
 ### Deterministic Agent Loop
 
@@ -74,7 +63,7 @@ If `prd.json` is corrupted or has a wrong schema version, a recovery menu offers
 3. **Pick next story** — highest priority, not passed, not skipped
 4. **Verify-at-top** — runs verification *before* spawning the provider. If the story already passes, marks it done and moves on. Skipped on fresh branches (no implementation commits yet) to prevent false positives
 5. **Resource consultation** — spawns lightweight subagents to search cached framework source and produce focused guidance
-6. **Spawn provider** — sends prompt with story details, learnings, consultation guidance, cross-feature learnings
+6. **Spawn provider** — sends prompt with story details, learnings, consultation guidance, previous work summaries
 7. **Detect markers** — scans provider output for DONE, STUCK, LEARNING
 8. **Commit check** — provider must have created a new git commit (DONE without a commit = failed attempt)
 9. **Verify** — runs typecheck, lint, test commands + service health checks. For `ui`-tagged stories: restarts services, runs e2e tests
@@ -96,6 +85,8 @@ SIGINT/SIGTERM triggers graceful cleanup: kills provider process group, stops se
 - Structured `VerifyReport` with PASS/FAIL/WARN items
 
 On failure, offers an interactive AI fix session pre-loaded with the full failure context.
+
+On success, offers to **archive the feature**: generates an AI summary of what was built (specifications, file map, patterns, gotchas), appends it to `.ralph/summary.md`, and deletes `prd.md` + `prd.json` + `run-state.json`. The summary is the sole historical record for future work via `ralph refine`.
 
 ### Framework Source Consultation
 
@@ -127,14 +118,13 @@ Ralph manages dev servers across the entire lifecycle:
 
 Service output is captured for diagnostics but not printed to the console. At least one service is required.
 
-### Cross-Feature Memory
+### Summary-Based Memory
 
-Learnings accumulate per feature in `run-state.json`. When running a new feature, Ralph automatically collects learnings from other completed features and includes them in the prompt — insights discovered during `auth` (e.g., "use bcrypt for password hashing") are available when implementing `billing`.
+After a feature is verified and archived, Ralph generates a dense technical summary and appends it to `.ralph/summary.md`. This summary — not the PRD files — is the permanent record of what was built.
 
-- Deduplicated via case-insensitive normalization
-- Capped at 50 most recent in prompts
-- Read-only aggregation — never copied between features
-- Only injected into the implementation prompt, not verify-fix or refine
+When running a new feature, Ralph injects `summary.md` into the implementation prompt as `{{previousWork}}` context. Insights from `auth` (e.g., "bcrypt for passwords, session middleware in middleware.ts") are available when implementing `billing`.
+
+`ralph refine <feature>` opens an interactive AI session using `summary.md` as the sole historical context. After the session, any new commits are summarized and appended to `summary.md`.
 
 ### Observability
 
@@ -154,7 +144,7 @@ ralph logs auth --json              # Raw JSONL for piping
 
 JSONL events (21 types) are auto-rotated to keep the last 10 runs per feature.
 
-**`ralph status [feature]`** — progress overview with per-story breakdown.
+**`ralph status [feature]`** — progress overview with per-story breakdown. Archived features show as `(archived)` with their summary excerpt.
 
 **`ralph doctor`** — environment checks: config validity, provider availability, `.ralph/` directory, `sh` and `git` in PATH, git repo status, directory writability, verify commands, feature listing, lock status.
 
@@ -206,7 +196,7 @@ Ralph detects your project's tech stack, package manager, and suggests verify co
 ralph prd auth
 ```
 
-AI brainstorms a `prd.md` describing your feature, then finalizes it into a structured `prd.json` with atomic user stories, acceptance criteria, tags, and priorities.
+AI brainstorms a `prd.md` describing your feature, then finalizes it into a structured `prd.json` with atomic user stories, acceptance criteria, tags, and priorities. Run it again to refine — opens an interactive AI session then auto-finalizes.
 
 Tips for effective PRDs:
 - Keep stories atomic — one concern per story
@@ -236,18 +226,25 @@ ralph verify auth         # Full verification with AI deep analysis
 ralph status auth         # Progress overview
 ```
 
-`ralph verify` runs all verification commands, checks service health, and spawns an AI subagent to review changed files against acceptance criteria. On failure, it offers an interactive fix session.
+`ralph verify` runs all verification commands, checks service health, and spawns an AI subagent to review changed files against acceptance criteria. On failure, it offers an interactive fix session. On success, it offers to archive the feature (generate summary, delete PRD/state files).
 
 ### Iterating
 
-The workflow is continuous: refine the PRD, re-run, verify-at-top catches already-done work.
+**Before first run** — refine the PRD by running `ralph prd` again:
 
 ```bash
-ralph prd auth            # Select "Refine with AI" — interactive session with full context
+ralph prd auth            # Opens AI refine session, then auto-finalizes
 ralph run auth            # Verify-at-top skips already-passing stories
 ```
 
-To handle skipped stories: refine acceptance criteria, reset retry counts in `run-state.json`, or regenerate `prd.json` (safe — execution state is separate).
+**After verification** — archive and refine:
+
+```bash
+ralph verify auth         # On success: archive (summary.md) + delete PRD files
+ralph refine auth         # Interactive AI session using summary.md as context
+```
+
+To handle skipped stories during a run: refine acceptance criteria via `ralph prd`, reset retry counts in `run-state.json`, or re-run (verify-at-top catches already-done work).
 
 ### Multiple Features
 
@@ -367,13 +364,16 @@ flowchart LR
     init["<b>ralph init</b><br/>Detect stack · Configure"]:::setup
     prd["<b>ralph prd</b><br/>Brainstorm · Finalize"]:::setup
     run["<b>ralph run</b><br/>Agent loop"]:::exec
-    verify["<b>ralph verify</b><br/>Tests + AI analysis"]:::exec
+    verify["<b>ralph verify</b><br/>Tests + AI + Archive"]:::exec
+    refine["<b>ralph refine</b><br/>Summary-based iteration"]:::iter
 
     init --> prd --> run --> verify
-    verify -. "refine & re-run" .-> prd
+    verify -. "refine PRD & re-run" .-> prd
+    verify -. "archive & iterate" .-> refine
 
     classDef setup fill:#f1f5f9,stroke:#94a3b8,stroke-width:1.5px,color:#334155
     classDef exec fill:#dbeafe,stroke:#3b82f6,stroke-width:1.5px,color:#1e40af
+    classDef iter fill:#d1fae5,stroke:#10b981,stroke-width:1.5px,color:#065f46
 ```
 
 ### The Agent Loop
@@ -455,10 +455,11 @@ This is the fundamental architectural decision: the AI is a pure code-writing to
 project/
 ├── ralph.config.json
 └── .ralph/
+    ├── summary.md                    # Archived feature summaries (AI-generated)
     ├── 2024-01-15-auth/
-    │   ├── prd.md                    # Human-readable PRD
-    │   ├── prd.json                  # Story definitions (v3 schema)
-    │   ├── run-state.json            # Execution state (passed, skipped, retries, learnings)
+    │   ├── prd.md                    # Human-readable PRD (deleted after archive)
+    │   ├── prd.json                  # Story definitions (deleted after archive)
+    │   ├── run-state.json            # Execution state (deleted after archive)
     │   ├── consultations/            # Cached framework consultation results
     │   │   ├── a1b2c3d4...sha.md
     │   │   └── e5f6g7h8...sha.md

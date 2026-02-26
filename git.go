@@ -98,6 +98,25 @@ func (g *GitOps) CommitFile(filePath, message string) error {
 	return err
 }
 
+// CommitFiles stages multiple file paths (additions and deletions) and commits atomically.
+// Files that exist on disk are added; files that don't exist are staged as deletions.
+func (g *GitOps) CommitFiles(filePaths []string, message string) error {
+	for _, fp := range filePaths {
+		if _, err := g.run("add", fp); err != nil {
+			return fmt.Errorf("failed to stage %s: %w", fp, err)
+		}
+	}
+
+	// Check if there are changes to commit
+	status, _ := g.run("status", "--porcelain")
+	if strings.TrimSpace(status) == "" {
+		return nil
+	}
+
+	_, err := g.run("commit", "-m", message)
+	return err
+}
+
 // GetLastCommit returns the last commit hash (full).
 func (g *GitOps) GetLastCommit() string {
 	out, err := g.run("rev-parse", "HEAD")

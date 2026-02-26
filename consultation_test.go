@@ -547,21 +547,17 @@ func TestGetPrompt_PrdCreateWithResourceGuidance(t *testing.T) {
 	}
 }
 
-func TestGetPrompt_RefineWithResourceGuidance(t *testing.T) {
-	prompt := getPrompt("refine", map[string]string{
+func TestGetPrompt_RefineSessionWithResourceGuidance(t *testing.T) {
+	prompt := getPrompt("refine-session", map[string]string{
 		"feature":          "auth",
-		"prdMdContent":     "# Auth",
-		"prdJsonContent":   "{}",
-		"progress":         "0/1",
-		"storyDetails":     "",
-		"learnings":        "",
+		"summary":          "Previous work summary.",
 		"diffSummary":      "",
 		"codebaseContext":  "",
-		"verifyCommands":   "",
-		"serviceURLs":      "",
-		"knowledgeFile":    "CLAUDE.md",
 		"branchName":       "ralph/auth",
 		"featureDir":       "/test",
+		"knowledgeFile":    "CLAUDE.md",
+		"verifyCommands":   "",
+		"serviceURLs":      "",
 		"resourceGuidance": "## Framework Guidance\n\nTest guidance",
 	})
 

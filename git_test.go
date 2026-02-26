@@ -131,6 +131,50 @@ func TestGitOps_CommitFile(t *testing.T) {
 	}
 }
 
+func TestGitOps_CommitFiles(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	// Add a new file and delete an existing one
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
+	os.Remove(filepath.Join(dir, "README.md"))
+
+	err := git.CommitFiles([]string{
+		filepath.Join(dir, "new.txt"),
+		filepath.Join(dir, "README.md"),
+	}, "multi-file commit")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the commit happened
+	hashAfter := git.GetLastCommit()
+	if hashAfter == "" {
+		t.Error("expected non-empty commit hash after CommitFiles")
+	}
+
+	// Verify working tree is clean
+	if !git.IsWorkingTreeClean() {
+		t.Error("expected clean working tree after CommitFiles")
+	}
+}
+
+func TestGitOps_CommitFiles_NoChanges(t *testing.T) {
+	_, git := initTestRepo(t)
+
+	hashBefore := git.GetLastCommit()
+
+	// Nothing changed — should be a no-op
+	err := git.CommitFiles([]string{}, "empty commit")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hashAfter := git.GetLastCommit()
+	if hashAfter != hashBefore {
+		t.Error("expected no new commit when nothing changed")
+	}
+}
+
 func TestGitOps_GetLastCommit(t *testing.T) {
 	_, git := initTestRepo(t)
 

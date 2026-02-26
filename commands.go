@@ -455,6 +455,12 @@ func cmdStatus(args []string) {
 
 		fmt.Println("Features:")
 		for _, f := range features {
+			// Check if archived (no PRD files but appears in summary.md)
+			if !f.HasPrdMd && !f.HasPrdJson && isFeatureArchived(projectRoot, f.Feature) {
+				fmt.Printf("  ✓ %s (archived)\n", f.Feature)
+				continue
+			}
+
 			status := "○"
 			if f.HasPrdJson {
 				def, defErr := LoadPRDDefinition(f.PrdJsonPath())
@@ -491,6 +497,13 @@ func cmdStatus(args []string) {
 	feature := args[0]
 	featureDir, err := FindFeatureDir(projectRoot, feature, false)
 	if err != nil {
+		// Feature dir not found — check if archived
+		if isFeatureArchived(projectRoot, feature) {
+			fmt.Printf("Feature: %s\n", feature)
+			fmt.Printf("Status: archived\n\n")
+			fmt.Printf("Use 'ralph refine %s' for further changes.\n", feature)
+			return
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -502,6 +515,9 @@ func cmdStatus(args []string) {
 		if featureDir.HasPrdMd {
 			fmt.Println("PRD drafted, not finalized")
 			fmt.Printf("\nRun 'ralph prd %s' to finalize.\n", feature)
+		} else if isFeatureArchived(projectRoot, feature) {
+			fmt.Println("archived")
+			fmt.Printf("\nUse 'ralph refine %s' for further changes.\n", feature)
 		} else {
 			fmt.Println("No PRD")
 			fmt.Printf("\nRun 'ralph prd %s' to create one.\n", feature)
@@ -562,6 +578,103 @@ func cmdStatus(args []string) {
 	}
 }
 
+
+func cmdRefine(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: ralph refine <feature>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Example: ralph refine auth")
+		os.Exit(1)
+	}
+
+	feature := args[0]
+	projectRoot := GetProjectRoot()
+
+	cfg, err := LoadConfig(projectRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	checkProviderAvailable(cfg)
+	checkGitAvailable()
+
+	// Find or create feature directory
+	featureDir, err := FindFeatureDir(projectRoot, feature, true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Determine branch
+	branchName := "ralph/" + feature
+	git := NewGitOps(projectRoot)
+
+	// Check if branch exists; if not, create from default branch
+	if branchExists, _ := git.run("rev-parse", "--verify", branchName); strings.TrimSpace(branchExists) == "" {
+		// Branch doesn't exist — create from default
+		if err := git.EnsureBranch(branchName, git.DefaultBranch()); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to create branch %s: %v\n", branchName, err)
+			os.Exit(1)
+		}
+	} else {
+		if err := git.EnsureBranch(branchName); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: failed to switch to branch %s: %v\n", branchName, err)
+			os.Exit(1)
+		}
+	}
+
+	// Read summary.md
+	summaryContent := LoadSummary(projectRoot)
+	if summaryContent == "" {
+		fmt.Fprintln(os.Stderr, "Warning: no summary.md found — starting with empty context.")
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	// Discover codebase and sync resources
+	codebaseCtx := DiscoverCodebase(projectRoot, &cfg.Config)
+	rm := ensureResourceSync(cfg, codebaseCtx)
+
+	// Feature-level consultation
+	var resourceGuidance string
+	if rm != nil && rm.HasDetectedResources() {
+		consultResult := ConsultResourcesForFeature(context.Background(), cfg, feature, rm, codebaseCtx, featureDir.Path)
+		resourceGuidance = FormatGuidance(consultResult)
+	} else {
+		resourceGuidance = buildResourceFallbackInstructions()
+	}
+
+	// Capture pre-session commit hash
+	preCommit, _ := git.run("rev-parse", "HEAD")
+	preCommit = strings.TrimSpace(preCommit)
+
+	// Generate prompt and open interactive session
+	codebaseStr := FormatCodebaseContext(codebaseCtx)
+	prompt := generateRefineSessionPrompt(cfg, featureDir, summaryContent, codebaseStr, resourceGuidance)
+
+	fmt.Printf("Feature: %s\n", feature)
+	fmt.Printf("Branch: %s\n", branchName)
+	fmt.Println()
+
+	if err := runProviderInteractive(cfg, prompt); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// After session ends: check if new commits exist
+	postCommit, _ := git.run("rev-parse", "HEAD")
+	postCommit = strings.TrimSpace(postCommit)
+
+	if postCommit != preCommit {
+		fmt.Println()
+		fmt.Println("Generating post-session summary...")
+		if err := generateRefineSummary(cfg, featureDir, preCommit); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to generate summary: %v\n", err)
+		} else {
+			fmt.Println("Summary appended to .ralph/summary.md")
+		}
+	}
+}
 
 func cmdDoctor(args []string) {
 	projectRoot := GetProjectRoot()

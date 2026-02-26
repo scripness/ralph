@@ -175,45 +175,44 @@ func newFeatureDir(ralphDir, feature string) *FeatureDir {
 	}
 }
 
-// CollectCrossFeatureLearnings aggregates learnings from other features' run-state.json files.
-// Skips the current feature (case-insensitive) and features with zero passed stories.
-// Returns deduplicated learnings, most-recent-feature first.
-func CollectCrossFeatureLearnings(projectRoot, excludeFeature string) []string {
-	features, err := ListFeatures(projectRoot)
+// SummaryPath returns the project-level summary.md path.
+func SummaryPath(projectRoot string) string {
+	return filepath.Join(projectRoot, ".ralph", "summary.md")
+}
+
+// LoadSummary reads .ralph/summary.md, returns content or empty string.
+func LoadSummary(projectRoot string) string {
+	data, err := os.ReadFile(SummaryPath(projectRoot))
 	if err != nil {
-		return nil
+		return ""
 	}
+	return string(data)
+}
 
-	// ListFeatures returns most-recent first (sorted by timestamp descending)
-	seen := make(map[string]bool)
-	var result []string
-
-	for _, f := range features {
-		if strings.EqualFold(f.Feature, excludeFeature) {
-			continue
-		}
-
-		state, err := LoadRunState(f.RunStatePath())
-		if err != nil || len(state.Learnings) == 0 {
-			continue
-		}
-
-		// Skip features with zero passed stories (abandoned/unused runs)
-		if CountPassed(state) == 0 {
-			continue
-		}
-
-		for _, l := range state.Learnings {
-			normalized := normalizeLearning(l)
-			if seen[normalized] {
-				continue
+// isFeatureArchived returns true if the feature name appears in summary.md
+// (indicating it was archived after successful verification).
+func isFeatureArchived(projectRoot, feature string) bool {
+	summary := LoadSummary(projectRoot)
+	if summary == "" {
+		return false
+	}
+	// Look for the feature header pattern: "## feature ("
+	// Case-insensitive match
+	lines := strings.Split(summary, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "## ") {
+			// Extract feature name from "## feature-name (date)"
+			rest := strings.TrimPrefix(line, "## ")
+			// Feature name is everything before the first " ("
+			if idx := strings.Index(rest, " ("); idx > 0 {
+				name := rest[:idx]
+				if strings.EqualFold(name, feature) {
+					return true
+				}
 			}
-			seen[normalized] = true
-			result = append(result, l)
 		}
 	}
-
-	return result
+	return false
 }
 
 // PrdMdPath returns the path to prd.md

@@ -223,123 +223,60 @@ func writeTestRunState(t *testing.T, featureDir string, state *RunState) {
 	}
 }
 
-func TestCollectCrossFeatureLearnings(t *testing.T) {
-	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-
-	// Feature A: has learnings + passed stories
-	featureA := filepath.Join(ralphDir, "2024-01-10-auth")
-	os.MkdirAll(featureA, 0755)
-	stateA := NewRunState()
-	stateA.MarkPassed("US-001")
-	stateA.Learnings = []string{"Use bcrypt for passwords", "Always validate input"}
-	writeTestRunState(t, featureA, stateA)
-
-	// Feature B: has learnings + passed stories, with one duplicate from A
-	featureB := filepath.Join(ralphDir, "2024-01-20-billing")
-	os.MkdirAll(featureB, 0755)
-	stateB := NewRunState()
-	stateB.MarkPassed("US-010")
-	stateB.Learnings = []string{"Stripe requires idempotency keys", "use bcrypt for passwords"} // dup of A
-	writeTestRunState(t, featureB, stateB)
-
-	result := CollectCrossFeatureLearnings(dir, "search") // exclude "search" (doesn't exist, fine)
-
-	if len(result) != 3 {
-		t.Fatalf("expected 3 deduplicated learnings, got %d: %v", len(result), result)
-	}
-
-	// Most recent first (billing is 2024-01-20, auth is 2024-01-10)
-	if result[0] != "Stripe requires idempotency keys" {
-		t.Errorf("expected first learning from most recent feature, got %q", result[0])
-	}
-
-	// The duplicate "use bcrypt for passwords" should be skipped, so the third
-	// should be "Always validate input" from auth
-	found := false
-	for _, l := range result {
-		if l == "Always validate input" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("expected 'Always validate input' from auth feature in results")
+func TestSummaryPath(t *testing.T) {
+	got := SummaryPath("/project")
+	want := "/project/.ralph/summary.md"
+	if got != want {
+		t.Errorf("SummaryPath() = %q, want %q", got, want)
 	}
 }
 
-func TestCollectCrossFeatureLearnings_ExcludesCurrent(t *testing.T) {
+func TestLoadSummary_Missing(t *testing.T) {
 	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-
-	featureA := filepath.Join(ralphDir, "2024-01-10-auth")
-	os.MkdirAll(featureA, 0755)
-	stateA := NewRunState()
-	stateA.MarkPassed("US-001")
-	stateA.Learnings = []string{"Should not appear"}
-	writeTestRunState(t, featureA, stateA)
-
-	result := CollectCrossFeatureLearnings(dir, "auth")
-	if len(result) != 0 {
-		t.Errorf("expected 0 learnings when only feature is excluded, got %d", len(result))
+	result := LoadSummary(dir)
+	if result != "" {
+		t.Errorf("expected empty string for missing summary, got %q", result)
 	}
 }
 
-func TestCollectCrossFeatureLearnings_SkipsNoPassedStories(t *testing.T) {
+func TestLoadSummary_Exists(t *testing.T) {
 	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
+	os.MkdirAll(filepath.Join(dir, ".ralph"), 0755)
+	content := "# Feature Summaries\n\n---\n\n## auth (2026-02-25)\n\nSummary content."
+	os.WriteFile(filepath.Join(dir, ".ralph", "summary.md"), []byte(content), 0644)
 
-	// Feature with learnings but no passed stories (abandoned)
-	featureA := filepath.Join(ralphDir, "2024-01-10-abandoned")
-	os.MkdirAll(featureA, 0755)
-	stateA := NewRunState()
-	stateA.Learnings = []string{"From abandoned feature"}
-	writeTestRunState(t, featureA, stateA)
-
-	// Feature with passed stories and learnings
-	featureB := filepath.Join(ralphDir, "2024-01-20-complete")
-	os.MkdirAll(featureB, 0755)
-	stateB := NewRunState()
-	stateB.MarkPassed("US-001")
-	stateB.Learnings = []string{"From complete feature"}
-	writeTestRunState(t, featureB, stateB)
-
-	result := CollectCrossFeatureLearnings(dir, "other")
-
-	if len(result) != 1 {
-		t.Fatalf("expected 1 learning (skipping abandoned), got %d: %v", len(result), result)
-	}
-	if result[0] != "From complete feature" {
-		t.Errorf("expected learning from complete feature, got %q", result[0])
+	result := LoadSummary(dir)
+	if result != content {
+		t.Errorf("LoadSummary() = %q, want %q", result, content)
 	}
 }
 
-func TestCollectCrossFeatureLearnings_Empty(t *testing.T) {
+func TestIsFeatureArchived(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, ".ralph"), 0755)
 
-	result := CollectCrossFeatureLearnings(dir, "anything")
-	if result != nil {
-		t.Errorf("expected nil for empty features, got %v", result)
+	content := "# Feature Summaries\n\n---\n\n## auth (2026-02-25)\n\nAuth summary.\n\n---\n\n## billing (2026-02-28)\n\nBilling summary.\n"
+	os.WriteFile(filepath.Join(dir, ".ralph", "summary.md"), []byte(content), 0644)
+
+	if !isFeatureArchived(dir, "auth") {
+		t.Error("expected auth to be archived")
+	}
+	if !isFeatureArchived(dir, "Auth") {
+		t.Error("expected case-insensitive match for Auth")
+	}
+	if !isFeatureArchived(dir, "billing") {
+		t.Error("expected billing to be archived")
+	}
+	if isFeatureArchived(dir, "search") {
+		t.Error("expected search to NOT be archived")
 	}
 }
 
-func TestCollectCrossFeatureLearnings_CaseInsensitive(t *testing.T) {
+func TestIsFeatureArchived_NoSummary(t *testing.T) {
 	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-
-	featureA := filepath.Join(ralphDir, "2024-01-10-auth")
-	os.MkdirAll(featureA, 0755)
-	stateA := NewRunState()
-	stateA.MarkPassed("US-001")
-	stateA.Learnings = []string{"Should be excluded"}
-	writeTestRunState(t, featureA, stateA)
-
-	// Exclude with different case
-	for _, name := range []string{"Auth", "AUTH", "AuTh"} {
-		result := CollectCrossFeatureLearnings(dir, name)
-		if len(result) != 0 {
-			t.Errorf("CollectCrossFeatureLearnings(exclude=%q) returned %d learnings, expected 0", name, len(result))
-		}
+	if isFeatureArchived(dir, "auth") {
+		t.Error("expected false when no summary.md exists")
 	}
 }
+
 

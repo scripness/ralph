@@ -1601,6 +1601,13 @@ func phase12Verify(t *testing.T, env *testEnv) {
 		}
 	}
 
+	// Archive prompt: when all stories pass, verify offers to archive.
+	// Since e2e runs non-interactively (stdin EOF), promptYesNo returns false
+	// and archiving is safely declined. Just log whether we saw it.
+	if strings.Contains(combined, "Archive this feature") {
+		t.Log("Archive prompt was printed and declined (EOF — expected in non-interactive e2e)")
+	}
+
 	// Copy updated logs after verify
 	logsDir := filepath.Join(featureDir, "logs")
 	if entries, err := os.ReadDir(logsDir); err == nil {
@@ -1755,11 +1762,12 @@ func writeReport(t *testing.T, env *testEnv) {
 		report.WriteString("\n")
 	}
 
-	// Copy final PRD + config to artifacts
+	// Copy final PRD + config + summary to artifacts
 	if featureDir != "" {
 		copyArtifact(env, "prd-final.json", filepath.Join(featureDir, "prd.json"))
 		copyArtifact(env, "prd-final.md", filepath.Join(featureDir, "prd.md"))
 		copyArtifact(env, "config.json", filepath.Join(env.projectDir, "ralph.config.json"))
+		copyArtifact(env, "summary.md", filepath.Join(env.projectDir, ".ralph", "summary.md"))
 	}
 
 	// ============================================================
