@@ -21,8 +21,8 @@ func generateRefineSummary(cfg *ResolvedConfig, featureDir *FeatureDir, preCommi
 	// Get diff stat
 	diffStat, _ := git.run("diff", "--stat", preCommit+"..HEAD")
 
-	// Load existing summary
-	summaryContent := LoadSummary(cfg.ProjectRoot)
+	// Load existing feature summary
+	summaryContent := LoadFeatureSummary(featureDir)
 
 	// Generate prompt
 	timestamp := time.Now().Format("2006-01-02")
@@ -34,13 +34,13 @@ func generateRefineSummary(cfg *ResolvedConfig, featureDir *FeatureDir, preCommi
 		return fmt.Errorf("failed to generate refine summary: %w", err)
 	}
 
-	// Append to summary.md
-	summaryPath := SummaryPath(cfg.ProjectRoot)
-	existing := LoadSummary(cfg.ProjectRoot)
+	// Append to feature's summary.md
+	summaryPath := featureDir.SummaryMdPath()
+	existing := LoadFeatureSummary(featureDir)
 
 	var content string
 	if existing == "" {
-		content = "# Feature Summaries\n\n---\n\n" + summary + "\n"
+		content = summary + "\n"
 	} else {
 		content = existing + "\n---\n\n" + summary + "\n"
 	}

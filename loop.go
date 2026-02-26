@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -1019,7 +1018,7 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance str
 				fmt.Println("Files were NOT deleted. You can retry with 'ralph verify " + featureDir.Feature + "'.")
 			} else {
 				fmt.Println()
-				fmt.Printf("✓ Feature '%s' archived to .ralph/summary.md\n", featureDir.Feature)
+				fmt.Printf("✓ Feature '%s' archived. Summary at %s\n", featureDir.Feature, featureDir.SummaryMdPath())
 				fmt.Println("  PRD files have been removed.")
 				fmt.Printf("\nUse 'ralph refine %s' for future changes using summary context.\n", featureDir.Feature)
 			}
@@ -1375,25 +1374,13 @@ func archiveFeature(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinit
 		return fmt.Errorf("failed to generate summary: %w", err)
 	}
 
-	// Build the summary entry
+	// Build the summary content
 	timestamp := time.Now().Format("2006-01-02")
-	entry := fmt.Sprintf("\n---\n\n## %s (%s)\n\n%s\n", featureDir.Feature, timestamp, summary)
+	content := fmt.Sprintf("## %s (%s)\n\n%s\n", featureDir.Feature, timestamp, summary)
 
-	// Read or create summary.md
-	summaryPath := SummaryPath(cfg.ProjectRoot)
-	existing := LoadSummary(cfg.ProjectRoot)
-	if existing == "" {
-		existing = "# Feature Summaries\n"
-	}
-
-	// Append new entry
-	newContent := existing + entry
-
-	// Write summary BEFORE deleting files (fail-safe)
-	if err := os.MkdirAll(filepath.Dir(summaryPath), 0755); err != nil {
-		return fmt.Errorf("failed to create .ralph directory: %w", err)
-	}
-	if err := os.WriteFile(summaryPath, []byte(newContent), 0644); err != nil {
+	// Write summary.md inside the feature directory BEFORE deleting PRD files (fail-safe)
+	summaryPath := featureDir.SummaryMdPath()
+	if err := os.WriteFile(summaryPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write summary.md: %w", err)
 	}
 

@@ -129,8 +129,6 @@ Do NOT emit trivial learnings like "I implemented the login form" or learnings t
 
 {{learnings}}
 
-{{previousWork}}
-
 ## Knowledge Preservation
 
 After implementing the story, update documentation to reflect what you built:

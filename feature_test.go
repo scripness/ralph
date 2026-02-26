@@ -223,59 +223,52 @@ func writeTestRunState(t *testing.T, featureDir string, state *RunState) {
 	}
 }
 
-func TestSummaryPath(t *testing.T) {
-	got := SummaryPath("/project")
-	want := "/project/.ralph/summary.md"
+func TestSummaryMdPath(t *testing.T) {
+	fd := &FeatureDir{Path: "/project/.ralph/2024-01-15-auth"}
+	got := fd.SummaryMdPath()
+	want := "/project/.ralph/2024-01-15-auth/summary.md"
 	if got != want {
-		t.Errorf("SummaryPath() = %q, want %q", got, want)
+		t.Errorf("SummaryMdPath() = %q, want %q", got, want)
 	}
 }
 
-func TestLoadSummary_Missing(t *testing.T) {
+func TestLoadFeatureSummary_Missing(t *testing.T) {
 	dir := t.TempDir()
-	result := LoadSummary(dir)
+	fd := &FeatureDir{Path: dir}
+	result := LoadFeatureSummary(fd)
 	if result != "" {
 		t.Errorf("expected empty string for missing summary, got %q", result)
 	}
 }
 
-func TestLoadSummary_Exists(t *testing.T) {
+func TestLoadFeatureSummary_Exists(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".ralph"), 0755)
-	content := "# Feature Summaries\n\n---\n\n## auth (2026-02-25)\n\nSummary content."
-	os.WriteFile(filepath.Join(dir, ".ralph", "summary.md"), []byte(content), 0644)
+	content := "## auth (2026-02-25)\n\nSummary content."
+	os.WriteFile(filepath.Join(dir, "summary.md"), []byte(content), 0644)
 
-	result := LoadSummary(dir)
+	fd := &FeatureDir{Path: dir}
+	result := LoadFeatureSummary(fd)
 	if result != content {
-		t.Errorf("LoadSummary() = %q, want %q", result, content)
+		t.Errorf("LoadFeatureSummary() = %q, want %q", result, content)
 	}
 }
 
-func TestIsFeatureArchived(t *testing.T) {
+func TestFeatureArchived_SummaryExists(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".ralph"), 0755)
+	featureDir := filepath.Join(dir, ".ralph", "2024-01-15-auth")
+	os.MkdirAll(featureDir, 0755)
 
-	content := "# Feature Summaries\n\n---\n\n## auth (2026-02-25)\n\nAuth summary.\n\n---\n\n## billing (2026-02-28)\n\nBilling summary.\n"
-	os.WriteFile(filepath.Join(dir, ".ralph", "summary.md"), []byte(content), 0644)
+	fd := &FeatureDir{Path: featureDir, Feature: "auth"}
 
-	if !isFeatureArchived(dir, "auth") {
-		t.Error("expected auth to be archived")
+	// No summary.md — not archived
+	if fileExists(fd.SummaryMdPath()) {
+		t.Error("expected not archived when no summary.md")
 	}
-	if !isFeatureArchived(dir, "Auth") {
-		t.Error("expected case-insensitive match for Auth")
-	}
-	if !isFeatureArchived(dir, "billing") {
-		t.Error("expected billing to be archived")
-	}
-	if isFeatureArchived(dir, "search") {
-		t.Error("expected search to NOT be archived")
-	}
-}
 
-func TestIsFeatureArchived_NoSummary(t *testing.T) {
-	dir := t.TempDir()
-	if isFeatureArchived(dir, "auth") {
-		t.Error("expected false when no summary.md exists")
+	// Write summary.md — archived
+	os.WriteFile(fd.SummaryMdPath(), []byte("## auth (2026-02-25)\n\nAuth summary."), 0644)
+	if !fileExists(fd.SummaryMdPath()) {
+		t.Error("expected archived when summary.md exists")
 	}
 }
 

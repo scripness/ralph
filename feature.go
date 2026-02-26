@@ -175,44 +175,18 @@ func newFeatureDir(ralphDir, feature string) *FeatureDir {
 	}
 }
 
-// SummaryPath returns the project-level summary.md path.
-func SummaryPath(projectRoot string) string {
-	return filepath.Join(projectRoot, ".ralph", "summary.md")
+// SummaryMdPath returns the path to this feature's summary.md.
+func (fd *FeatureDir) SummaryMdPath() string {
+	return filepath.Join(fd.Path, "summary.md")
 }
 
-// LoadSummary reads .ralph/summary.md, returns content or empty string.
-func LoadSummary(projectRoot string) string {
-	data, err := os.ReadFile(SummaryPath(projectRoot))
+// LoadFeatureSummary reads a feature's summary.md, returns content or empty string.
+func LoadFeatureSummary(featureDir *FeatureDir) string {
+	data, err := os.ReadFile(featureDir.SummaryMdPath())
 	if err != nil {
 		return ""
 	}
 	return string(data)
-}
-
-// isFeatureArchived returns true if the feature name appears in summary.md
-// (indicating it was archived after successful verification).
-func isFeatureArchived(projectRoot, feature string) bool {
-	summary := LoadSummary(projectRoot)
-	if summary == "" {
-		return false
-	}
-	// Look for the feature header pattern: "## feature ("
-	// Case-insensitive match
-	lines := strings.Split(summary, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "## ") {
-			// Extract feature name from "## feature-name (date)"
-			rest := strings.TrimPrefix(line, "## ")
-			// Feature name is everything before the first " ("
-			if idx := strings.Index(rest, " ("); idx > 0 {
-				name := rest[:idx]
-				if strings.EqualFold(name, feature) {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 // PrdMdPath returns the path to prd.md

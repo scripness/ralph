@@ -455,8 +455,8 @@ func cmdStatus(args []string) {
 
 		fmt.Println("Features:")
 		for _, f := range features {
-			// Check if archived (no PRD files but appears in summary.md)
-			if !f.HasPrdMd && !f.HasPrdJson && isFeatureArchived(projectRoot, f.Feature) {
+			// Check if archived (no PRD files but summary.md exists)
+			if !f.HasPrdMd && !f.HasPrdJson && fileExists(f.SummaryMdPath()) {
 				fmt.Printf("  ✓ %s (archived)\n", f.Feature)
 				continue
 			}
@@ -497,13 +497,7 @@ func cmdStatus(args []string) {
 	feature := args[0]
 	featureDir, err := FindFeatureDir(projectRoot, feature, false)
 	if err != nil {
-		// Feature dir not found — check if archived
-		if isFeatureArchived(projectRoot, feature) {
-			fmt.Printf("Feature: %s\n", feature)
-			fmt.Printf("Status: archived\n\n")
-			fmt.Printf("Use 'ralph refine %s' for further changes.\n", feature)
-			return
-		}
+		// Feature dir not found — no way to check archive without a dir
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -515,7 +509,7 @@ func cmdStatus(args []string) {
 		if featureDir.HasPrdMd {
 			fmt.Println("PRD drafted, not finalized")
 			fmt.Printf("\nRun 'ralph prd %s' to finalize.\n", feature)
-		} else if isFeatureArchived(projectRoot, feature) {
+		} else if fileExists(featureDir.SummaryMdPath()) {
 			fmt.Println("archived")
 			fmt.Printf("\nUse 'ralph refine %s' for further changes.\n", feature)
 		} else {
@@ -624,8 +618,8 @@ func cmdRefine(args []string) {
 		}
 	}
 
-	// Read summary.md
-	summaryContent := LoadSummary(projectRoot)
+	// Read feature summary.md
+	summaryContent := LoadFeatureSummary(featureDir)
 	if summaryContent == "" {
 		fmt.Fprintln(os.Stderr, "Warning: no summary.md found — starting with empty context.")
 		fmt.Fprintln(os.Stderr, "")
@@ -671,7 +665,7 @@ func cmdRefine(args []string) {
 		if err := generateRefineSummary(cfg, featureDir, preCommit); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate summary: %v\n", err)
 		} else {
-			fmt.Println("Summary appended to .ralph/summary.md")
+			fmt.Printf("Summary appended to %s\n", featureDir.SummaryMdPath())
 		}
 	}
 }

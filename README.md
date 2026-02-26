@@ -63,7 +63,7 @@ Markers are matched as whole lines (not substrings) to prevent spoofing.
 3. **Pick next story** — highest priority, not passed, not skipped
 4. **Verify-at-top** — runs verification *before* spawning the provider. If the story already passes, marks it done and moves on. Skipped on fresh branches (no implementation commits yet) to prevent false positives
 5. **Resource consultation** — spawns lightweight subagents to search cached framework source and produce focused guidance
-6. **Spawn provider** — sends prompt with story details, learnings, consultation guidance, previous work summaries
+6. **Spawn provider** — sends prompt with story details, learnings, consultation guidance
 7. **Detect markers** — scans provider output for DONE, STUCK, LEARNING
 8. **Commit check** — provider must have created a new git commit (DONE without a commit = failed attempt)
 9. **Verify** — runs typecheck, lint, test commands + service health checks. For `ui`-tagged stories: restarts services, runs e2e tests
@@ -86,7 +86,7 @@ SIGINT/SIGTERM triggers graceful cleanup: kills provider process group, stops se
 
 On failure, offers an interactive AI fix session pre-loaded with the full failure context.
 
-On success, offers to **archive the feature**: generates an AI summary of what was built (specifications, file map, patterns, gotchas), appends it to `.ralph/summary.md`, and deletes `prd.md` + `prd.json` + `run-state.json`. The summary is the sole historical record for future work via `ralph refine`.
+On success, offers to **archive the feature**: generates an AI summary of what was built (specifications, file map, patterns, gotchas), writes it to the feature's `summary.md`, and deletes `prd.md` + `prd.json` + `run-state.json`. The summary is the sole historical record for future work via `ralph refine`.
 
 ### Framework Source Consultation
 
@@ -120,11 +120,9 @@ Service output is captured for diagnostics but not printed to the console. At le
 
 ### Summary-Based Memory
 
-After a feature is verified and archived, Ralph generates a dense technical summary and appends it to `.ralph/summary.md`. This summary — not the PRD files — is the permanent record of what was built.
+After a feature is verified and archived, Ralph generates a dense technical summary and writes it to the feature's `summary.md` (e.g., `.ralph/2024-01-15-auth/summary.md`). This summary — not the PRD files — is the permanent record of what was built. Each feature owns its own summary.
 
-When running a new feature, Ralph injects `summary.md` into the implementation prompt as `{{previousWork}}` context. Insights from `auth` (e.g., "bcrypt for passwords, session middleware in middleware.ts") are available when implementing `billing`.
-
-`ralph refine <feature>` opens an interactive AI session using `summary.md` as the sole historical context. After the session, any new commits are summarized and appended to `summary.md`.
+`ralph refine <feature>` opens an interactive AI session using the feature's `summary.md` as historical context. After the session, any new commits are summarized and appended to the feature's `summary.md`.
 
 ### Observability
 
@@ -455,11 +453,11 @@ This is the fundamental architectural decision: the AI is a pure code-writing to
 project/
 ├── ralph.config.json
 └── .ralph/
-    ├── summary.md                    # Archived feature summaries (AI-generated)
     ├── 2024-01-15-auth/
     │   ├── prd.md                    # Human-readable PRD (deleted after archive)
     │   ├── prd.json                  # Story definitions (deleted after archive)
     │   ├── run-state.json            # Execution state (deleted after archive)
+    │   ├── summary.md                # Feature summary (written on archive, persists)
     │   ├── consultations/            # Cached framework consultation results
     │   │   ├── a1b2c3d4...sha.md
     │   │   └── e5f6g7h8...sha.md

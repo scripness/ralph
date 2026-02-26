@@ -107,9 +107,6 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 	// Build learnings (capped at maxLearningsInPrompt most recent)
 	learningsStr := buildLearnings(state.Learnings, "## Learnings from Previous Work")
 
-	// Previous work from summary.md (archived features)
-	previousWork := LoadSummary(cfg.ProjectRoot)
-
 	// Build tags info
 	tagsStr := ""
 	if len(story.Tags) > 0 {
@@ -156,7 +153,6 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 		"codebaseContext":   codebaseStr,
 		"diffSummary":       diffSummary,
 		"resourceGuidance":  resourceGuidance,
-		"previousWork":      previousWork,
 	})
 }
 

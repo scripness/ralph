@@ -88,8 +88,8 @@ Non-obvious behaviors that cause bugs if misunderstood:
 
 **Miscellaneous:**
 - Services required — `validateConfig()` enforces ≥1 entry. `ready` URL must have `http(s)://` scheme.
-- Learning cap: 50 most recent in prompts. Previous work context comes from `.ralph/summary.md` (project-level, injected into `generateRunPrompt` via `{{previousWork}}`).
-- **Archive flow**: After `ralph verify` succeeds, user can archive the feature → AI generates summary → appended to `.ralph/summary.md` → prd.md/prd.json/run-state.json deleted → committed. Summary written BEFORE files deleted (fail-safe).
+- Learning cap: 50 most recent in prompts.
+- **Archive flow**: After `ralph verify` succeeds, user can archive the feature → AI generates summary → written to `featureDir/summary.md` → prd.md/prd.json/run-state.json deleted → committed. Summary written BEFORE files deleted (fail-safe). Feature is "archived" when `summary.md` exists in its feature directory.
 - `extractSummary` returns `false` for empty content between markers (same pattern as guidance markers).
 - `promptYesNo`/`promptChoice` return false/empty on EOF (prevents infinite loops in non-interactive contexts).
 - `CleanupCoordinator` handles SIGINT/SIGTERM: kills provider groups, stops services, releases locks before `os.Exit(130)`. Ensures cleanup when defers are bypassed.

@@ -208,7 +208,6 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"codebaseContext":    "",
 			"featureDir":         "/test",
 			"summary":            "",
-			"previousWork":       "",
 		})
 
 		for _, term := range forbiddenTerms {
@@ -665,60 +664,6 @@ func TestBuildCriteriaChecklist_Empty(t *testing.T) {
 	result := buildCriteriaChecklist(def, state)
 	if result != "" {
 		t.Errorf("expected empty string for no stories, got %q", result)
-	}
-}
-
-func TestGenerateRunPrompt_PreviousWork(t *testing.T) {
-	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-	os.MkdirAll(ralphDir, 0755)
-
-	// Write summary.md with previous feature info
-	summaryContent := "# Feature Summaries\n\n---\n\n## billing (2026-02-20)\n\nBuilt Stripe integration. Used idempotency keys for all API calls.\n"
-	os.WriteFile(filepath.Join(ralphDir, "summary.md"), []byte(summaryContent), 0644)
-
-	// Current feature directory
-	currentFeature := filepath.Join(ralphDir, "2024-01-20-auth")
-	os.MkdirAll(currentFeature, 0755)
-
-	cfg := &ResolvedConfig{
-		ProjectRoot: dir,
-		Config: RalphConfig{
-			MaxRetries: 3,
-			Provider: ProviderConfig{
-				Command:       "claude",
-				KnowledgeFile: "CLAUDE.md",
-			},
-			Verify: VerifyConfig{
-				Default: []string{"echo ok"},
-			},
-		},
-	}
-
-	featureDir := &FeatureDir{
-		Feature: "auth",
-		Path:    currentFeature,
-	}
-
-	def := &PRDDefinition{
-		Project:     "TestApp",
-		Description: "Auth",
-		BranchName:  "ralph/auth",
-		UserStories: []StoryDefinition{
-			{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Works"}},
-		},
-	}
-
-	state := NewRunState()
-	story := &def.UserStories[0]
-
-	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "", "")
-
-	if !strings.Contains(prompt, "Stripe integration") {
-		t.Error("prompt should contain previous work from summary.md")
-	}
-	if !strings.Contains(prompt, "idempotency keys") {
-		t.Error("prompt should contain summary details")
 	}
 }
 

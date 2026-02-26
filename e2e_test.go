@@ -1767,7 +1767,7 @@ func writeReport(t *testing.T, env *testEnv) {
 		copyArtifact(env, "prd-final.json", filepath.Join(featureDir, "prd.json"))
 		copyArtifact(env, "prd-final.md", filepath.Join(featureDir, "prd.md"))
 		copyArtifact(env, "config.json", filepath.Join(env.projectDir, "ralph.config.json"))
-		copyArtifact(env, "summary.md", filepath.Join(env.projectDir, ".ralph", "summary.md"))
+		copyArtifact(env, "summary.md", filepath.Join(featureDir, "summary.md"))
 	}
 
 	// ============================================================
