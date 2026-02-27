@@ -45,4 +45,4 @@ The following checks were run by the CLI. Fix the failures listed below.
 - Update `{{knowledgeFile}}` if you discover new patterns or gotchas
 - Feature directory: `{{featureDir}}`
 
-After fixing, run `ralph verify` again to confirm all checks pass.
+When done, exit this session and run `ralph verify` again to confirm all checks pass.

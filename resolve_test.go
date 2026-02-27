@@ -207,58 +207,6 @@ func TestResolveGo_GitHub(t *testing.T) {
 	}
 }
 
-func TestResolvePyPI(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/pypi/flask/json":
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"info": map[string]interface{}{
-					"project_urls": map[string]string{
-						"Source": "https://github.com/pallets/flask",
-					},
-				},
-			})
-		case "/pypi/no-source/json":
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"info": map[string]interface{}{
-					"project_urls": map[string]string{
-						"Documentation": "https://docs.example.com",
-					},
-				},
-			})
-		default:
-			w.WriteHeader(404)
-		}
-	}))
-	defer srv.Close()
-
-	client := srv.Client()
-
-	// Test successful resolution
-	url, err := resolvePyPI("flask", &http.Client{
-		Transport: &rewriteTransport{base: client.Transport, target: srv.URL},
-	})
-	// This will fail because the URL is rewritten to the test server
-	// Let's test with the actual test server URL parsing
-	_ = url
-	_ = err
-}
-
-// rewriteTransport is a test helper that rewrites requests to a test server.
-type rewriteTransport struct {
-	base   http.RoundTripper
-	target string
-}
-
-func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.URL.Scheme = "http"
-	req.URL.Host = t.target[7:] // strip "http://"
-	if t.base != nil {
-		return t.base.RoundTrip(req)
-	}
-	return http.DefaultTransport.RoundTrip(req)
-}
-
 func TestResolveExactVersions_GoMod(t *testing.T) {
 	deps := []Dependency{
 		{Name: "github.com/gin-gonic/gin", Version: "v1.9.1"},

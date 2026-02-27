@@ -36,7 +36,7 @@ The user may ask you to:
 ## Important Notes
 
 - You are on branch `{{branchName}}` — commit your work here
-- The "Previous Work" section above contains summaries of all archived features for this project
+- The "Previous Work" section above contains the summary from this feature's previous work
 - After making changes, run the verification commands to ensure nothing is broken
 - Update `{{knowledgeFile}}` with any patterns or conventions you discover
 - Commit your changes with descriptive messages

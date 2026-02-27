@@ -219,11 +219,6 @@ func (rm *ResourceManager) EnsureResources() error {
 	return nil
 }
 
-// GetResourcePath returns the local path to a cached resource.
-func (rm *ResourceManager) GetResourcePath(name string) string {
-	return filepath.Join(rm.cacheDir, name)
-}
-
 // ListDetected returns names of detected resources (may not be cached yet).
 func (rm *ResourceManager) ListDetected() []string {
 	var names []string

@@ -355,90 +355,6 @@ rm .ralph/ralph.lock      # Remove stale lock (if the process is gone)
 
 ## How It Works
 
-### User Journey
-
-```mermaid
-flowchart LR
-    init["<b>ralph init</b><br/>Detect stack · Configure"]:::setup
-    prd["<b>ralph prd</b><br/>Brainstorm · Finalize"]:::setup
-    run["<b>ralph run</b><br/>Agent loop"]:::exec
-    verify["<b>ralph verify</b><br/>Tests + AI + Archive"]:::exec
-    refine["<b>ralph refine</b><br/>Summary-based iteration"]:::iter
-
-    init --> prd --> run --> verify
-    verify -. "refine PRD & re-run" .-> prd
-    verify -. "archive & iterate" .-> refine
-
-    classDef setup fill:#f1f5f9,stroke:#94a3b8,stroke-width:1.5px,color:#334155
-    classDef exec fill:#dbeafe,stroke:#3b82f6,stroke-width:1.5px,color:#1e40af
-    classDef iter fill:#d1fae5,stroke:#10b981,stroke-width:1.5px,color:#065f46
-```
-
-### The Agent Loop
-
-```mermaid
-flowchart TD
-    start([ralph run feature]):::terminal
-    load["Load PRD + RunState<br/>Acquire lock · Start services"]:::process
-    pick{"Pick next<br/>story"}:::decision
-    done(["All complete"]):::terminal
-    vat{"Verify-at-top:<br/>passes?"}:::decision
-    impl["Consult frameworks<br/>Spawn AI provider"]:::process
-    check{"DONE marker +<br/>new commit?"}:::decision
-    verify{"Verification<br/>passes?"}:::decision
-    pass["Mark passed"]:::success
-    fail["Mark failed"]:::failure
-    skip["Auto-skip"]:::skip
-
-    start --> load --> pick
-    pick -->|"All done"| done
-    pick -->|"Got story"| vat
-    vat -->|"Yes"| pass
-    vat -->|"No"| impl --> check
-    check -->|"No"| fail
-    check -->|"Yes"| verify
-    verify -->|"Pass"| pass
-    verify -->|"Fail"| fail
-    pass --> pick
-    fail -->|"Retry"| pick
-    fail -->|"Max retries"| skip --> pick
-
-    classDef terminal fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#334155
-    classDef process fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e40af
-    classDef decision fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#92400e
-    classDef success fill:#d1fae5,stroke:#10b981,stroke-width:2px,color:#065f46
-    classDef failure fill:#fee2e2,stroke:#ef4444,stroke-width:2px,color:#991b1b
-    classDef skip fill:#e2e8f0,stroke:#94a3b8,stroke-width:2px,color:#475569
-```
-
-### Story Lifecycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> Pending
-
-    Pending --> Passed: Verify succeeds
-    Pending --> Failed: STUCK / no DONE / no commit / verify fails
-
-    Failed --> Pending: Retry (retries < maxRetries)
-    Failed --> Skipped: Auto-skip (retries ≥ maxRetries)
-
-    Passed --> Pending: Verify-at-top detects regression
-
-    Passed --> [*]: All stories complete
-    Skipped --> [*]: Doesn't block completion
-
-    classDef pending fill:#dbeafe,stroke:#3b82f6,color:#1e40af
-    classDef passed fill:#d1fae5,stroke:#10b981,color:#065f46
-    classDef failed fill:#fee2e2,stroke:#ef4444,color:#991b1b
-    classDef skipped fill:#e2e8f0,stroke:#94a3b8,color:#475569
-
-    class Pending pending
-    class Passed passed
-    class Failed failed
-    class Skipped skipped
-```
-
 ### CLI vs Provider Responsibilities
 
 **The CLI orchestrates** — story selection, branch management, state updates, verification, service lifecycle, resource consultation, learning management, lock file, signal handling, PRD commits.
@@ -506,34 +422,7 @@ The `ui` tag triggers service restarts and `verify.ui` commands during verificat
 
 ---
 
-## Background
-
-### The Ralph Pattern
-
-Ralph implements the "Ralph pattern" [originated by Geoffrey Huntley](https://ghuntley.com/ralph/) — break work into small user stories, spawn fresh AI instances to implement them one at a time, verify each with automated tests, persist learnings, repeat until done.
-
-The original [snarktank/ralph](https://github.com/snarktank/ralph) was a ~90-line bash script. This repo is a complete Go rewrite that shifts control from the AI to the CLI.
-
-### v1 vs v2
-
-| Aspect | v1 (bash) | v2 (Go CLI) |
-|--------|-----------|-------------|
-| Architecture | Bash script | Compiled Go binary |
-| Providers | Amp or Claude only | Any AI CLI |
-| Story selection | Agent decides | CLI decides (deterministic) |
-| State management | Agent updates prd.json | CLI manages all state |
-| Memory | progress.txt (append-only) | Learnings in run-state.json |
-| Iteration limit | Fixed (default 10) | Infinite until verified |
-| Crash recovery | None | Verify-at-top re-checks on restart |
-| Verification | Agent runs commands | CLI runs commands |
-| Browser testing | Provider skill (dev-browser) | Project's own e2e suite via verify.ui |
-| Service management | None | Built-in start/ready/restart |
-| Multi-feature | Manual archive/switch | Date-prefixed directories |
-| Concurrency | None | Lock file |
-
-The key insight: v1 trusted the AI to manage its own workflow. v2 treats the AI as a pure code-writing tool within a deterministic orchestration framework.
-
-### Build from Source
+## Build from Source
 
 ```bash
 git clone https://github.com/scripness/ralph
@@ -543,6 +432,8 @@ make test     # go test ./...
 ```
 
 Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Actions — `make release` triggers a workflow that bumps the version tag, runs tests, builds 4 binaries (linux/darwin x amd64/arm64), and creates a GitHub Release.
+
+Based on the [Ralph pattern](https://ghuntley.com/ralph/) — originally [snarktank/ralph](https://github.com/snarktank/ralph).
 
 ## License
 
