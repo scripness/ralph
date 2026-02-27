@@ -107,13 +107,16 @@ func (g *GitOps) CommitFiles(filePaths []string, message string) error {
 		}
 	}
 
-	// Check if there are changes to commit
-	status, _ := g.run("status", "--porcelain")
-	if strings.TrimSpace(status) == "" {
+	// Check if the staged paths have changes to commit
+	diffArgs := append([]string{"diff", "--cached", "--name-only", "--"}, filePaths...)
+	staged, _ := g.run(diffArgs...)
+	if strings.TrimSpace(staged) == "" {
 		return nil
 	}
 
-	_, err := g.run("commit", "-m", message)
+	// Commit only the specified paths to avoid including unrelated staged files
+	commitArgs := append([]string{"commit", "--only", "-m", message, "--"}, filePaths...)
+	_, err := g.run(commitArgs...)
 	return err
 }
 

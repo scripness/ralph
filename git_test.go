@@ -133,6 +133,7 @@ func TestGitOps_CommitFile(t *testing.T) {
 
 func TestGitOps_CommitFiles(t *testing.T) {
 	dir, git := initTestRepo(t)
+	hashBefore := git.GetLastCommit()
 
 	// Add a new file and delete an existing one
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
@@ -146,10 +147,10 @@ func TestGitOps_CommitFiles(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify the commit happened
+	// Verify a new commit was created
 	hashAfter := git.GetLastCommit()
-	if hashAfter == "" {
-		t.Error("expected non-empty commit hash after CommitFiles")
+	if hashAfter == "" || hashAfter == hashBefore {
+		t.Error("expected a new commit hash after CommitFiles")
 	}
 
 	// Verify working tree is clean
