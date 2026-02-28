@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -109,40 +108,31 @@ func TestGetPrompt_PrdFinalize(t *testing.T) {
 	}
 }
 
-func TestGetPrompt_Refine(t *testing.T) {
-	prompt := getPrompt("refine", map[string]string{
-		"feature":        "auth",
-		"prdMdContent":   "# Auth Feature\n\nUser stories...",
-		"prdJsonContent": "```json\n{}\n```",
-		"progress":       "2/5 stories complete",
-		"storyDetails":   "",
-		"learnings":      "",
-		"diffSummary":    "",
-		"codebaseContext": "",
-		"verifyCommands": "- bun run test",
-		"serviceURLs":    "",
-		"knowledgeFile":  "CLAUDE.md",
-		"branchName":     "ralph/auth",
-		"featureDir":     "/project/.ralph/2024-01-15-auth",
+func TestGetPrompt_RefineSession(t *testing.T) {
+	prompt := getPrompt("refine-session", map[string]string{
+		"feature":          "auth",
+		"summary":          "## auth (2026-02-25)\n\nBuilt login and logout.",
+		"diffSummary":      "",
+		"codebaseContext":  "",
+		"branchName":       "ralph/auth",
+		"featureDir":       "/project/.ralph/2024-01-15-auth",
+		"knowledgeFile":    "CLAUDE.md",
+		"verifyCommands":   "- bun run test",
+		"serviceURLs":      "",
+		"resourceGuidance": "",
 	})
 
 	if !strings.Contains(prompt, "auth") {
 		t.Error("prompt should contain feature name")
 	}
-	if !strings.Contains(prompt, "Auth Feature") {
-		t.Error("prompt should contain prd.md content")
-	}
-	if !strings.Contains(prompt, "2/5 stories complete") {
-		t.Error("prompt should contain progress")
+	if !strings.Contains(prompt, "Built login and logout") {
+		t.Error("prompt should contain summary content")
 	}
 	if !strings.Contains(prompt, "ralph/auth") {
 		t.Error("prompt should contain branch name")
 	}
 	if !strings.Contains(prompt, "CLAUDE.md") {
 		t.Error("prompt should contain knowledge file")
-	}
-	if !strings.Contains(prompt, "ralph run") {
-		t.Error("prompt should mention ralph run for resuming")
 	}
 }
 
@@ -176,7 +166,7 @@ func TestGetPrompt_VerifyFix(t *testing.T) {
 
 func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 	// Verify prompts don't contain provider-specific references
-	prompts := []string{"run", "prd-create", "prd-finalize", "refine", "verify-fix"}
+	prompts := []string{"run", "prd-create", "prd-finalize", "prd-refine", "refine-session", "verify-fix"}
 	forbiddenTerms := []string{
 		"$AMP_CURRENT_THREAD_ID",
 		"read_thread",
@@ -217,6 +207,7 @@ func TestGetPrompt_ProviderAgnostic(t *testing.T) {
 			"prdJsonContent":     "Test",
 			"codebaseContext":    "",
 			"featureDir":         "/test",
+			"summary":            "",
 		})
 
 		for _, term := range forbiddenTerms {
@@ -546,42 +537,11 @@ func TestGetPrompt_RunWithoutResourcesCache(t *testing.T) {
 	}
 }
 
-func TestGenerateRefinePrompt(t *testing.T) {
-	// Create temp dir with prd.md and prd.json
+func TestGenerateRefineSessionPrompt(t *testing.T) {
 	dir := t.TempDir()
 	featureDir := &FeatureDir{
-		Feature:    "auth",
-		Path:       dir,
-		HasPrdMd:   true,
-		HasPrdJson: true,
-	}
-
-	prdMdContent := "# Auth Feature\n\nBuild login and logout."
-	if err := os.WriteFile(featureDir.PrdMdPath(), []byte(prdMdContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	def := &PRDDefinition{
-		SchemaVersion: 3,
-		Project:       "MyApp",
-		BranchName:    "ralph/auth",
-		Description:   "Auth feature",
-		UserStories: []StoryDefinition{
-			{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Works"}},
-			{ID: "US-002", Title: "Logout", AcceptanceCriteria: []string{"Works"}},
-			{ID: "US-003", Title: "Register", AcceptanceCriteria: []string{"Works"}},
-		},
-	}
-
-	state := NewRunState()
-	state.MarkPassed("US-001")
-	state.MarkSkipped("US-002", "Depends on sessions")
-	state.Retries = map[string]int{"US-002": 3, "US-003": 2}
-	state.Learnings = []string{"Use bcrypt for passwords"}
-
-	prdJSON, _ := json.Marshal(def)
-	if err := os.WriteFile(featureDir.PrdJsonPath(), prdJSON, 0644); err != nil {
-		t.Fatal(err)
+		Feature: "auth",
+		Path:    dir,
 	}
 
 	cfg := &ResolvedConfig{
@@ -600,63 +560,27 @@ func TestGenerateRefinePrompt(t *testing.T) {
 		},
 	}
 
-	prompt := generateRefinePrompt(cfg, featureDir, def, state, "")
+	summaryContent := "## auth (2026-02-25)\n\nBuilt login and logout. Used bcrypt for passwords."
 
-	// Check prd.md content is included
-	if !strings.Contains(prompt, "Auth Feature") {
-		t.Error("prompt should contain prd.md content")
-	}
-	if !strings.Contains(prompt, "Build login and logout") {
-		t.Error("prompt should contain prd.md body")
-	}
+	prompt := generateRefineSessionPrompt(cfg, featureDir, summaryContent, "", "")
 
-	// Check prd.json content is included
-	if !strings.Contains(prompt, "schemaVersion") {
-		t.Error("prompt should contain prd.json content")
+	if !strings.Contains(prompt, "auth") {
+		t.Error("prompt should contain feature name")
 	}
-
-	// Check progress
-	if !strings.Contains(prompt, "1/3 stories complete (1 skipped)") {
-		t.Error("prompt should contain progress")
+	if !strings.Contains(prompt, "Built login and logout") {
+		t.Error("prompt should contain summary content")
 	}
-
-	// Check story details
-	if !strings.Contains(prompt, "US-001: Login** — PASSED") {
-		t.Error("prompt should show US-001 as PASSED")
-	}
-	if !strings.Contains(prompt, "US-002: Logout** — SKIPPED") {
-		t.Error("prompt should show US-002 as SKIPPED")
-	}
-	if !strings.Contains(prompt, "Depends on sessions") {
-		t.Error("prompt should include story notes")
-	}
-
-	// Check learnings
-	if !strings.Contains(prompt, "bcrypt") {
-		t.Error("prompt should include learnings")
-	}
-
-	// Check environment info
 	if !strings.Contains(prompt, "ralph/auth") {
 		t.Error("prompt should contain branch name")
 	}
 	if !strings.Contains(prompt, "CLAUDE.md") {
 		t.Error("prompt should contain knowledge file")
 	}
-
-	// Check verify commands
 	if !strings.Contains(prompt, "bun run typecheck") {
 		t.Error("prompt should contain verify commands")
 	}
-
-	// Check service URLs
 	if !strings.Contains(prompt, "localhost:3000") {
 		t.Error("prompt should contain service URLs")
-	}
-
-	// Check guidance
-	if !strings.Contains(prompt, "ralph run auth") {
-		t.Error("prompt should mention ralph run for resuming")
 	}
 }
 
@@ -740,64 +664,6 @@ func TestBuildCriteriaChecklist_Empty(t *testing.T) {
 	result := buildCriteriaChecklist(def, state)
 	if result != "" {
 		t.Errorf("expected empty string for no stories, got %q", result)
-	}
-}
-
-func TestGenerateRunPrompt_CrossFeatureLearnings(t *testing.T) {
-	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-
-	// Create another feature with learnings
-	otherFeature := filepath.Join(ralphDir, "2024-01-10-billing")
-	os.MkdirAll(otherFeature, 0755)
-	otherState := NewRunState()
-	otherState.MarkPassed("US-010")
-	otherState.Learnings = []string{"Stripe needs idempotency keys"}
-	otherStateJSON, _ := json.Marshal(otherState)
-	os.WriteFile(filepath.Join(otherFeature, "run-state.json"), otherStateJSON, 0644)
-
-	// Current feature directory
-	currentFeature := filepath.Join(ralphDir, "2024-01-20-auth")
-	os.MkdirAll(currentFeature, 0755)
-
-	cfg := &ResolvedConfig{
-		ProjectRoot: dir,
-		Config: RalphConfig{
-			MaxRetries: 3,
-			Provider: ProviderConfig{
-				Command:       "claude",
-				KnowledgeFile: "CLAUDE.md",
-			},
-			Verify: VerifyConfig{
-				Default: []string{"echo ok"},
-			},
-		},
-	}
-
-	featureDir := &FeatureDir{
-		Feature: "auth",
-		Path:    currentFeature,
-	}
-
-	def := &PRDDefinition{
-		Project:     "TestApp",
-		Description: "Auth",
-		BranchName:  "ralph/auth",
-		UserStories: []StoryDefinition{
-			{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Works"}},
-		},
-	}
-
-	state := NewRunState()
-	story := &def.UserStories[0]
-
-	prompt := generateRunPrompt(cfg, featureDir, def, state, story, "", "", "")
-
-	if !strings.Contains(prompt, "Learnings from Previous Features") {
-		t.Error("prompt should contain cross-feature learnings heading")
-	}
-	if !strings.Contains(prompt, "Stripe needs idempotency keys") {
-		t.Error("prompt should contain cross-feature learning content")
 	}
 }
 
@@ -974,25 +840,12 @@ func TestGenerateVerifyFixPrompt_WithResourceGuidance(t *testing.T) {
 	}
 }
 
-func TestGenerateRefinePrompt_WithResourceGuidance(t *testing.T) {
+func TestGenerateRefineSessionPrompt_WithResourceGuidance(t *testing.T) {
 	dir := t.TempDir()
 	featureDir := &FeatureDir{
-		Feature:    "auth",
-		Path:       dir,
-		HasPrdMd:   true,
-		HasPrdJson: true,
+		Feature: "auth",
+		Path:    dir,
 	}
-
-	os.WriteFile(featureDir.PrdMdPath(), []byte("# Auth Feature"), 0644)
-
-	def := &PRDDefinition{
-		SchemaVersion: 3, Project: "MyApp", BranchName: "ralph/auth", Description: "Auth",
-		UserStories: []StoryDefinition{{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Works"}}},
-	}
-	state := NewRunState()
-
-	prdJSON, _ := json.Marshal(def)
-	os.WriteFile(featureDir.PrdJsonPath(), prdJSON, 0644)
 
 	cfg := &ResolvedConfig{
 		ProjectRoot: dir,
@@ -1003,7 +856,7 @@ func TestGenerateRefinePrompt_WithResourceGuidance(t *testing.T) {
 	}
 
 	guidance := "## Framework Guidance\n\n### react\nUse hooks for state.\n\nSource: packages/react/src/hooks.ts"
-	prompt := generateRefinePrompt(cfg, featureDir, def, state, guidance)
+	prompt := generateRefineSessionPrompt(cfg, featureDir, "Previous summary content.", "", guidance)
 
 	if !strings.Contains(prompt, "Framework Guidance") {
 		t.Error("prompt should contain resource guidance heading")
@@ -1014,10 +867,88 @@ func TestGenerateRefinePrompt_WithResourceGuidance(t *testing.T) {
 	if !strings.Contains(prompt, "Source: packages/react/src/hooks.ts") {
 		t.Error("prompt should contain source citation")
 	}
+	if !strings.Contains(prompt, "Previous summary content") {
+		t.Error("prompt should still contain summary content")
+	}
+}
 
-	// Baseline content still present
+func TestGenerateRefineSummarizePrompt(t *testing.T) {
+	prompt := generateRefineSummarizePrompt(
+		"auth",
+		"abc123 feat: added OAuth\ndef456 fix: token refresh",
+		"2 files changed, 50 insertions(+), 10 deletions(-)",
+		"## auth (2026-02-25)\n\nBuilt login and logout.",
+		"2026-02-28",
+	)
+
+	if !strings.Contains(prompt, "auth") {
+		t.Error("prompt should contain feature name")
+	}
+	if !strings.Contains(prompt, "added OAuth") {
+		t.Error("prompt should contain git log")
+	}
+	if !strings.Contains(prompt, "50 insertions") {
+		t.Error("prompt should contain diff stat")
+	}
+	if !strings.Contains(prompt, "Built login and logout") {
+		t.Error("prompt should contain previous summary")
+	}
+	if !strings.Contains(prompt, "2026-02-28") {
+		t.Error("prompt should contain timestamp")
+	}
+	if !strings.Contains(prompt, "SUMMARY_START") {
+		t.Error("prompt should contain SUMMARY_START marker")
+	}
+}
+
+func TestGenerateSummaryPrompt(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := &FeatureDir{
+		Feature:    "auth",
+		Path:       dir,
+		HasPrdMd:   true,
+		HasPrdJson: true,
+	}
+
+	os.WriteFile(featureDir.PrdMdPath(), []byte("# Auth Feature\n\nLogin and logout."), 0644)
+
+	def := &PRDDefinition{
+		SchemaVersion: 3, Project: "MyApp", BranchName: "ralph/auth", Description: "Auth feature",
+		UserStories: []StoryDefinition{
+			{ID: "US-001", Title: "Login", AcceptanceCriteria: []string{"Works"}},
+			{ID: "US-002", Title: "Logout", AcceptanceCriteria: []string{"Works"}},
+		},
+	}
+
+	state := NewRunState()
+	state.MarkPassed("US-001")
+	state.MarkPassed("US-002")
+	state.Learnings = []string{"Use bcrypt for passwords"}
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "claude", KnowledgeFile: "CLAUDE.md"},
+			Verify:   VerifyConfig{Default: []string{"echo ok"}},
+		},
+	}
+
+	prompt := generateSummaryPrompt(cfg, featureDir, def, state)
+
+	if !strings.Contains(prompt, "MyApp") {
+		t.Error("prompt should contain project name")
+	}
 	if !strings.Contains(prompt, "Auth Feature") {
-		t.Error("prompt should still contain prd.md content")
+		t.Error("prompt should contain prd.md content")
+	}
+	if !strings.Contains(prompt, "SUMMARY_START") {
+		t.Error("prompt should contain SUMMARY_START marker")
+	}
+	if !strings.Contains(prompt, "SUMMARY_END") {
+		t.Error("prompt should contain SUMMARY_END marker")
+	}
+	if !strings.Contains(prompt, "bcrypt") {
+		t.Error("prompt should contain learnings")
 	}
 }
 
@@ -1056,5 +987,73 @@ func TestGenerateVerifyAnalyzePrompt_WithResourceGuidance(t *testing.T) {
 	// Baseline still present
 	if !strings.Contains(prompt, "VERIFY_PASS") {
 		t.Error("prompt should still contain VERIFY_PASS marker instructions")
+	}
+}
+
+func TestGeneratePrdRefinePrompt(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := &FeatureDir{
+		Feature:  "auth",
+		Path:     dir,
+		HasPrdMd: true,
+	}
+
+	// Write a prd.md for the function to read
+	os.WriteFile(featureDir.PrdMdPath(), []byte("# Auth Feature\n\n## User Stories\n\n### US-001: Login\nAs a user, I want to log in."), 0644)
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "claude", KnowledgeFile: "CLAUDE.md"},
+			Verify:   VerifyConfig{Default: []string{"bun run test"}},
+		},
+	}
+
+	codebaseCtx := &CodebaseContext{
+		TechStack:      "TypeScript/JavaScript",
+		PackageManager: "bun",
+	}
+
+	prompt := generatePrdRefinePrompt(cfg, featureDir, codebaseCtx, "## Guidance\nUse app router.")
+
+	if !strings.Contains(prompt, "auth") {
+		t.Error("prompt should contain feature name")
+	}
+	if !strings.Contains(prompt, "Auth Feature") {
+		t.Error("prompt should contain prd.md content")
+	}
+	if !strings.Contains(prompt, "US-001: Login") {
+		t.Error("prompt should contain story from prd.md")
+	}
+	if !strings.Contains(prompt, "app router") {
+		t.Error("prompt should contain resource guidance")
+	}
+	if !strings.Contains(prompt, "Do NOT start implementing") {
+		t.Error("prompt should prohibit implementation")
+	}
+	if !strings.Contains(prompt, "US-XXX") {
+		t.Error("prompt should contain story format template")
+	}
+}
+
+func TestGeneratePrdRefinePrompt_MissingPrdMd(t *testing.T) {
+	dir := t.TempDir()
+	featureDir := &FeatureDir{
+		Feature: "auth",
+		Path:    dir,
+	}
+
+	cfg := &ResolvedConfig{
+		ProjectRoot: dir,
+		Config: RalphConfig{
+			Provider: ProviderConfig{Command: "claude"},
+			Verify:   VerifyConfig{Default: []string{"echo ok"}},
+		},
+	}
+
+	prompt := generatePrdRefinePrompt(cfg, featureDir, nil, "")
+
+	if !strings.Contains(prompt, "prd.md not found") {
+		t.Error("prompt should contain fallback text when prd.md missing")
 	}
 }

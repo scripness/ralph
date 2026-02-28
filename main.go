@@ -36,6 +36,8 @@ func main() {
 		cmdPrd(args)
 	case "status":
 		cmdStatus(args)
+	case "refine":
+		cmdRefine(args)
 	case "doctor":
 		cmdDoctor(args)
 	case "logs":
@@ -59,6 +61,7 @@ Commands:
   prd <feature>        Create, refine, or manage a PRD for a feature
   run <feature>        Run the agent loop for a feature
   verify <feature>     Run verification checks (interactive fix on failure)
+  refine <feature>     Interactive AI session for post-verification refinement
   status [feature]     Show story status (all features or specific)
   logs <feature>       View run logs (--list, --summary, --follow, etc.)
   doctor               Check Ralph environment

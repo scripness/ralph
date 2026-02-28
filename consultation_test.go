@@ -299,58 +299,6 @@ func TestFormatGuidance_Nil(t *testing.T) {
 	}
 }
 
-func TestExtractBetweenMarkers(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-		ok       bool
-	}{
-		{
-			"normal extraction",
-			"some output\n<ralph>GUIDANCE_START</ralph>\nUse app router.\nSource: src/file.ts\n<ralph>GUIDANCE_END</ralph>\nmore output",
-			"Use app router.\nSource: src/file.ts",
-			true,
-		},
-		{
-			"no start marker",
-			"some output\nUse app router.\n<ralph>GUIDANCE_END</ralph>",
-			"",
-			false,
-		},
-		{
-			"no end marker",
-			"<ralph>GUIDANCE_START</ralph>\nUse app router.",
-			"",
-			false,
-		},
-		{
-			"empty content",
-			"<ralph>GUIDANCE_START</ralph>\n<ralph>GUIDANCE_END</ralph>",
-			"",
-			true,
-		},
-		{
-			"no markers at all",
-			"some random output",
-			"",
-			false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, ok := extractBetweenMarkers(tt.input)
-			if ok != tt.ok {
-				t.Errorf("expected ok=%v, got ok=%v", tt.ok, ok)
-			}
-			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
-	}
-}
-
 func TestConsultCacheKey_Deterministic(t *testing.T) {
 	key1 := consultCacheKey("US-001", "next", "abc123", "Add login form")
 	key2 := consultCacheKey("US-001", "next", "abc123", "Add login form")
@@ -547,21 +495,17 @@ func TestGetPrompt_PrdCreateWithResourceGuidance(t *testing.T) {
 	}
 }
 
-func TestGetPrompt_RefineWithResourceGuidance(t *testing.T) {
-	prompt := getPrompt("refine", map[string]string{
+func TestGetPrompt_RefineSessionWithResourceGuidance(t *testing.T) {
+	prompt := getPrompt("refine-session", map[string]string{
 		"feature":          "auth",
-		"prdMdContent":     "# Auth",
-		"prdJsonContent":   "{}",
-		"progress":         "0/1",
-		"storyDetails":     "",
-		"learnings":        "",
+		"summary":          "Previous work summary.",
 		"diffSummary":      "",
 		"codebaseContext":  "",
-		"verifyCommands":   "",
-		"serviceURLs":      "",
-		"knowledgeFile":    "CLAUDE.md",
 		"branchName":       "ralph/auth",
 		"featureDir":       "/test",
+		"knowledgeFile":    "CLAUDE.md",
+		"verifyCommands":   "",
+		"serviceURLs":      "",
 		"resourceGuidance": "## Framework Guidance\n\nTest guidance",
 	})
 

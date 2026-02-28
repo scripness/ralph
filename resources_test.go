@@ -79,18 +79,6 @@ func TestNewResourceManager_EmptyDeps(t *testing.T) {
 	}
 }
 
-func TestResourceManager_GetResourcePath(t *testing.T) {
-	rm := NewResourceManager(nil, nil, "npm", "/tmp/test")
-	path := rm.GetResourcePath("next@15.0.0")
-
-	if path == "" {
-		t.Error("expected non-empty path")
-	}
-	if filepath.Base(path) != "next@15.0.0" {
-		t.Errorf("expected path to end with 'next@15.0.0', got '%s'", path)
-	}
-}
-
 func TestResourceRegistry_UpdateAndGet(t *testing.T) {
 	dir := t.TempDir()
 
@@ -152,20 +140,6 @@ func TestResourceRegistry_SaveAndLoad(t *testing.T) {
 	}
 	if reg2.TotalSize != 2048 {
 		t.Errorf("expected TotalSize=2048 after reload, got %d", reg2.TotalSize)
-	}
-}
-
-func TestResourceRegistry_ListCached(t *testing.T) {
-	dir := t.TempDir()
-
-	reg, _ := LoadResourceRegistry(dir)
-	reg.UpdateRepo("a@1.0", &CachedRepo{})
-	reg.UpdateRepo("b@2.0", &CachedRepo{})
-	reg.UpdateRepo("c@3.0", &CachedRepo{})
-
-	cached := reg.ListCached()
-	if len(cached) != 3 {
-		t.Errorf("expected 3 cached, got %d", len(cached))
 	}
 }
 

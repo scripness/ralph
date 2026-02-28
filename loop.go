@@ -23,10 +23,12 @@ const (
 )
 
 var (
-	LearningPattern    = regexp.MustCompile(`^<ralph>LEARNING:(.+?)</ralph>$`)
-	StuckNotePattern   = regexp.MustCompile(`^<ralph>STUCK:(.+?)</ralph>$`)
-	VerifyPassPattern  = regexp.MustCompile(`^<ralph>VERIFY_PASS</ralph>$`)
-	VerifyFailPattern  = regexp.MustCompile(`^<ralph>VERIFY_FAIL:(.+?)</ralph>$`)
+	LearningPattern      = regexp.MustCompile(`^<ralph>LEARNING:(.+?)</ralph>$`)
+	StuckNotePattern     = regexp.MustCompile(`^<ralph>STUCK:(.+?)</ralph>$`)
+	VerifyPassPattern    = regexp.MustCompile(`^<ralph>VERIFY_PASS</ralph>$`)
+	VerifyFailPattern    = regexp.MustCompile(`^<ralph>VERIFY_FAIL:(.+?)</ralph>$`)
+	SummaryStartPattern  = regexp.MustCompile(`^<ralph>SUMMARY_START</ralph>$`)
+	SummaryEndPattern    = regexp.MustCompile(`^<ralph>SUMMARY_END</ralph>$`)
 )
 
 // ProviderResult contains the result of a provider iteration
@@ -1008,8 +1010,23 @@ func runVerify(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance str
 		logger.LogPrintln(" ✓ All verification passed!")
 		fmt.Println(strings.Repeat("=", 60))
 		fmt.Println()
-		fmt.Println("Ready to merge. Review changes with:")
-		fmt.Printf("  git log --oneline %s..HEAD\n", git.DefaultBranch())
+
+		// Offer to archive the feature
+		if promptYesNo("Archive this feature and generate summary?") {
+			if err := archiveFeature(cfg, featureDir, def, state); err != nil {
+				fmt.Printf("\nWarning: archive failed: %v\n", err)
+				fmt.Println("Files were NOT deleted. You can retry with 'ralph verify " + featureDir.Feature + "'.")
+			} else {
+				fmt.Println()
+				fmt.Printf("✓ Feature '%s' archived. Summary at %s\n", featureDir.Feature, featureDir.SummaryMdPath())
+				fmt.Println("  PRD files have been removed.")
+				fmt.Printf("\nUse 'ralph refine %s' for future changes using summary context.\n", featureDir.Feature)
+			}
+		} else {
+			fmt.Println("Ready to merge. Review changes with:")
+			fmt.Printf("  git log --oneline %s..HEAD\n", git.DefaultBranch())
+		}
+
 		logger.RunEnd(true, "verification passed")
 		return nil
 	}
@@ -1204,6 +1221,188 @@ func processVerifyLine(line string, result *VerifyAnalysisResult) {
 	if matches := VerifyFailPattern.FindStringSubmatch(trimmed); len(matches) > 1 {
 		result.Failures = append(result.Failures, strings.TrimSpace(matches[1]))
 	}
+}
+
+// extractSummary extracts text between SUMMARY_START and SUMMARY_END markers.
+func extractSummary(text string) (string, bool) {
+	lines := strings.Split(text, "\n")
+	var result []string
+	inSummary := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if SummaryStartPattern.MatchString(trimmed) {
+			inSummary = true
+			continue
+		}
+		if SummaryEndPattern.MatchString(trimmed) {
+			if inSummary {
+				content := strings.TrimSpace(strings.Join(result, "\n"))
+				if content == "" {
+					return "", false
+				}
+				return content, true
+			}
+			return "", false
+		}
+		if inSummary {
+			result = append(result, line)
+		}
+	}
+
+	return "", false
+}
+
+// runSummarySubagent spawns a non-interactive provider to generate a feature summary.
+// Returns the extracted summary text between SUMMARY_START/SUMMARY_END markers.
+func runSummarySubagent(cfg *ResolvedConfig, prompt string) (string, error) {
+	timeout := time.Duration(cfg.Config.Provider.Timeout) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	p := cfg.Config.Provider
+	args, promptFile, err := buildProviderArgs(p.Args, p.PromptMode, p.PromptFlag, prompt)
+	if err != nil {
+		return "", err
+	}
+
+	cmd := exec.CommandContext(ctx, p.Command, args...)
+	cmd.Dir = cfg.ProjectRoot
+	cmd.Env = os.Environ()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 5 * time.Second
+
+	// Setup stdin pipe for stdin mode
+	var stdinPipe io.WriteCloser
+	if p.PromptMode == "stdin" || p.PromptMode == "" {
+		stdinPipe, err = cmd.StdinPipe()
+		if err != nil {
+			if promptFile != "" {
+				os.Remove(promptFile)
+			}
+			return "", fmt.Errorf("failed to create stdin pipe: %w", err)
+		}
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		if promptFile != "" {
+			os.Remove(promptFile)
+		}
+		return "", fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		if promptFile != "" {
+			os.Remove(promptFile)
+		}
+		return "", fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		if promptFile != "" {
+			os.Remove(promptFile)
+		}
+		return "", fmt.Errorf("failed to start summary subagent: %w", err)
+	}
+
+	if promptFile != "" {
+		defer os.Remove(promptFile)
+	}
+
+	// Write prompt to stdin (for stdin mode)
+	if stdinPipe != nil {
+		go func() {
+			defer stdinPipe.Close()
+			io.WriteString(stdinPipe, prompt)
+		}()
+	}
+
+	// Collect output
+	var mu sync.Mutex
+	var outputBuilder strings.Builder
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		s := bufio.NewScanner(stderr)
+		s.Buffer(make([]byte, 64*1024), 1024*1024)
+		for s.Scan() {
+			mu.Lock()
+			outputBuilder.WriteString(s.Text() + "\n")
+			mu.Unlock()
+		}
+	}()
+
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		mu.Lock()
+		outputBuilder.WriteString(scanner.Text() + "\n")
+		mu.Unlock()
+	}
+
+	wg.Wait()
+	cmd.Wait()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("summary subagent timed out after %v", timeout)
+	}
+
+	summary, ok := extractSummary(outputBuilder.String())
+	if !ok || strings.TrimSpace(summary) == "" {
+		return "", fmt.Errorf("summary subagent did not produce a summary (missing SUMMARY_START/SUMMARY_END markers)")
+	}
+
+	return summary, nil
+}
+
+// archiveFeature generates a summary, appends it to summary.md, deletes PRD files, and commits.
+// Returns error if summary generation fails (files are NOT deleted on failure).
+func archiveFeature(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState) error {
+	// Generate summary
+	fmt.Println("Generating feature summary...")
+	prompt := generateSummaryPrompt(cfg, featureDir, def, state)
+	summary, err := runSummarySubagent(cfg, prompt)
+	if err != nil {
+		return fmt.Errorf("failed to generate summary: %w", err)
+	}
+
+	// Build the summary content
+	timestamp := time.Now().Format("2006-01-02")
+	content := fmt.Sprintf("## %s (%s)\n\n%s\n", featureDir.Feature, timestamp, summary)
+
+	// Write summary.md inside the feature directory BEFORE deleting PRD files (fail-safe)
+	summaryPath := featureDir.SummaryMdPath()
+	if err := os.WriteFile(summaryPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write summary.md: %w", err)
+	}
+
+	// Delete PRD files
+	filesToDelete := []string{
+		featureDir.PrdMdPath(),
+		featureDir.PrdJsonPath(),
+		featureDir.RunStatePath(),
+	}
+	for _, f := range filesToDelete {
+		os.Remove(f) // ignore errors — files may not exist
+	}
+
+	// Commit all changes
+	git := NewGitOps(cfg.ProjectRoot)
+	commitFiles := []string{summaryPath}
+	commitFiles = append(commitFiles, filesToDelete...)
+	if err := git.CommitFiles(commitFiles, "ralph: archive feature "+featureDir.Feature); err != nil {
+		return fmt.Errorf("failed to commit archive: %w", err)
+	}
+
+	return nil
 }
 
 // commitPrdOnly commits a single file (typically run-state.json during runs)

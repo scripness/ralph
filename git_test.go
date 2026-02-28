@@ -131,6 +131,51 @@ func TestGitOps_CommitFile(t *testing.T) {
 	}
 }
 
+func TestGitOps_CommitFiles(t *testing.T) {
+	dir, git := initTestRepo(t)
+	hashBefore := git.GetLastCommit()
+
+	// Add a new file and delete an existing one
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
+	os.Remove(filepath.Join(dir, "README.md"))
+
+	err := git.CommitFiles([]string{
+		filepath.Join(dir, "new.txt"),
+		filepath.Join(dir, "README.md"),
+	}, "multi-file commit")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify a new commit was created
+	hashAfter := git.GetLastCommit()
+	if hashAfter == "" || hashAfter == hashBefore {
+		t.Error("expected a new commit hash after CommitFiles")
+	}
+
+	// Verify working tree is clean
+	if !git.IsWorkingTreeClean() {
+		t.Error("expected clean working tree after CommitFiles")
+	}
+}
+
+func TestGitOps_CommitFiles_NoChanges(t *testing.T) {
+	_, git := initTestRepo(t)
+
+	hashBefore := git.GetLastCommit()
+
+	// Nothing changed — should be a no-op
+	err := git.CommitFiles([]string{}, "empty commit")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hashAfter := git.GetLastCommit()
+	if hashAfter != hashBefore {
+		t.Error("expected no new commit when nothing changed")
+	}
+}
+
 func TestGitOps_GetLastCommit(t *testing.T) {
 	_, git := initTestRepo(t)
 
@@ -590,78 +635,6 @@ func TestGitOps_HasTestFileChanges_TestsDir(t *testing.T) {
 	run("commit", "-m", "add __tests__")
 	if !git.HasTestFileChanges() {
 		t.Error("expected true with __tests__/ file")
-	}
-}
-
-func TestGitOps_HasNonRalphChanges(t *testing.T) {
-	dir, git := initTestRepo(t)
-	git.CreateBranch("ralph/feature")
-
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %s\n%s", args, err, out)
-		}
-	}
-
-	// No changes → false
-	if git.HasNonRalphChanges() {
-		t.Error("expected false with no changes")
-	}
-
-	// Only .ralph/ files → false
-	os.MkdirAll(filepath.Join(dir, ".ralph", "2024-01-15-auth"), 0755)
-	os.WriteFile(filepath.Join(dir, ".ralph", "2024-01-15-auth", "run-state.json"), []byte("{}"), 0644)
-	run("add", ".ralph/2024-01-15-auth/run-state.json")
-	run("commit", "-m", "ralph state")
-	if git.HasNonRalphChanges() {
-		t.Error("expected false with only .ralph/ files")
-	}
-
-	// Add source file → true
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0644)
-	run("add", "main.go")
-	run("commit", "-m", "add source")
-	if !git.HasNonRalphChanges() {
-		t.Error("expected true with source file outside .ralph/")
-	}
-}
-
-func TestGitOps_HasNonRalphChanges_OnlySourceFiles(t *testing.T) {
-	dir, git := initTestRepo(t)
-	git.CreateBranch("ralph/feature")
-
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v failed: %s\n%s", args, err, out)
-		}
-	}
-
-	// Only source files (no .ralph/) → true
-	os.WriteFile(filepath.Join(dir, "app.ts"), []byte("console.log('hi')"), 0644)
-	run("add", "app.ts")
-	run("commit", "-m", "add app")
-	if !git.HasNonRalphChanges() {
-		t.Error("expected true with only source files")
 	}
 }
 

@@ -98,6 +98,28 @@ func (g *GitOps) CommitFile(filePath, message string) error {
 	return err
 }
 
+// CommitFiles stages multiple file paths (additions and deletions) and commits atomically.
+// Files that exist on disk are added; files that don't exist are staged as deletions.
+func (g *GitOps) CommitFiles(filePaths []string, message string) error {
+	for _, fp := range filePaths {
+		if _, err := g.run("add", fp); err != nil {
+			return fmt.Errorf("failed to stage %s: %w", fp, err)
+		}
+	}
+
+	// Check if the staged paths have changes to commit
+	diffArgs := append([]string{"diff", "--cached", "--name-only", "--"}, filePaths...)
+	staged, _ := g.run(diffArgs...)
+	if strings.TrimSpace(staged) == "" {
+		return nil
+	}
+
+	// Commit only the specified paths to avoid including unrelated staged files
+	commitArgs := append([]string{"commit", "--only", "-m", message, "--"}, filePaths...)
+	_, err := g.run(commitArgs...)
+	return err
+}
+
 // GetLastCommit returns the last commit hash (full).
 func (g *GitOps) GetLastCommit() string {
 	out, err := g.run("rev-parse", "HEAD")
@@ -208,18 +230,6 @@ func (g *GitOps) HasTestFileChanges() bool {
 			strings.Contains(lower, ".test.") ||
 			strings.Contains(lower, ".spec.") ||
 			strings.Contains(lower, "__tests__/") {
-			return true
-		}
-	}
-	return false
-}
-
-// HasNonRalphChanges returns true if any changed files on the branch
-// are outside the .ralph/ directory. This distinguishes branches with
-// real implementation work from fresh branches that only have PRD state.
-func (g *GitOps) HasNonRalphChanges() bool {
-	for _, f := range g.GetChangedFiles() {
-		if !strings.HasPrefix(f, ".ralph/") {
 			return true
 		}
 	}

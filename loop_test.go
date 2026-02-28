@@ -614,6 +614,72 @@ func TestVerifyReport_Finalize(t *testing.T) {
 	}
 }
 
+func TestSummaryMarkerDetection(t *testing.T) {
+	if !SummaryStartPattern.MatchString("<ralph>SUMMARY_START</ralph>") {
+		t.Error("pattern should match SUMMARY_START marker")
+	}
+	if SummaryStartPattern.MatchString("text <ralph>SUMMARY_START</ralph> more") {
+		t.Error("pattern should NOT match embedded SUMMARY_START marker")
+	}
+	if !SummaryEndPattern.MatchString("<ralph>SUMMARY_END</ralph>") {
+		t.Error("pattern should match SUMMARY_END marker")
+	}
+	if SummaryEndPattern.MatchString("text <ralph>SUMMARY_END</ralph> more") {
+		t.Error("pattern should NOT match embedded SUMMARY_END marker")
+	}
+}
+
+func TestExtractSummary(t *testing.T) {
+	text := `Some output
+<ralph>SUMMARY_START</ralph>
+This is the summary content.
+It has multiple lines.
+<ralph>SUMMARY_END</ralph>
+More output`
+
+	summary, ok := extractSummary(text)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if !strings.Contains(summary, "This is the summary content.") {
+		t.Errorf("expected summary to contain content, got %q", summary)
+	}
+	if !strings.Contains(summary, "It has multiple lines.") {
+		t.Errorf("expected summary to contain second line, got %q", summary)
+	}
+}
+
+func TestExtractSummary_NoMarkers(t *testing.T) {
+	_, ok := extractSummary("No markers here")
+	if ok {
+		t.Error("expected ok=false when no markers present")
+	}
+}
+
+func TestExtractSummary_Empty(t *testing.T) {
+	text := `<ralph>SUMMARY_START</ralph>
+<ralph>SUMMARY_END</ralph>`
+
+	_, ok := extractSummary(text)
+	if ok {
+		t.Error("expected ok=false for empty summary")
+	}
+}
+
+func TestExtractSummary_WithWhitespace(t *testing.T) {
+	text := `  <ralph>SUMMARY_START</ralph>
+  Summary with indentation.
+  <ralph>SUMMARY_END</ralph>`
+
+	summary, ok := extractSummary(text)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if !strings.Contains(summary, "Summary with indentation.") {
+		t.Errorf("unexpected summary: %q", summary)
+	}
+}
+
 func TestVerifyReport_AddWarn(t *testing.T) {
 	r := &VerifyReport{}
 	r.AddWarn("knowledge file", "was not modified")

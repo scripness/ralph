@@ -35,7 +35,7 @@ Create a valid JSON file with this structure. **Only include definition fields â
 ```json
 {
   "schemaVersion": 3,
-  "project": "[project name from PRD]",
+  "project": "{{project}}",
   "branchName": "ralph/{{feature}}",
   "description": "[feature description from PRD]",
   "userStories": [

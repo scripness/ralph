@@ -107,12 +107,6 @@ func generateRunPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefi
 	// Build learnings (capped at maxLearningsInPrompt most recent)
 	learningsStr := buildLearnings(state.Learnings, "## Learnings from Previous Work")
 
-	// Cross-feature learnings (read-only aggregation from other features)
-	crossLearnings := CollectCrossFeatureLearnings(cfg.ProjectRoot, featureDir.Feature)
-	if crossStr := buildLearnings(crossLearnings, "## Learnings from Previous Features"); crossStr != "" {
-		learningsStr += "\n" + crossStr
-	}
-
 	// Build tags info
 	tagsStr := ""
 	if len(story.Tags) > 0 {
@@ -221,26 +215,25 @@ func generatePrdCreatePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, codeba
 	})
 }
 
-// generateRefinePrompt generates the prompt for an interactive refine session.
-// Loads prd.md + prd.json content, discovers codebase context, builds git diff.
-func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState, resourceGuidance string) string {
-	// Read prd.md content (expected to exist alongside prd.json)
+// generatePrdRefinePrompt generates the prompt for an interactive PRD refinement session.
+func generatePrdRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, codebaseCtx *CodebaseContext, resourceGuidance string) string {
 	prdMdContent := "(prd.md not found)"
 	if data, err := os.ReadFile(featureDir.PrdMdPath()); err == nil {
 		prdMdContent = string(data)
 	}
 
-	// Read prd.json content
-	prdJsonContent := ""
-	if data, err := os.ReadFile(featureDir.PrdJsonPath()); err == nil {
-		prdJsonContent = "```json\n" + string(data) + "\n```"
-	}
+	return getPrompt("prd-refine", map[string]string{
+		"feature":          featureDir.Feature,
+		"outputPath":       featureDir.PrdMdPath(),
+		"prdMdContent":     prdMdContent,
+		"codebaseContext":  FormatCodebaseContext(codebaseCtx),
+		"resourceGuidance": resourceGuidance,
+	})
+}
 
-	// Build progress and story details
-	progress := buildProgress(def, state)
-	storyDetails := buildRefinementStoryDetails(def, state)
-	learnings := buildLearnings(state.Learnings, "## Learnings from Previous Runs")
-
+// generateRefineSessionPrompt generates the prompt for an interactive refine session.
+// Uses summary.md as historical context instead of PRD files.
+func generateRefineSessionPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, summaryContent, codebaseCtx, resourceGuidance string) string {
 	// Build git diff summary
 	git := NewGitOps(cfg.ProjectRoot)
 	diffStat := git.GetDiffSummary()
@@ -248,10 +241,6 @@ func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDD
 	if diffStat != "" {
 		diffStr = "## Changes on Branch\n\n```\n" + truncateOutput(diffStat, 60) + "\n```\n"
 	}
-
-	// Discover codebase context
-	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
-	codebaseStr := FormatCodebaseContext(codebaseCtx)
 
 	// Build verify commands list
 	var verifyLines []string
@@ -263,7 +252,7 @@ func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDD
 	}
 	verifyStr := strings.Join(verifyLines, "\n")
 
-	// Build service URLs (leading \n matches generateRunPrompt)
+	// Build service URLs
 	serviceURLsStr := ""
 	if len(cfg.Config.Services) > 0 {
 		serviceURLsStr = "\n**Services:**\n"
@@ -272,21 +261,89 @@ func generateRefinePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDD
 		}
 	}
 
-	return getPrompt("refine", map[string]string{
+	return getPrompt("refine-session", map[string]string{
 		"feature":          featureDir.Feature,
-		"prdMdContent":     prdMdContent,
-		"prdJsonContent":   prdJsonContent,
-		"progress":         progress,
-		"storyDetails":     storyDetails,
-		"learnings":        learnings,
+		"summary":          summaryContent,
 		"diffSummary":      diffStr,
-		"codebaseContext":  codebaseStr,
+		"codebaseContext":  codebaseCtx,
+		"branchName":       "ralph/" + featureDir.Feature,
+		"featureDir":       featureDir.Path,
+		"knowledgeFile":    cfg.Config.Provider.KnowledgeFile,
 		"verifyCommands":   verifyStr,
 		"serviceURLs":      serviceURLsStr,
-		"knowledgeFile":    cfg.Config.Provider.KnowledgeFile,
-		"branchName":       def.BranchName,
-		"featureDir":       featureDir.Path,
 		"resourceGuidance": resourceGuidance,
+	})
+}
+
+// generateRefineSummarizePrompt generates the prompt for post-refine-session summary generation.
+func generateRefineSummarizePrompt(feature, gitLog, diffStat, previousSummary, timestamp string) string {
+	return getPrompt("refine-summarize", map[string]string{
+		"feature":         feature,
+		"gitLog":          gitLog,
+		"diffStat":        diffStat,
+		"previousSummary": previousSummary,
+		"timestamp":       timestamp,
+	})
+}
+
+// generateSummaryPrompt generates the prompt for post-verify summary generation.
+func generateSummaryPrompt(cfg *ResolvedConfig, featureDir *FeatureDir, def *PRDDefinition, state *RunState) string {
+	// Read prd.md content
+	prdMdContent := "(prd.md not found)"
+	if data, err := os.ReadFile(featureDir.PrdMdPath()); err == nil {
+		prdMdContent = string(data)
+	}
+
+	// Build story details
+	storyDetails := buildRefinementStoryDetails(def, state)
+
+	// Build retry details
+	retryDetails := ""
+	for _, s := range def.UserStories {
+		retries := state.GetRetries(s.ID)
+		if retries > 0 {
+			retryDetails += fmt.Sprintf("- %s: %d retries", s.ID, retries)
+			if note := state.GetLastFailure(s.ID); note != "" {
+				retryDetails += fmt.Sprintf(" (last issue: %s)", note)
+			}
+			retryDetails += "\n"
+		}
+	}
+
+	// Build learnings
+	learningsStr := buildLearnings(state.Learnings, "## Learnings Captured During Implementation")
+
+	// Build git diff summary
+	git := NewGitOps(cfg.ProjectRoot)
+	diffStat := git.GetDiffSummary()
+	diffStr := ""
+	if diffStat != "" {
+		diffStr = "```\n" + truncateOutput(diffStat, 60) + "\n```"
+	}
+
+	// Changed files
+	changedFiles := ""
+	files := git.GetChangedFiles()
+	for _, f := range files {
+		changedFiles += "- " + f + "\n"
+	}
+	if changedFiles == "" {
+		changedFiles = "(no changed files detected)"
+	}
+
+	return getPrompt("summary", map[string]string{
+		"project":      def.Project,
+		"feature":      featureDir.Feature,
+		"description":  def.Description,
+		"branchName":   def.BranchName,
+		"prdMdContent": prdMdContent,
+		"storyDetails": storyDetails,
+		"passedCount":  fmt.Sprintf("%d", CountPassed(state)),
+		"skippedCount": fmt.Sprintf("%d", CountSkipped(state)),
+		"retryDetails": retryDetails,
+		"learnings":    learningsStr,
+		"diffSummary":  diffStr,
+		"changedFiles": changedFiles,
 	})
 }
 
@@ -328,6 +385,7 @@ func buildRefinementStoryDetails(def *PRDDefinition, state *RunState) string {
 func generatePrdFinalizePrompt(cfg *ResolvedConfig, featureDir *FeatureDir, content, resourceGuidance string) string {
 	return getPrompt("prd-finalize", map[string]string{
 		"feature":          featureDir.Feature,
+		"project":          cfg.Config.Project,
 		"prdContent":       content,
 		"outputPath":       featureDir.PrdJsonPath(),
 		"resourceGuidance": resourceGuidance,

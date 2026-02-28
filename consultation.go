@@ -617,29 +617,3 @@ Do not rely on memory alone — docs change between versions. Verify against the
 `
 }
 
-// extractBetweenMarkers extracts text between GUIDANCE_START and GUIDANCE_END markers.
-// Exported for testing.
-func extractBetweenMarkers(text string) (string, bool) {
-	lines := strings.Split(text, "\n")
-	var result []string
-	inGuidance := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if GuidanceStartPattern.MatchString(trimmed) {
-			inGuidance = true
-			continue
-		}
-		if GuidanceEndPattern.MatchString(trimmed) {
-			if inGuidance {
-				return strings.TrimSpace(strings.Join(result, "\n")), true
-			}
-			return "", false
-		}
-		if inGuidance {
-			result = append(result, line)
-		}
-	}
-
-	return "", false
-}

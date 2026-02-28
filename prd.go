@@ -25,13 +25,8 @@ func runPrdStateMachine(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGui
 		return prdStateNew(cfg, featureDir, resourceGuidance)
 	}
 
-	// State 2: Markdown exists, not finalized
-	if hasMd && !hasJson {
-		return prdStateNeedsFinalize(cfg, featureDir, resourceGuidance)
-	}
-
-	// State 3: Both exist (already finalized)
-	return prdStateFinalized(cfg, featureDir, resourceGuidance)
+	// State 2+3: PRD exists — refine via AI session then auto-finalize
+	return prdRefineAndFinalize(cfg, featureDir, resourceGuidance)
 }
 
 // prdStateNew handles creating a new PRD from scratch
@@ -68,92 +63,28 @@ func prdStateNew(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance s
 	return nil
 }
 
-// prdStateNeedsFinalize handles PRD that needs finalization
-func prdStateNeedsFinalize(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance string) error {
-	fmt.Printf("PRD exists: %s\n\n", featureDir.PrdMdPath())
-	fmt.Println("What would you like to do?")
-	fmt.Println("  A) Finalize for execution")
-	fmt.Println("  B) Refine with AI")
-	fmt.Println("  C) Edit prd.md ($EDITOR)")
-	fmt.Println("  Q) Quit")
+// prdRefineAndFinalize opens an interactive AI session to refine prd.md, then auto-finalizes.
+// Used when prd.md already exists (with or without prd.json).
+func prdRefineAndFinalize(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance string) error {
+	fmt.Printf("PRD exists: %s\n", featureDir.PrdMdPath())
+	fmt.Println("Opening AI session to refine...")
 	fmt.Println()
 
-	choice := promptChoice("Choose", []string{"a", "b", "c", "q"})
+	// Discover codebase context
+	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
 
-	switch choice {
-	case "a":
-		return prdFinalize(cfg, featureDir, resourceGuidance)
-	case "b":
-		return prdRefineDraft(cfg, featureDir, resourceGuidance)
-	case "c":
-		return prdEditManual(featureDir.PrdMdPath())
-	case "q":
-		return nil
+	// Generate and run refine prompt
+	prompt := generatePrdRefinePrompt(cfg, featureDir, codebaseCtx, resourceGuidance)
+	if err := runProviderInteractive(cfg, prompt); err != nil {
+		return err
 	}
 
-	return nil
-}
+	// Commit updated prd.md
+	commitPrdFile(cfg, featureDir.PrdMdPath(), "ralph: refine prd.md for "+featureDir.Feature)
 
-// prdStateFinalized handles PRD that is already finalized
-func prdStateFinalized(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance string) error {
-	fmt.Printf("PRD is ready: %s\n", featureDir.Path)
-
-	// Show progress if any stories have been worked on
-	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
-	if err != nil {
-		fmt.Printf("\nError loading prd.json: %v\n", err)
-		fmt.Println()
-		fmt.Println("What would you like to do?")
-		fmt.Println("  A) Regenerate prd.json from prd.md")
-		fmt.Println("  B) Edit prd.json ($EDITOR)")
-		fmt.Println("  C) Edit prd.md ($EDITOR)")
-		fmt.Println("  Q) Quit")
-		fmt.Println()
-
-		choice := promptChoice("Choose", []string{"a", "b", "c", "q"})
-		switch choice {
-		case "a":
-			return prdRegenerateJson(cfg, featureDir, resourceGuidance)
-		case "b":
-			return prdEditManual(featureDir.PrdJsonPath())
-		case "c":
-			return prdEditManual(featureDir.PrdMdPath())
-		}
-		return nil
-	}
-
-	state, _ := LoadRunState(featureDir.RunStatePath())
-	passed := CountPassed(state)
-	skipped := CountSkipped(state)
-	if passed > 0 || skipped > 0 {
-		fmt.Printf("Progress: %s\n", buildProgress(def, state))
-	}
-
-	fmt.Println()
-	fmt.Println("What would you like to do?")
-	fmt.Println("  A) Refine with AI")
-	fmt.Println("  B) Regenerate prd.json from prd.md")
-	fmt.Println("  C) Edit prd.md ($EDITOR)")
-	fmt.Println("  D) Edit prd.json ($EDITOR)")
-	fmt.Println("  Q) Quit")
-	fmt.Println()
-
-	choice := promptChoice("Choose", []string{"a", "b", "c", "d", "q"})
-
-	switch choice {
-	case "a":
-		return prdRefineInteractive(cfg, featureDir, resourceGuidance)
-	case "b":
-		return prdRegenerateJson(cfg, featureDir, resourceGuidance)
-	case "c":
-		return prdEditManual(featureDir.PrdMdPath())
-	case "d":
-		return prdEditManual(featureDir.PrdJsonPath())
-	case "q":
-		return nil
-	}
-
-	return nil
+	// Auto-finalize
+	fmt.Println("\nFinalizing PRD from updated prd.md...")
+	return prdFinalize(cfg, featureDir, resourceGuidance)
 }
 
 // prdFinalize converts prd.md to prd.json
@@ -192,99 +123,6 @@ func prdFinalize(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance s
 	}
 
 	return nil
-}
-
-// prdRefineDraft opens an AI session for refining draft PRD (pre-finalization).
-// Re-runs the brainstorming prompt — provider sees existing prd.md and iterates on it.
-func prdRefineDraft(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance string) error {
-	fmt.Printf("\nRefining PRD with AI...\n\n")
-
-	codebaseCtx := DiscoverCodebase(cfg.ProjectRoot, &cfg.Config)
-	prompt := generatePrdCreatePrompt(cfg, featureDir, codebaseCtx, resourceGuidance)
-	if err := runProviderInteractive(cfg, prompt); err != nil {
-		return err
-	}
-
-	// Check if prd.md was updated
-	featureDir.HasPrdMd = fileExists(featureDir.PrdMdPath())
-	if featureDir.HasPrdMd {
-		commitPrdFile(cfg, featureDir.PrdMdPath(), "ralph: refine prd.md for "+featureDir.Feature)
-	}
-
-	fmt.Printf("\nRun 'ralph prd %s' to continue.\n", featureDir.Feature)
-	return nil
-}
-
-// prdRefineInteractive opens an interactive AI session with full feature context (post-finalization).
-// This is the former cmdRefine logic, now integrated into ralph prd.
-func prdRefineInteractive(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance string) error {
-	def, err := LoadPRDDefinition(featureDir.PrdJsonPath())
-	if err != nil {
-		return fmt.Errorf("failed to load PRD: %w", err)
-	}
-	state, _ := LoadRunState(featureDir.RunStatePath())
-
-	// Soft warnings (don't block interactive session)
-	if warnings := CheckReadinessWarnings(&cfg.Config); len(warnings) > 0 {
-		for _, w := range warnings {
-			fmt.Fprintf(os.Stderr, "  Warning: %s\n", w)
-		}
-		fmt.Fprintln(os.Stderr, "")
-	}
-
-	// Ensure we're on the feature branch
-	git := NewGitOps(cfg.ProjectRoot)
-	if err := git.EnsureBranch(def.BranchName); err != nil {
-		return fmt.Errorf("failed to switch to branch %s: %w", def.BranchName, err)
-	}
-
-	// Show progress summary
-	fmt.Printf("\nFeature: %s\n", featureDir.Feature)
-	fmt.Printf("Branch: %s\n", def.BranchName)
-	fmt.Printf("Progress: %s\n", buildProgress(def, state))
-	fmt.Println()
-
-	// Generate prompt and open interactive session
-	prompt := generateRefinePrompt(cfg, featureDir, def, state, resourceGuidance)
-	return runProviderInteractive(cfg, prompt)
-}
-
-// prdRegenerateJson re-runs finalization from prd.md. Safe because run-state.json is separate.
-func prdRegenerateJson(cfg *ResolvedConfig, featureDir *FeatureDir, resourceGuidance string) error {
-	// Warn if stories have been worked on
-	if fileExists(featureDir.RunStatePath()) {
-		rDef, rErr := LoadPRDDefinition(featureDir.PrdJsonPath())
-		rState, _ := LoadRunState(featureDir.RunStatePath())
-		if rErr == nil {
-			passed := CountPassed(rState)
-			skipped := CountSkipped(rState)
-			if passed > 0 || skipped > 0 {
-				fmt.Printf("\nWarning: %s\n", buildProgress(rDef, rState))
-				fmt.Println("Execution state (passes, retries, skips) is preserved in run-state.json.")
-				fmt.Println("Story state will be matched by ID after regeneration.")
-				fmt.Println()
-				if !promptYesNo("Proceed with regeneration?") {
-					return nil
-				}
-			}
-		}
-	}
-
-	return prdFinalize(cfg, featureDir, resourceGuidance)
-}
-
-// prdEditManual opens a file in the user's editor
-func prdEditManual(path string) error {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "nano"
-	}
-	if !isCommandAvailable(editor) {
-		return fmt.Errorf("editor '%s' not found in PATH. Set $EDITOR to your preferred editor", editor)
-	}
-
-	cmd := runCommandInteractive(editor, path)
-	return cmd.Run()
 }
 
 // runProviderInteractive runs the provider with stdin/stdout connected.

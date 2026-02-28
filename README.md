@@ -11,7 +11,8 @@ curl -fsSL https://raw.githubusercontent.com/scripness/ralph/main/install.sh | b
 ralph init                # detect project, pick provider, configure verification
 ralph prd auth            # brainstorm and finalize a PRD with AI
 ralph run auth            # infinite loop until every story passes verification
-ralph verify auth         # comprehensive verification with AI deep analysis
+ralph verify auth         # comprehensive verification + archive to summary
+ralph refine auth         # interactive AI session using summary as context
 ```
 
 Ralph orchestrates AI coding agents in a deterministic loop: pick the next story, spawn a fresh AI instance, verify the implementation with your project's own test suite, persist learnings, repeat. The CLI controls everything — story selection, state management, verification, service lifecycle — while the AI provider is a pure code implementer.
@@ -45,25 +46,13 @@ Providers communicate with Ralph through three markers detected on stdout/stderr
 
 Markers are matched as whole lines (not substrings) to prevent spoofing.
 
-### Interactive PRD Workflow
+### PRD Workflow
 
-`ralph prd <feature>` drives a state machine that walks you through creating, refining, and finalizing a PRD:
+`ralph prd <feature>` creates and maintains your PRD:
 
 **New feature** — AI brainstorms a `prd.md` draft, then prompts you to finalize it into structured `prd.json`.
 
-**Draft exists** (prd.md, no prd.json):
-- Finalize to prd.json
-- Refine with AI
-- Edit prd.md manually
-- Quit
-
-**Finalized** (both files exist):
-- Refine with AI — opens an interactive session pre-loaded with the full feature context: PRD content, progress, learnings, git diff, codebase discovery, resource consultation guidance
-- Regenerate prd.json — safe because execution state lives in a separate `run-state.json`
-- Edit prd.md / Edit prd.json manually
-- Quit
-
-If `prd.json` is corrupted or has a wrong schema version, a recovery menu offers to regenerate or edit.
+**Existing PRD** — Opens an interactive AI session to refine `prd.md` (pre-loaded with codebase context, resource consultation, and the current PRD content), then auto-finalizes to `prd.json`. No menus — running `ralph prd` again always means "refine and re-finalize."
 
 ### Deterministic Agent Loop
 
@@ -74,7 +63,7 @@ If `prd.json` is corrupted or has a wrong schema version, a recovery menu offers
 3. **Pick next story** — highest priority, not passed, not skipped
 4. **Verify-at-top** — runs verification *before* spawning the provider. If the story already passes, marks it done and moves on. Skipped on fresh branches (no implementation commits yet) to prevent false positives
 5. **Resource consultation** — spawns lightweight subagents to search cached framework source and produce focused guidance
-6. **Spawn provider** — sends prompt with story details, learnings, consultation guidance, cross-feature learnings
+6. **Spawn provider** — sends prompt with story details, learnings, consultation guidance
 7. **Detect markers** — scans provider output for DONE, STUCK, LEARNING
 8. **Commit check** — provider must have created a new git commit (DONE without a commit = failed attempt)
 9. **Verify** — runs typecheck, lint, test commands + service health checks. For `ui`-tagged stories: restarts services, runs e2e tests
@@ -96,6 +85,8 @@ SIGINT/SIGTERM triggers graceful cleanup: kills provider process group, stops se
 - Structured `VerifyReport` with PASS/FAIL/WARN items
 
 On failure, offers an interactive AI fix session pre-loaded with the full failure context.
+
+On success, offers to **archive the feature**: generates an AI summary of what was built (specifications, file map, patterns, gotchas), writes it to the feature's `summary.md`, and deletes `prd.md` + `prd.json` + `run-state.json`. The summary is the sole historical record for future work via `ralph refine`.
 
 ### Framework Source Consultation
 
@@ -127,14 +118,11 @@ Ralph manages dev servers across the entire lifecycle:
 
 Service output is captured for diagnostics but not printed to the console. At least one service is required.
 
-### Cross-Feature Memory
+### Summary-Based Memory
 
-Learnings accumulate per feature in `run-state.json`. When running a new feature, Ralph automatically collects learnings from other completed features and includes them in the prompt — insights discovered during `auth` (e.g., "use bcrypt for password hashing") are available when implementing `billing`.
+After a feature is verified and archived, Ralph generates a dense technical summary and writes it to the feature's `summary.md` (e.g., `.ralph/2024-01-15-auth/summary.md`). This summary — not the PRD files — is the permanent record of what was built. Each feature owns its own summary.
 
-- Deduplicated via case-insensitive normalization
-- Capped at 50 most recent in prompts
-- Read-only aggregation — never copied between features
-- Only injected into the implementation prompt, not verify-fix or refine
+`ralph refine <feature>` opens an interactive AI session using the feature's `summary.md` as historical context. After the session, any new commits are summarized and appended to the feature's `summary.md`.
 
 ### Observability
 
@@ -154,7 +142,7 @@ ralph logs auth --json              # Raw JSONL for piping
 
 JSONL events (21 types) are auto-rotated to keep the last 10 runs per feature.
 
-**`ralph status [feature]`** — progress overview with per-story breakdown.
+**`ralph status [feature]`** — progress overview with per-story breakdown. Archived features show as `(archived)` with their summary excerpt.
 
 **`ralph doctor`** — environment checks: config validity, provider availability, `.ralph/` directory, `sh` and `git` in PATH, git repo status, directory writability, verify commands, feature listing, lock status.
 
@@ -206,7 +194,7 @@ Ralph detects your project's tech stack, package manager, and suggests verify co
 ralph prd auth
 ```
 
-AI brainstorms a `prd.md` describing your feature, then finalizes it into a structured `prd.json` with atomic user stories, acceptance criteria, tags, and priorities.
+AI brainstorms a `prd.md` describing your feature, then finalizes it into a structured `prd.json` with atomic user stories, acceptance criteria, tags, and priorities. Run it again to refine — opens an interactive AI session then auto-finalizes.
 
 Tips for effective PRDs:
 - Keep stories atomic — one concern per story
@@ -236,18 +224,25 @@ ralph verify auth         # Full verification with AI deep analysis
 ralph status auth         # Progress overview
 ```
 
-`ralph verify` runs all verification commands, checks service health, and spawns an AI subagent to review changed files against acceptance criteria. On failure, it offers an interactive fix session.
+`ralph verify` runs all verification commands, checks service health, and spawns an AI subagent to review changed files against acceptance criteria. On failure, it offers an interactive fix session. On success, it offers to archive the feature (generate summary, delete PRD/state files).
 
 ### Iterating
 
-The workflow is continuous: refine the PRD, re-run, verify-at-top catches already-done work.
+**Before first run** — refine the PRD by running `ralph prd` again:
 
 ```bash
-ralph prd auth            # Select "Refine with AI" — interactive session with full context
+ralph prd auth            # Opens AI refine session, then auto-finalizes
 ralph run auth            # Verify-at-top skips already-passing stories
 ```
 
-To handle skipped stories: refine acceptance criteria, reset retry counts in `run-state.json`, or regenerate `prd.json` (safe — execution state is separate).
+**After verification** — archive and refine:
+
+```bash
+ralph verify auth         # On success: archive (summary.md) + delete PRD files
+ralph refine auth         # Interactive AI session using summary.md as context
+```
+
+To handle skipped stories during a run: refine acceptance criteria via `ralph prd`, reset retry counts in `run-state.json`, or re-run (verify-at-top catches already-done work).
 
 ### Multiple Features
 
@@ -260,6 +255,7 @@ Features live in date-prefixed directories under `.ralph/` (e.g., `.ralph/2024-0
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/scripness/ralph/main/ralph.schema.json",
+  "project": "my-app",
   "maxRetries": 3,
   "provider": {
     "command": "claude",
@@ -295,6 +291,7 @@ Features live in date-prefixed directories under `.ralph/` (e.g., `.ralph/2024-0
 
 | Section | Field | Default | Description |
 |---------|-------|---------|-------------|
+| root | `project` | auto (repo dir name) | Project name injected into PRD finalization |
 | root | `maxRetries` | `3` | Failed attempts per story before auto-skip |
 | provider | `command` | **required** | AI CLI command |
 | provider | `args` | auto | Arguments passed to provider |
@@ -358,87 +355,6 @@ rm .ralph/ralph.lock      # Remove stale lock (if the process is gone)
 
 ## How It Works
 
-### User Journey
-
-```mermaid
-flowchart LR
-    init["<b>ralph init</b><br/>Detect stack · Configure"]:::setup
-    prd["<b>ralph prd</b><br/>Brainstorm · Finalize"]:::setup
-    run["<b>ralph run</b><br/>Agent loop"]:::exec
-    verify["<b>ralph verify</b><br/>Tests + AI analysis"]:::exec
-
-    init --> prd --> run --> verify
-    verify -. "refine & re-run" .-> prd
-
-    classDef setup fill:#f1f5f9,stroke:#94a3b8,stroke-width:1.5px,color:#334155
-    classDef exec fill:#dbeafe,stroke:#3b82f6,stroke-width:1.5px,color:#1e40af
-```
-
-### The Agent Loop
-
-```mermaid
-flowchart TD
-    start([ralph run feature]):::terminal
-    load["Load PRD + RunState<br/>Acquire lock · Start services"]:::process
-    pick{"Pick next<br/>story"}:::decision
-    done(["All complete"]):::terminal
-    vat{"Verify-at-top:<br/>passes?"}:::decision
-    impl["Consult frameworks<br/>Spawn AI provider"]:::process
-    check{"DONE marker +<br/>new commit?"}:::decision
-    verify{"Verification<br/>passes?"}:::decision
-    pass["Mark passed"]:::success
-    fail["Mark failed"]:::failure
-    skip["Auto-skip"]:::skip
-
-    start --> load --> pick
-    pick -->|"All done"| done
-    pick -->|"Got story"| vat
-    vat -->|"Yes"| pass
-    vat -->|"No"| impl --> check
-    check -->|"No"| fail
-    check -->|"Yes"| verify
-    verify -->|"Pass"| pass
-    verify -->|"Fail"| fail
-    pass --> pick
-    fail -->|"Retry"| pick
-    fail -->|"Max retries"| skip --> pick
-
-    classDef terminal fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#334155
-    classDef process fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e40af
-    classDef decision fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#92400e
-    classDef success fill:#d1fae5,stroke:#10b981,stroke-width:2px,color:#065f46
-    classDef failure fill:#fee2e2,stroke:#ef4444,stroke-width:2px,color:#991b1b
-    classDef skip fill:#e2e8f0,stroke:#94a3b8,stroke-width:2px,color:#475569
-```
-
-### Story Lifecycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> Pending
-
-    Pending --> Passed: Verify succeeds
-    Pending --> Failed: STUCK / no DONE / no commit / verify fails
-
-    Failed --> Pending: Retry (retries < maxRetries)
-    Failed --> Skipped: Auto-skip (retries ≥ maxRetries)
-
-    Passed --> Pending: Verify-at-top detects regression
-
-    Passed --> [*]: All stories complete
-    Skipped --> [*]: Doesn't block completion
-
-    classDef pending fill:#dbeafe,stroke:#3b82f6,color:#1e40af
-    classDef passed fill:#d1fae5,stroke:#10b981,color:#065f46
-    classDef failed fill:#fee2e2,stroke:#ef4444,color:#991b1b
-    classDef skipped fill:#e2e8f0,stroke:#94a3b8,color:#475569
-
-    class Pending pending
-    class Passed passed
-    class Failed failed
-    class Skipped skipped
-```
-
 ### CLI vs Provider Responsibilities
 
 **The CLI orchestrates** — story selection, branch management, state updates, verification, service lifecycle, resource consultation, learning management, lock file, signal handling, PRD commits.
@@ -454,9 +370,10 @@ project/
 ├── ralph.config.json
 └── .ralph/
     ├── 2024-01-15-auth/
-    │   ├── prd.md                    # Human-readable PRD
-    │   ├── prd.json                  # Story definitions (v3 schema)
-    │   ├── run-state.json            # Execution state (passed, skipped, retries, learnings)
+    │   ├── prd.md                    # Human-readable PRD (deleted after archive)
+    │   ├── prd.json                  # Story definitions (deleted after archive)
+    │   ├── run-state.json            # Execution state (deleted after archive)
+    │   ├── summary.md                # Feature summary (written on archive, persists)
     │   ├── consultations/            # Cached framework consultation results
     │   │   ├── a1b2c3d4...sha.md
     │   │   └── e5f6g7h8...sha.md
@@ -505,34 +422,7 @@ The `ui` tag triggers service restarts and `verify.ui` commands during verificat
 
 ---
 
-## Background
-
-### The Ralph Pattern
-
-Ralph implements the "Ralph pattern" [originated by Geoffrey Huntley](https://ghuntley.com/ralph/) — break work into small user stories, spawn fresh AI instances to implement them one at a time, verify each with automated tests, persist learnings, repeat until done.
-
-The original [snarktank/ralph](https://github.com/snarktank/ralph) was a ~90-line bash script. This repo is a complete Go rewrite that shifts control from the AI to the CLI.
-
-### v1 vs v2
-
-| Aspect | v1 (bash) | v2 (Go CLI) |
-|--------|-----------|-------------|
-| Architecture | Bash script | Compiled Go binary |
-| Providers | Amp or Claude only | Any AI CLI |
-| Story selection | Agent decides | CLI decides (deterministic) |
-| State management | Agent updates prd.json | CLI manages all state |
-| Memory | progress.txt (append-only) | Learnings in run-state.json |
-| Iteration limit | Fixed (default 10) | Infinite until verified |
-| Crash recovery | None | Verify-at-top re-checks on restart |
-| Verification | Agent runs commands | CLI runs commands |
-| Browser testing | Provider skill (dev-browser) | Project's own e2e suite via verify.ui |
-| Service management | None | Built-in start/ready/restart |
-| Multi-feature | Manual archive/switch | Date-prefixed directories |
-| Concurrency | None | Lock file |
-
-The key insight: v1 trusted the AI to manage its own workflow. v2 treats the AI as a pure code-writing tool within a deterministic orchestration framework.
-
-### Build from Source
+## Build from Source
 
 ```bash
 git clone https://github.com/scripness/ralph
@@ -542,6 +432,8 @@ make test     # go test ./...
 ```
 
 Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Actions — `make release` triggers a workflow that bumps the version tag, runs tests, builds 4 binaries (linux/darwin x amd64/arm64), and creates a GitHub Release.
+
+Based on the [Ralph pattern](https://ghuntley.com/ralph/) — originally [snarktank/ralph](https://github.com/snarktank/ralph).
 
 ## License
 

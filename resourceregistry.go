@@ -105,15 +105,6 @@ func (r *ResourceRegistry) GetRepo(name string) *CachedRepo {
 	return r.Repos[name]
 }
 
-// ListCached returns names of all cached repos.
-func (r *ResourceRegistry) ListCached() []string {
-	var names []string
-	for name := range r.Repos {
-		names = append(names, name)
-	}
-	return names
-}
-
 // GetResolvedURL returns the cached repo URL for a dep name, if available.
 // Returns false if the entry has expired (30-day TTL).
 func (r *ResourceRegistry) GetResolvedURL(name string) (string, bool) {

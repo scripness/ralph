@@ -66,6 +66,7 @@ type CommitsConfig struct {
 // RalphConfig is the main configuration loaded from ralph.config.json
 type RalphConfig struct {
 	Schema     string           `json:"$schema,omitempty"`
+	Project    string           `json:"project,omitempty"`
 	MaxRetries int              `json:"maxRetries,omitempty"`
 	Provider   ProviderConfig   `json:"provider"`
 	Services   []ServiceConfig  `json:"services"`
@@ -101,6 +102,11 @@ func LoadConfig(projectRoot string) (*ResolvedConfig, error) {
 	var cfg RalphConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("invalid ralph.config.json: %w", err)
+	}
+
+	// Backward compatibility: older configs may not have "project".
+	if cfg.Project == "" {
+		cfg.Project = filepath.Base(projectRoot)
 	}
 
 	// Apply defaults
@@ -234,7 +240,7 @@ func applyProviderDefaults(p *ProviderConfig) {
 // WriteDefaultConfig writes a default ralph.config.json with the given provider command.
 // If verifyCommands is non-empty, they are used as verify.default; otherwise placeholders are written.
 // If svc is non-nil, it is used as the service config; otherwise a placeholder service is written.
-func WriteDefaultConfig(projectRoot, providerCommand string, verifyCommands []string, svc *ServiceConfig) error {
+func WriteDefaultConfig(projectRoot, project, providerCommand string, verifyCommands []string, svc *ServiceConfig) error {
 	defaultVerify := []string{
 		"echo 'Add your typecheck command'",
 		"echo 'Add your lint command'",
@@ -253,6 +259,7 @@ func WriteDefaultConfig(projectRoot, providerCommand string, verifyCommands []st
 
 	cfg := RalphConfig{
 		Schema:     "https://raw.githubusercontent.com/scripness/ralph/main/ralph.schema.json",
+		Project:    project,
 		MaxRetries: 3,
 		Provider: ProviderConfig{
 			Command: providerCommand,
