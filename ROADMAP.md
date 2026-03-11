@@ -483,12 +483,58 @@ Phase 1 should be implemented first — it directly improves the core value prop
 5. **Consultation and verification are automatic.** In brainstorming: plugin hooks enforce skill usage (not just CLAUDE.md suggestions — hooks inject context and block exits). In execution: CLI injects consultation results into prompts and runs mechanical verification after each item. First results from AI cannot be trusted.
 6. **CLI orchestrates, provider implements.** The CLI handles state, verification, retries, branch management. The provider signals DONE/STUCK/LEARNING. During autonomous execution, each item gets a fresh provider spawn — no accumulated context, no hallucination compounding.
 
+### The Core Ralph Technique
+
+Scrip's autonomous execution is a direct implementation of the Ralph technique ([ghuntley.com/ralph](https://ghuntley.com/ralph/), [how-to-ralph-wiggum playbook](https://github.com/ghuntley/how-to-ralph-wiggum)). **The technique is essential for successful execution** — every element below is load-bearing and must be preserved in scrip's architecture. Removing or weakening any one of them degrades the entire system.
+
+**The loop:** `while :; do cat PROMPT.md | claude ; done` — the original invention. A bash loop that feeds a prompt to an AI agent, lets it complete one unit of work, exits, and restarts with fresh context. Scrip implements this as a Go loop spawning fresh `claude --print` instances per item. The loop IS the product.
+
+**One item per loop.** Singular focus. Each spawn gets one item to implement, with the full context budget allocated to that item alone. This manages the ~176K usable token window and prevents hallucination compounding across items. "I need to repeat myself here — one item per loop."
+
+**Fresh context every iteration.** No accumulated state in the AI's context. Each spawn reads the current plan, specs, and operational guide from disk — the only bridge between iterations is what's written to files. This is why scrip's markers (DONE/STUCK/LEARNING) and progress.jsonl exist: they persist what the AI discovered so the CLI can inject relevant context into the next spawn's prompt.
+
+**IMPLEMENTATION_PLAN.md as shared state.** In original Ralph, the plan file persists on disk as the bridge between isolated loop executions. The agent reads it, picks the most important item, implements it, updates the plan, commits, and exits. The next iteration reads the updated plan. In scrip, `plan.md` serves this role, with the CLI managing item selection and progress tracking via `progress.jsonl` — the agent doesn't need to update the plan file itself.
+
+**Backpressure.** Tests, typechecks, lints, and builds are downstream backpressure that forces quality. "The wheel has got to turn fast." Without backpressure, the agent produces plausible-looking but broken code. In scrip, verification commands from `scrip.config.json` ARE the backpressure — they run after every DONE signal, and failure triggers retry with structured context. Backpressure is not optional verification — it is the mechanism that makes autonomous execution work at all.
+
+**Subagent backpressure control.** Original Ralph uses up to 500 parallel subagents for search/read operations but restricts build/test to a single agent. This prevents failures where multiple agents step on each other's builds. Scrip inherits this naturally — each `claude --print` spawn is a single agent that can delegate reads internally but owns the build exclusively.
+
+**Steering via patterns, not instructions.** The engineer moves outside the loop — observing failure patterns, tuning specs, adjusting prompts, adding utilities and code patterns that steer the agent toward correct implementations. The brainstorm phase is where this happens in scrip: the human shapes the plan and acceptance criteria, then steps away while the autonomous loop executes. "Tune it like a guitar."
+
+**Plans are disposable.** "Regenerate when trajectory diverges." The plan is a cheap artifact — what matters is the code, tests, and learnings it produced. Scrip purges plan.md after execution and regenerates from progress.jsonl + summary.md context when new work begins. Any problem created by AI can be resolved through a different series of prompts and running more loops.
+
+**"Don't assume not implemented."** The Achilles' heel of AI coding — agents re-implement existing functionality instead of finding and using it. The build prompt must include: "Before making changes, search the codebase first (don't assume not implemented)." This single instruction prevents the most common class of wasted iteration.
+
+**"No placeholders or stubs."** Full implementations only. Placeholders and stubs waste an entire loop iteration because the next iteration must redo the work. The build prompt must enforce: "Implement completely. Stubs waste efforts and time redoing the same work."
+
+**"Capture the why."** Tests and learnings must explain importance, not just state facts. This leaves "little notes for future iterations" that compound into institutional knowledge. Scrip's LEARNING markers carry this forward — but the instruction must be explicit in the build prompt.
+
+**Self-updating operational guide.** AGENTS.md in original Ralph is the operational "how to build/test/run" guide, kept brief (~60 lines), updated by the agent when it discovers something new about the project. In scrip, this maps to the project's CLAUDE.md (managed section via `<!-- SCRIP:START/END -->` markers) + `scrip.config.json` (verify commands, services).
+
+**Prompt structure: Orient → Act → Guardrails.** Original Ralph prompts have three layers: Phase 0 (study specs, plan, source code — orientation), Phase 1+ (main task instructions), and escalating "9s" numbering for invariants/guardrails that must never be violated. Scrip's build prompt should follow this same layered structure — orient the agent with context, give the task, then enforce invariants.
+
+#### Mapping to Scrip Architecture
+
+| Original Ralph | Scrip Equivalent | Notes |
+|----------------|-----------------|-------|
+| `while :; do cat PROMPT.md \| claude ; done` | Go loop in `execute.go` spawning `claude --print` per item | Same pattern, better error handling + crash recovery |
+| `IMPLEMENTATION_PLAN.md` | `plan.md` (disposable) + `progress.jsonl` (permanent) | CLI manages state instead of agent self-updating |
+| `AGENTS.md` | CLAUDE.md (scrip-managed section) + `scrip.config.json` | Operational guide + verification commands |
+| `specs/*` | Plan items with acceptance criteria | Acceptance criteria = spec per item |
+| PLANNING mode (`PROMPT_plan.md`) | Brainstorm phase (interactive, skills + hooks) | Enhanced with human-in-the-loop consultation |
+| BUILDING mode (`PROMPT_build.md`) | Execute phase (autonomous, CLI-driven) | Same isolation model, same fresh-context-per-item |
+| Backpressure (tests/typecheck/lint) | Verification commands from `scrip.config.json` | Same concept, CLI-controlled timing |
+| `git commit` after tests pass | DONE marker → CLI verifies → commit accepted | CLI gatekeeps instead of trusting agent |
+| Agent updates `IMPLEMENTATION_PLAN.md` | CLI updates `progress.jsonl` + manages plan state | CLI controls state, not agent |
+| Agent updates `AGENTS.md` | Agent can update CLAUDE.md (within scrip markers) | Operational learnings persist across iterations |
+| Up to 500 subagents for reads, 1 for builds | Single `claude --print` spawn delegates internally | Natural backpressure — one build owner per item |
+
 ### Three Commands
 
 ```
 scrip init    # project setup + harness audit
 scrip work    # unified brainstorm → plan → execute → verify loop
-scrip land    # final verification + security + summary + merge
+scrip land    # final verification + security + summary + push artifacts
 ```
 
 #### `scrip init`
@@ -513,6 +559,7 @@ Single command for all work. State detection determines the entry point:
 | Plan exists with items remaining | "3 items remaining. Continue or rethink?" |
 | All items complete | "All complete. Run `scrip land`?" |
 | Archived (summary.md exists) | "Previous work on X exists. Start new work?" |
+| Land failed (`land_failed` in progress.jsonl) | "Land failed. Findings: X. Rework?" → brainstorm with findings → plan → execute |
 
 **New work flow:**
 1. User describes what they want (free text or `scrip work "fix typo"`)
@@ -553,13 +600,23 @@ This preserves the original Ralph technique: fresh context per item, marker-base
 
 #### `scrip land`
 
-Final gate before merge:
+Final comprehensive verification — the deepest check in the system. Land does NOT merge or create PRs. It verifies, summarizes, and pushes artifacts.
+
 1. Run all verification commands (typecheck, lint, test)
 2. Run SAST tools + dependency audit (security layer)
-3. AI deep analysis — architecture review, cross-item consistency, security audit
-4. Generate final summary.md (narrative of what was built, decisions made, learnings)
-5. Purge plan.md + runtime state
-6. Offer to merge branch into primary
+3. AI deep analysis — architecture review, cross-item consistency, security audit (current `ralph verify` + verify skill + security layer)
+4. If all pass:
+   - Append final summary to `summary.md` (narrative of what was built, decisions made, learnings)
+   - Purge `plan.md` + `state.json` (runtime state)
+   - Commit and push artifacts (`summary.md`, purged plan, `progress.jsonl`)
+   - Feature is "landed" — ready for PR/merge via normal git workflow
+5. If any check fails:
+   - Write `land_failed` event to `progress.jsonl` with structured findings (which checks failed, AI analysis results, specific issues found)
+   - Append failure narrative to `summary.md` ("Land attempted, failed because: X, Y, Z")
+   - Do NOT purge plan or state
+   - Exit with clear message: "Land failed. Run `scrip work` to address findings."
+
+**Land failure → work loop:** When `scrip work` detects a `land_failed` event in `progress.jsonl`, it enters brainstorm with the failure findings injected as context. The user thinks about the issues, plans targeted fixes, executes, and tries `scrip land` again. This closes the loop: think → plan → execute → verify → land → (fail) → think (with findings) → plan → execute → land.
 
 ### State Model
 
@@ -635,9 +692,11 @@ created: 2026-03-11T14:32:00Z
 {"ts":"...","event":"item_done","item":"Google login flow","status":"passed","commit":"def456"}
 {"ts":"...","event":"plan_purged"}
 {"ts":"...","event":"plan_created","item_count":1,"context":"extending with password reset"}
+{"ts":"...","event":"land_failed","findings":["test: 2 failures in auth_test.go","security: missing CSRF on /api/sessions"],"analysis":"OAuth flow passes but session management lacks CSRF protection"}
+{"ts":"...","event":"land_passed","summary_appended":true,"plan_purged":true}
 ```
 
-New plans are generated with full context from progress.jsonl + summary.md.
+New plans are generated with full context from progress.jsonl + summary.md. Land failure findings in progress.jsonl flow directly into the next brainstorm session as injected context.
 
 > **Note (pending refinement):** The exact plan.md format needs finalization — whether items should also be structured in YAML frontmatter (with `id`, `depends_on` fields for machine parsing) or kept as pure markdown. The original synthesis used markdown body only. A hybrid approach (YAML for machine fields, markdown for context) may be needed for dependency enforcement and item tracking.
 
