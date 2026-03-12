@@ -240,6 +240,74 @@ func TestEnsureResources_VersionedRepoEmptyBranch_SkipsSync(t *testing.T) {
 	// Success means it correctly skipped.
 }
 
+func TestDefaultScripResourcesCacheDir(t *testing.T) {
+	dir := DefaultScripResourcesCacheDir()
+	if dir == "" {
+		t.Fatal("expected non-empty scrip cache dir")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Fallback path when home is unavailable
+		if dir != ".scrip/resources" {
+			t.Errorf("expected fallback '.scrip/resources', got '%s'", dir)
+		}
+		return
+	}
+	expected := filepath.Join(home, ".scrip", "resources")
+	if dir != expected {
+		t.Errorf("expected '%s', got '%s'", expected, dir)
+	}
+}
+
+func TestDefaultScripResourcesCacheDir_DiffersFromRalph(t *testing.T) {
+	scrip := DefaultScripResourcesCacheDir()
+	ralph := DefaultResourcesCacheDir()
+	if scrip == ralph {
+		t.Errorf("scrip and ralph cache dirs should differ: both are '%s'", scrip)
+	}
+}
+
+func TestEnsureScripResourceSync_NoDeps(t *testing.T) {
+	cfg := &ScripResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: ScripConfig{
+			Project: ProjectConfig{Name: "test", Type: "go"},
+		},
+	}
+	codebaseCtx := &CodebaseContext{
+		TechStack:    "go",
+		Dependencies: []Dependency{},
+	}
+	rm := ensureScripResourceSync(cfg, codebaseCtx)
+	if rm == nil {
+		t.Error("expected non-nil ResourceManager")
+	}
+	if rm.HasDetectedResources() {
+		t.Error("expected no detected resources")
+	}
+}
+
+func TestEnsureScripResourceSync_UsesScripCacheDir(t *testing.T) {
+	cfg := &ScripResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: ScripConfig{
+			Project: ProjectConfig{Name: "test", Type: "node"},
+		},
+	}
+	codebaseCtx := &CodebaseContext{
+		TechStack:    "typescript",
+		Dependencies: nil,
+	}
+	rm := ensureScripResourceSync(cfg, codebaseCtx)
+	if rm == nil {
+		t.Fatal("expected non-nil ResourceManager")
+	}
+	expected := DefaultScripResourcesCacheDir()
+	if rm.GetCacheDir() != expected {
+		t.Errorf("expected cache dir '%s', got '%s'", expected, rm.GetCacheDir())
+	}
+}
+
 func TestCachedResource_VersionField(t *testing.T) {
 	cr := CachedResource{
 		Name:    "zod",
