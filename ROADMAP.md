@@ -440,14 +440,16 @@ Items evaluated and explicitly deferred — not forgotten, but lacking evidence 
 
 Part of Phase 0 — happens alongside the architectural redesign, not as a separate step:
 - Binary: `ralph` → `scrip`
-- Config: `ralph.config.json` → `scrip.config.json`
+- Config: `ralph.config.json` → `.scrip/config.json`
 - Feature dir: `.ralph/` → `.scrip/`
-- Schema URL: update `$schema` field
 - Lock file: `.ralph/ralph.lock` → `.scrip/scrip.lock`
+- Cache dir: `~/.ralph/` → `~/.scrip/`
+- Update check: `~/.config/ralph/` → `~/.scrip/`
 - All internal references, prompts, error messages
-- Provider references: hardcode Claude Code (drop provider selection)
+- Drop: provider selection, CLAUDE.md/AGENTS.md modifications, all `.claude/` references
+- Hardcode Claude Code (`--print --dangerously-skip-permissions` for autonomous, interactive for planning)
 
-**~250 LOC modified** (find/replace across codebase). Include migration logic to detect and rename `.ralph/` → `.scrip/` for existing projects.
+**~250 LOC modified** (find/replace across codebase). Include migration logic to detect and rename `.ralph/` → `.scrip/` and `~/.ralph/` → `~/.scrip/` for existing projects.
 
 ---
 
@@ -470,18 +472,18 @@ Phase 1 should be implemented first — it directly improves the core value prop
 
 **Status:** Design synthesis, pending refinement. Supersedes Phases 1–4 and Rename section above — those items will be re-evaluated within this new architecture.
 
-**Origin:** The current 4-command pipeline (`prd` → `run` → `verify` → `refine`) treats the PRD as immutable and the run as finite. In practice, the user's real iterative work happens in refine sessions (post-archive), which lack structure. The original Ralph technique (ghuntley.com/ralph) used disposable plans, infinite loops, and a single repeating command — that's the model to return to.
+**Origin:** The current 4-command pipeline (`prd` → `run` → `verify` → `refine`) treats the PRD as immutable and the run as finite. In practice, the user's real iterative work happens in refine sessions (post-archive), which lack structure. The original Ralph technique ([ghuntley.com/ralph](https://ghuntley.com/ralph/), [how-to-ralph-wiggum playbook](https://github.com/ghuntley/how-to-ralph-wiggum)) used disposable plans, infinite loops, and a single repeating command — that's the model to return to.
 
-**Key architectural decision:** Scrip targets **Claude Code as the sole provider**. No provider-agnostic abstractions. This enables deep integration via Claude Code's plugin system (skills, hooks, MCP). The architecture has **two coexisting modes** within a single `scrip work` command: interactive brainstorming (session-driven, skills fire in-conversation) and autonomous execution (CLI-driven loop, fresh spawn per item). The transition between them is an explicit human gate.
+**Key architectural decision:** Scrip is a **self-contained CLI that orchestrates Claude Code from the outside**. It does not install plugins, modify `.claude/`, touch CLAUDE.md, or create MCP servers. All state lives in `.scrip/` (project) and `~/.scrip/` (home). When you upgrade scrip, everything upgrades — no files to sync across codebases, no conflicts with existing Claude Code setups. The provider (Claude Code) is a raw instance — whatever the user has configured for themselves. Scrip controls what the provider sees via **prompt injection**, not by modifying the provider's environment.
 
 ### Design Principles
 
-1. **Claude Code-only.** No provider-agnostic abstractions — no promptMode, promptFlag, knowledgeFile juggling. Scrip hardcodes Claude Code and integrates deeply via its plugin system. Other providers may be added later as separate integration work.
-2. **Two modes, one command.** Interactive brainstorming (user present, skills fire in-conversation) and autonomous execution (no human, fresh spawn per item, CLI-driven loop) coexist within `scrip work`. The transition is explicit: "Execute now? (y/n)".
-3. **Disposable plans, permanent progress.** Plans are regenerated frequently and purged after execution. Progress tracking and summaries are the durable state.
-4. **Same flow always.** No `--interactive`, `--plan`, `--replan` flags. The CLI detects state and adapts prompts accordingly.
-5. **Consultation and verification are automatic.** In brainstorming: plugin hooks enforce skill usage (not just CLAUDE.md suggestions — hooks inject context and block exits). In execution: CLI injects consultation results into prompts and runs mechanical verification after each item. First results from AI cannot be trusted.
-6. **CLI orchestrates, provider implements.** The CLI handles state, verification, retries, branch management. The provider signals DONE/STUCK/LEARNING. During autonomous execution, each item gets a fresh provider spawn — no accumulated context, no hallucination compounding.
+1. **Self-contained CLI.** Scrip touches exactly two directories: `.scrip/` in the project and `~/.scrip/` in the user's home. No `.claude/` modifications, no CLAUDE.md markers, no `.mcp.json`, no skills, no hooks. The user's Claude Code installation stays pristine.
+2. **Claude Code-only.** No provider-agnostic abstractions — no promptMode, promptFlag, knowledgeFile juggling. Scrip hardcodes Claude Code. Other providers may be added later as separate integration work.
+3. **Four commands, clear boundaries.** `scrip init` (setup), `scrip plan` (think + plan), `scrip work` (execute), `scrip land` (verify + finalize). Each command has one job. The human gate between planning and execution is the CLI boundary itself — user runs `scrip plan` until satisfied, then explicitly runs `scrip work`.
+4. **Consultation and verification are CLI infrastructure.** Not skills the agent invokes. Not hooks that enforce behavior. The CLI pre-computes consultation (via separate `claude --print` subagent calls) and injects results into every prompt. The CLI runs verification after every execution. The agent never needs to "remember" to consult or verify — the CLI makes it happen.
+5. **Disposable plans, permanent progress.** Plans are regenerated frequently and purged after execution. Progress tracking and summaries are the durable state.
+6. **CLI orchestrates, provider implements.** The CLI handles state, consultation, verification, retries, branch management. The provider signals DONE/STUCK/LEARNING. During execution, each item gets a fresh provider spawn — no accumulated context, no hallucination compounding.
 
 ### The Core Ralph Technique
 
@@ -495,7 +497,7 @@ Scrip's autonomous execution is a direct implementation of the Ralph technique (
 
 **IMPLEMENTATION_PLAN.md as shared state.** In original Ralph, the plan file persists on disk as the bridge between isolated loop executions. The agent reads it, picks the most important item, implements it, updates the plan, commits, and exits. The next iteration reads the updated plan. In scrip, `plan.md` serves this role, with the CLI managing item selection and progress tracking via `progress.jsonl` — the agent doesn't need to update the plan file itself.
 
-**Backpressure.** Tests, typechecks, lints, and builds are downstream backpressure that forces quality. "The wheel has got to turn fast." Without backpressure, the agent produces plausible-looking but broken code. In scrip, verification commands from `scrip.config.json` ARE the backpressure — they run after every DONE signal, and failure triggers retry with structured context. Backpressure is not optional verification — it is the mechanism that makes autonomous execution work at all.
+**Backpressure.** Tests, typechecks, lints, and builds are downstream backpressure that forces quality. "The wheel has got to turn fast." Without backpressure, the agent produces plausible-looking but broken code. In scrip, verification commands from `.scrip/config.json` ARE the backpressure — they run after every DONE signal, and failure triggers retry with structured context. Backpressure is not optional verification — it is the mechanism that makes autonomous execution work at all.
 
 **Subagent backpressure control.** Original Ralph uses up to 500 parallel subagents for search/read operations but restricts build/test to a single agent. This prevents failures where multiple agents step on each other's builds. Scrip inherits this naturally — each `claude --print` spawn is a single agent that can delegate reads internally but owns the build exclusively.
 
@@ -509,9 +511,11 @@ Scrip's autonomous execution is a direct implementation of the Ralph technique (
 
 **"Capture the why."** Tests and learnings must explain importance, not just state facts. This leaves "little notes for future iterations" that compound into institutional knowledge. Scrip's LEARNING markers carry this forward — but the instruction must be explicit in the build prompt.
 
-**Self-updating operational guide.** AGENTS.md in original Ralph is the operational "how to build/test/run" guide, kept brief (~60 lines), updated by the agent when it discovers something new about the project. In scrip, this maps to the project's CLAUDE.md (managed section via `<!-- SCRIP:START/END -->` markers) + `scrip.config.json` (verify commands, services).
+**Self-updating operational guide.** AGENTS.md in original Ralph is the operational "how to build/test/run" guide, kept brief (~60 lines), updated by the agent when it discovers something new about the project. In scrip, this maps to `.scrip/config.json` (verify commands, services) — the CLI injects operational context into every prompt directly, no knowledge file needed.
 
-**Prompt structure: Orient → Act → Guardrails.** Original Ralph prompts have three layers: Phase 0 (study specs, plan, source code — orientation), Phase 1+ (main task instructions), and escalating "9s" numbering for invariants/guardrails that must never be violated. Scrip's build prompt should follow this same layered structure — orient the agent with context, give the task, then enforce invariants.
+**Prompt structure: Orient → Act → Guardrails.** Original Ralph prompts have three layers: Phase 0 (study specs, plan, source code — orientation), Phase 1+ (main task instructions), and escalating "9s" numbering for invariants/guardrails that must never be violated. Scrip's prompts follow this same layered structure — orient the agent with context, give the task, then enforce invariants.
+
+**Planning is the same loop, different prompt.** In original Ralph, planning and building use the **identical loop mechanism** — they just flip one instruction: "Plan only. Do NOT implement anything." The planning prompt: study specs, study code, compare against specs, search for gaps (TODOs, placeholders, failing tests), create/update IMPLEMENTATION_PLAN.md. Planning is fully autonomous and typically completes in 1-2 iterations. In scrip, `scrip plan` applies this same principle — the Ralph loop with a planning prompt — but makes it **interactive** so the user participates in the gap analysis and plan creation, with CLI-driven consultation enriching every session.
 
 #### Mapping to Scrip Architecture
 
@@ -519,84 +523,95 @@ Scrip's autonomous execution is a direct implementation of the Ralph technique (
 |----------------|-----------------|-------|
 | `while :; do cat PROMPT.md \| claude ; done` | Go loop in `execute.go` spawning `claude --print` per item | Same pattern, better error handling + crash recovery |
 | `IMPLEMENTATION_PLAN.md` | `plan.md` (disposable) + `progress.jsonl` (permanent) | CLI manages state instead of agent self-updating |
-| `AGENTS.md` | CLAUDE.md (scrip-managed section) + `scrip.config.json` | Operational guide + verification commands |
+| `AGENTS.md` | `.scrip/config.json` + CLI-injected context | Operational guide baked into every prompt |
 | `specs/*` | Plan items with acceptance criteria | Acceptance criteria = spec per item |
-| PLANNING mode (`PROMPT_plan.md`) | Brainstorm phase (interactive, skills + hooks) | Enhanced with human-in-the-loop consultation |
-| BUILDING mode (`PROMPT_build.md`) | Execute phase (autonomous, CLI-driven) | Same isolation model, same fresh-context-per-item |
-| Backpressure (tests/typecheck/lint) | Verification commands from `scrip.config.json` | Same concept, CLI-controlled timing |
+| PLANNING mode (`PROMPT_plan.md`) | `scrip plan` (interactive, CLI-driven consultation) | Ralph's planning loop made interactive with pre-computed research |
+| BUILDING mode (`PROMPT_build.md`) | `scrip work` (autonomous, CLI-driven) | Same isolation model, same fresh-context-per-item |
+| Backpressure (tests/typecheck/lint) | Verification commands from `.scrip/config.json` | Same concept, CLI-controlled timing |
 | `git commit` after tests pass | DONE marker → CLI verifies → commit accepted | CLI gatekeeps instead of trusting agent |
 | Agent updates `IMPLEMENTATION_PLAN.md` | CLI updates `progress.jsonl` + manages plan state | CLI controls state, not agent |
-| Agent updates `AGENTS.md` | Agent can update CLAUDE.md (within scrip markers) | Operational learnings persist across iterations |
 | Up to 500 subagents for reads, 1 for builds | Single `claude --print` spawn delegates internally | Natural backpressure — one build owner per item |
 
-### Three Commands
+### Four Commands
 
 ```
 scrip init    # project setup + harness audit
-scrip work    # unified brainstorm → plan → execute → verify loop
+scrip plan    # think + plan with deep consultation (interactive, loops until solid)
+scrip work    # execute plan items using Ralph loop (autonomous, fresh context per item)
 scrip land    # final verification + security + summary + push artifacts
 ```
 
 #### `scrip init`
 
-One-time project setup:
+One-time project setup. Creates `.scrip/` directory with all config:
 - Detect project type, package manager, test framework, linter
-- Generate `scrip.config.json` with verify commands, services
-- Install scrip Claude Code plugin into `.claude/` (skills + hooks — see Plugin section)
-- Generate project CLAUDE.md section between `<!-- SCRIP:START -->` / `<!-- SCRIP:END -->` markers (preserves existing user content)
+- Generate `.scrip/config.json` with verify commands, services, project metadata
+- Create `.scrip/.gitignore` (ignore lock, logs, state.json)
 - Audit downstream harness: types coverage, test patterns, linter rules, SAST tools
 - Report harness gaps with actionable recommendations (not auto-fix)
 
-Safe to re-run: regenerates plugin files and CLAUDE.md section, preserves user content outside markers. Detects scrip version changes and updates plugin accordingly.
+Safe to re-run: regenerates config from project detection, preserves user customizations. Does NOT touch `.claude/`, CLAUDE.md, or any file outside `.scrip/`.
+
+#### `scrip plan`
+
+Interactive planning with CLI-driven deep consultation. Loops until the plan is solid.
+
+**Flow:**
+1. User runs `scrip plan <feature>` (or `scrip plan` → CLI asks "What are you working on?")
+2. CLI prompts for branch choice (new from primary, or continue current)
+3. CLI pre-computes consultation:
+   - Read project structure (tech stack, frameworks, test patterns)
+   - Read cached framework source from `~/.scrip/resources/` (if any)
+   - Read `progress.jsonl` + `summary.md` (if resuming or after land failure)
+   - Run parallel consultation subagents (`claude --print`) for framework-specific research
+   - Run codebase analysis for the feature area
+4. CLI builds planning prompt with all consultation results injected
+5. CLI spawns interactive `claude` with enriched prompt
+6. User brainstorms freely — thinks, iterates, changes direction, asks questions
+7. When satisfied, user asks Claude to write `plan.md` to `.scrip/<feature>/`
+8. User exits session
+9. CLI runs adversarial verification on plan.md (separate `claude --print` call):
+   - Are acceptance criteria specific and testable?
+   - Are there missing items, untestable claims, security gaps?
+   - Does the plan contradict existing codebase patterns?
+10. CLI shows verification results
+11. User runs `scrip plan` again to iterate, or `scrip work` to execute
+
+**This is the Ralph planning loop made interactive.** In original Ralph, planning is autonomous: "Study specs, study code, compare, write IMPLEMENTATION_PLAN.md. Plan only. Do NOT implement anything." Scrip applies the same principle — gap analysis, research, plan creation — but the user participates. The CLI's pre-computed consultation ensures every session starts with deep research, not surface-level answers.
+
+**Consultation scales with what exists:**
+- First time, no cached resources → project structure + codebase analysis only. Planning prompt instructs Claude to dispatch subagents for deep research during conversation.
+- With cached resources → CLI runs parallel consultation subagents that read framework source, produce guidance about patterns/APIs/security. Injected into planning prompt.
+- Resuming after previous work → progress.jsonl + summary.md provide full context of what was tried and why.
+- After land failure → `land_failed` event findings injected as "Previous land failed because: X. Address these issues."
+
+**State after `scrip plan`:** `plan.md` exists in `.scrip/<feature>/`. Nothing else changes. The user can inspect the plan, share it, edit it manually, or iterate with another `scrip plan` invocation.
 
 #### `scrip work`
 
-Single command for all work. State detection determines the entry point:
+Autonomous execution of the plan using the Ralph loop technique. No human in the loop.
 
-| State | Prompt |
-|-------|--------|
-| No work exists | "What are you working on?" → brainstorm → plan → execute |
-| Plan exists with items remaining | "3 items remaining. Continue or rethink?" |
-| All items complete | "All complete. Run `scrip land`?" |
-| Archived (summary.md exists) | "Previous work on X exists. Start new work?" |
-| Land failed (`land_failed` in progress.jsonl) | "Land failed. Findings: X. Rework?" → brainstorm with findings → plan → execute |
+**Flow:**
+1. User runs `scrip work <feature>`
+2. CLI reads `plan.md`, validates items exist
+3. CLI starts services (if configured)
+4. For each item in the plan:
+   a. Pre-compute item-level consultation (CLI runs `claude --print` subagents for framework research relevant to this specific item)
+   b. Build execution prompt with: item description + acceptance criteria, consultation results, learnings from previous items, retry context (if retrying), codebase context
+   c. Spawn fresh `claude --print --dangerously-skip-permissions` with enriched prompt
+   d. Provider implements, commits, signals DONE/STUCK/LEARNING via markers
+   e. CLI runs verification commands (typecheck, lint, test) — the backpressure
+   f. If DONE + verification passes → advance to next item, log to progress.jsonl
+   g. If DONE + verification fails → retry with failure classification + diff from failed attempt
+   h. If STUCK → log reason, retry or skip at threshold
+   i. LEARNING → persist to progress.jsonl, inject into next spawn's prompt
+5. After all items pass or skip → "All items complete. Run `scrip land` to finalize."
 
-**New work flow:**
-1. User describes what they want (free text or `scrip work "fix typo"`)
-2. CLI prompts for branch choice (new from primary, or continue current)
-3. **Brainstorm phase (interactive, session-driven):**
-   - CLI opens interactive Claude Code session with progress context injected
-   - User and AI discuss scope, approach, acceptance criteria
-   - Plugin's `/scrip:consult` skill fires during conversation (enforced by hooks — see Hooks section)
-   - AI writes plan.md as its final brainstorm action
-   - Plugin's `/scrip:verify` skill checks the plan adversarially (enforced by Stop hook)
-   - CLI detects plan.md, offers **"Execute now? (y/n)"** — the human gate
-4. **Execute phase (autonomous, CLI-driven):**
-   - CLI spawns fresh `claude --print` instance per item (no accumulated context)
-   - CLI injects consultation results, learnings, retry context into build prompt
-   - Provider implements, commits, signals DONE/STUCK/LEARNING
-   - CLI runs mechanical verification (typecheck, lint, test) after each DONE
-   - CLI retries on failure (with failure classification + diff from failed attempt)
-   - CLI auto-skips at retry threshold, advances to next item
-   - **No human in the loop** — runs until all items pass or skip
-5. After all items pass → prompt to land or continue refining
+**Resume:** If interrupted, `scrip work` reads `progress.jsonl` to find last completed item and resumes from the next pending item. Crash recovery via `state.json` (current item, provider PID).
 
-This preserves the original Ralph technique: fresh context per item, marker-based communication, CLI-controlled verification, automatic retry, crash recovery via state persistence. The brainstorm phase adds structured consultation that Ralph v2 lacked.
+**Quick fix shortcut:** `scrip work "fix the login button"` — single-line description, CLI auto-generates a 1-item plan and executes immediately. Same state tracking, same verification, same consultation.
 
-**Resume flow:**
-1. CLI detects existing plan with remaining items
-2. "Continue executing or rethink the plan?"
-3. Continue → resume autonomous loop from next pending item (default — just press Enter)
-4. Rethink → new brainstorm session with progress context → regenerate plan.md → execute
-
-**Quick fix shortcut:**
-- `scrip work "fix the login button"` — single-line description skips interactive brainstorm
-- CLI auto-generates a 1-item plan and executes immediately
-- Same state tracking, same verification, same consultation
-
-**Key insight: the human gate between planning and execution is load-bearing.** Every tool surveyed (Copilot CLI, Kiro, Cursor, Aider) has an explicit transition point where the human approves the plan before autonomous execution starts. "Execute now? (y/n)" is essential — it's the last chance to catch a bad plan before burning compute.
-
-**When a plan already exists with remaining items**, the default is "Continue executing" (just press Enter), not force re-brainstorming. Re-brainstorming is available as "Rethink & replan" but isn't mandatory. This respects the work already done without adding a flag.
+This is the core Ralph technique: fresh `claude --print` per item, one item per loop, backpressure via verification, markers for communication, learnings persisted across iterations. The CLI owns the loop — the provider just implements.
 
 #### `scrip land`
 
@@ -604,7 +619,7 @@ Final comprehensive verification — the deepest check in the system. Land does 
 
 1. Run all verification commands (typecheck, lint, test)
 2. Run SAST tools + dependency audit (security layer)
-3. AI deep analysis — architecture review, cross-item consistency, security audit (current `ralph verify` + verify skill + security layer)
+3. AI deep analysis via `claude --print` — architecture review, cross-item consistency, security audit
 4. If all pass:
    - Append final summary to `summary.md` (narrative of what was built, decisions made, learnings)
    - Purge `plan.md` + `state.json` (runtime state)
@@ -614,9 +629,9 @@ Final comprehensive verification — the deepest check in the system. Land does 
    - Write `land_failed` event to `progress.jsonl` with structured findings (which checks failed, AI analysis results, specific issues found)
    - Append failure narrative to `summary.md` ("Land attempted, failed because: X, Y, Z")
    - Do NOT purge plan or state
-   - Exit with clear message: "Land failed. Run `scrip work` to address findings."
+   - Exit with clear message: "Land failed. Run `scrip plan` to rethink, or `scrip work` to fix."
 
-**Land failure → work loop:** When `scrip work` detects a `land_failed` event in `progress.jsonl`, it enters brainstorm with the failure findings injected as context. The user thinks about the issues, plans targeted fixes, executes, and tries `scrip land` again. This closes the loop: think → plan → execute → verify → land → (fail) → think (with findings) → plan → execute → land.
+**Land failure → plan/work loop:** When `scrip plan` detects a `land_failed` event in `progress.jsonl`, it injects the failure findings into the planning session as context. The user thinks about the issues, plans targeted fixes, runs `scrip work`, and tries `scrip land` again. This closes the loop: plan → work → land → (fail) → plan (with findings) → work → land.
 
 ### State Model
 
@@ -700,33 +715,86 @@ New plans are generated with full context from progress.jsonl + summary.md. Land
 
 > **Note (pending refinement):** The exact plan.md format needs finalization — whether items should also be structured in YAML frontmatter (with `id`, `depends_on` fields for machine parsing) or kept as pure markdown. The original synthesis used markdown body only. A hybrid approach (YAML for machine fields, markdown for context) may be needed for dependency enforcement and item tracking.
 
-### Consultation & Verification Architecture
+### Self-Contained Architecture
 
-Consultation and verification operate differently in each mode. The key insight: **interactive brainstorming uses skills (agent-driven, enforced by hooks), autonomous execution uses CLI injection (CLI-driven, the provider can't skip it).** Both share the same underlying data (resource cache, verification commands, progress history).
+Scrip touches exactly **two directories**. Nothing else on the user's system is modified.
 
-#### Interactive Mode (Brainstorming)
+#### Project directory: `.scrip/`
 
-Skills fire during the conversation. Hooks enforce their usage — this is not "Claude should consult" (CLAUDE.md instruction, ~70% reliable), it's "consultation reminder injected before Claude responds" (hook, ~85%+ reliable) and "session cannot end without verification" (Stop hook, ~95%+ reliable).
+```
+.scrip/
+├── config.json                         # Project config (verify commands, services, project metadata)
+├── .gitignore                          # Ignore: scrip.lock, */logs/, state.json
+├── scrip.lock                          # Lock file for concurrency control
+└── <feature>/                          # One directory per feature
+    ├── plan.md                         # Current plan (disposable)
+    ├── progress.jsonl                  # Event log (permanent, append-only)
+    ├── summary.md                      # Narrative history (permanent)
+    ├── state.json                      # Runtime recovery (temporary, deleted on clean exit)
+    └── logs/
+        └── work-NNN.jsonl              # JSONL logs per work session
+```
 
-| Mechanism | What | How |
-|-----------|------|-----|
-| `/scrip:consult` skill | Research approaches, framework patterns, security considerations | Agent dispatches subagents; skill queries scrip CLI for cached framework source paths and project context |
-| `/scrip:verify` skill | Adversarial plan review — testability, completeness, edge cases, security | Agent runs mechanical checks via scrip CLI + dispatches adversarial subagent |
-| UserPromptSubmit hook | Detects brainstorming/decision context → injects consultation reminder | Fires before Claude responds; adds context nudging `/scrip:consult` |
-| Stop hook | Blocks session exit until verification has run | Fires when Claude finishes; checks if `/scrip:verify` was invoked |
+#### Home directory: `~/.scrip/`
 
-#### Autonomous Mode (Execution Loop)
+```
+~/.scrip/
+├── resources/                          # Cached framework source code
+│   ├── registry.json                   # Resolution cache (URLs, versions, TTL)
+│   └── <name>@<version>/              # Cloned repo per dependency
+└── update-check.json                   # CLI update check cache (24h TTL)
+```
 
-CLI orchestrates everything — the provider just implements:
+#### What scrip does NOT touch
 
-| Level | When | What | How |
+- `.claude/` — no skills, no hooks, no settings.json
+- `CLAUDE.md` — no markers, no managed sections
+- `.mcp.json` — no MCP server config
+- Project root — no config files outside `.scrip/`
+- Global Claude Code config — nothing in `~/.claude/`
+
+The provider (Claude Code) runs as a raw instance. The user's personal skills, hooks, CLAUDE.md, and MCP servers are untouched. Scrip controls what the provider sees entirely through **prompt injection** — the prompt piped to `claude --print` (autonomous) or passed as `--message` to `claude` (interactive) contains all context.
+
+### Consultation Architecture
+
+Consultation is **CLI infrastructure**, not an agent behavior. The CLI pre-computes research and injects results into every prompt. The agent never needs to "remember" to consult — it receives a prompt already enriched with research.
+
+#### How consultation works
+
+Before every `scrip plan` session and before every `scrip work` item, the CLI:
+
+1. **Reads project context** — tech stack, frameworks, test patterns, directory structure (from `scrip init` detection stored in `.scrip/config.json`)
+2. **Reads cached framework source** — if `~/.scrip/resources/` has relevant frameworks, the CLI identifies which are relevant to the current feature/item
+3. **Runs parallel consultation subagents** — spawns `claude --print` instances with consultation prompts that read the cached framework source and produce guidance about patterns, APIs, security. Each subagent: reads actual source code, produces guidance with `Source:` citations, validated by CLI (no citations = treated as hallucination, falls back to file paths)
+4. **Reads progress history** — `progress.jsonl` + `summary.md` for context on what was done before, what failed, what was learned
+5. **Packages everything into the prompt** — consultation results, progress context, codebase context, all injected as template variables
+
+#### Consultation at each command
+
+| Command | What CLI pre-computes | Injected as |
+|---------|----------------------|-------------|
+| `scrip plan` (first time) | Project structure + cached framework guidance + codebase analysis | Planning prompt context — agent starts informed |
+| `scrip plan` (iterating) | Same + progress.jsonl + summary.md + current plan.md content | Planning prompt with full history |
+| `scrip plan` (after land failure) | Same + `land_failed` findings from progress.jsonl | "Land failed because: X. Address these issues." |
+| `scrip work` (per item) | Item-specific framework guidance + learnings from previous items + retry context | Build prompt `{{resourceGuidance}}` + `{{learnings}}` + `{{retryContext}}` |
+| `scrip land` | Comprehensive framework guidance for all touched areas | Deep analysis prompt context |
+
+**When nothing is cached:** First-time consultation is limited to project structure analysis. The planning prompt instructs Claude to dispatch subagents for deep research during the interactive conversation. As the user works and resources get cached, subsequent sessions get richer pre-computed guidance.
+
+**This is exactly what Ralph v2's `ConsultResources()` does** — run parallel subagents that read cached framework source, validate citations, cache results, inject into prompts. Scrip keeps this pattern but applies it to planning sessions too, not just execution.
+
+### Verification Architecture
+
+Verification is **CLI-driven at every stage**. The agent never runs its own verification — the CLI controls all checks.
+
+| Stage | When | What | How |
 |-------|------|------|-----|
-| **Pre-item consultation** | Before each build agent spawn | Framework APIs, security patterns, testing approaches | CLI queries resource cache, injects results into build prompt as `{{resourceGuidance}}` |
-| **Post-item verification** | After build agent signals DONE | Mechanical checks (typecheck, lint, test) | CLI runs commands, captures results, retries on failure |
-| **Verify-at-top** | Before each item attempt | Re-verify previously attempted items | CLI runs verify commands to detect regressions |
-| **Landing verification** | `scrip land` | Cross-item consistency, security audit, architecture review | CLI runs all verify layers in sequence |
+| **Plan verification** | After `scrip plan` session exits (plan.md modified) | Adversarial review — testability, completeness, gaps, security | CLI spawns `claude --print` with adversarial prompt + plan.md content |
+| **Pre-item verification** | Before each `scrip work` item attempt | Re-verify previously attempted items (regression detection) | CLI runs verify commands from config |
+| **Post-item verification** | After build agent signals DONE | Mechanical checks (typecheck, lint, test) — the backpressure | CLI runs verify commands, captures output, retries on failure |
+| **Landing verification** | `scrip land` | Comprehensive: mechanical + security + AI deep analysis | CLI runs all layers in sequence |
 
-The provider never invokes skills in autonomous mode — it receives everything in the prompt and signals back via markers. This preserves the 5 irreducible pillars of Ralph's execution loop:
+**5 irreducible pillars preserved from the Ralph technique:**
 
 1. **Process spawning** — fresh `claude --print` per item (no accumulated context/hallucinations)
 2. **Marker communication** — DONE/STUCK/LEARNING (whole-line matching, no interpretation)
@@ -734,225 +802,46 @@ The provider never invokes skills in autonomous mode — it receives everything 
 4. **Verification gatekeeping** — CLI controls all verification (agent can't bypass or forget)
 5. **Service management** — long-lived dev servers reused across items
 
-#### Shared Infrastructure
-
-Both modes share:
-- **Resource cache** (`~/.scrip/resources/<name>@<version>/`) — cached framework source code
-- **Verification commands** (from `scrip.config.json`) — typecheck, lint, test
-- **Progress history** (`progress.jsonl` + `summary.md`) — context for both brainstorm and build prompts
-- **Service management** — start once, reuse across items and sessions
-
-**Combining existing Ralph v2 systems:**
-- Framework consultation (consultation.go) → resource cache queried by skills (interactive) and CLI (autonomous)
-- Mechanical verification (loop.go) → CLI-driven in both modes; skill wraps it for interactive use
-- AI deep analysis (verify-analyze.md) → becomes one layer of `scrip land` verification
-- `/consult` skill pattern → becomes `/scrip:consult` with resource cache integration
-- `/verify` skill pattern → becomes `/scrip:verify` with mechanical check integration
-
-### Three-Layer Extension Architecture
-
-Scrip integrates with Claude Code via three complementary layers — each solves a different problem:
-
-| Layer | Role | What scrip uses it for |
-|-------|------|----------------------|
-| **MCP** (data/tools) | Passive — answers questions, runs procedures on demand | `run_verification()`, `get_resources()`, `get_progress()` — called mid-conversation with fresh data |
-| **Skills** (workflow) | Active — orchestrates, dispatches subagents, teaches Claude how to think | `/scrip:consult` dispatches expert research subagents, `/scrip:verify` runs adversarial analysis |
-| **Hooks** (enforcement) | Sentinel — blocks, validates, enforces at lifecycle boundaries | Stop hook blocks exit without verification, UserPromptSubmit injects consultation reminders |
-
-**Why all three from day 1:** `!`command`` in skills (the alternative to MCP) is preprocessing — it runs once when the skill loads, not when Claude needs it. For verification this is fatal: `!`scrip verify`` would check the code *before* the user's changes, not after. MCP tools execute when Claude calls them, giving correct timing for dynamic operations.
-
-### MCP Server
-
-`scrip mcp serve` starts a stdio MCP server. Claude Code launches it automatically via `.mcp.json` (generated by `scrip init`):
-
-```json
-{
-  "mcpServers": {
-    "scrip": {
-      "type": "stdio",
-      "command": "scrip",
-      "args": ["mcp", "serve"]
-    }
-  }
-}
-```
-
-**Tools exposed (~250-300 LOC in `mcp.go`, using Go MCP SDK):**
-
-| Tool | Input | Returns | When Claude calls it |
-|------|-------|---------|---------------------|
-| `run_verification` | `feature` | Pass/fail per command, output on failure | After code changes, to check correctness |
-| `get_resources` | `framework?` | Cached framework source paths + versions | During consultation, to find relevant docs |
-| `get_progress` | `feature` | Items attempted/passed/failed, learnings | During brainstorming, to understand current state |
-| `get_config` | — | Verify commands, services, project info | When skill needs project context |
-| `get_status` | `feature?` | Overall feature status, branch, plan state | Any time, for situational awareness |
-
-**Why MCP, not CLI subcommands:**
-- Implementation cost is comparable (~250-300 LOC vs ~200-250 LOC for CLI commands)
-- MCP gives typed tool schemas (auto-inferred from Go structs), discoverability, mid-conversation calling
-- CLI commands via `!`command`` only run at skill load time — wrong timing for verification
-- One dependency: `github.com/mark3labs/mcp-go` or official `github.com/modelcontextprotocol/go-sdk`
-
-**`claude --print` compatibility:** Research confirmed that Claude Code in `--print` (batch) mode loads MCP servers, CLAUDE.md, skills, and hooks. The autonomous execution loop benefits from MCP — but in practice, autonomous mode uses CLI-injected prompts (the build agent receives everything directly, doesn't call MCP tools).
-
-### Claude Code Plugin
-
-Scrip ships skills and hooks as a Claude Code plugin — installed during `scrip init`:
-
-```
-.claude/
-├── skills/
-│   └── scrip/
-│       ├── consult/
-│       │   └── SKILL.md       # /scrip:consult — orchestrates research, calls MCP for data
-│       └── verify/
-│           └── SKILL.md       # /scrip:verify — adversarial analysis, calls MCP for checks
-├── settings.json              # hook definitions (UserPromptSubmit, Stop, PostToolUse)
-└── CLAUDE.md                  # project instructions (scrip-managed section via markers)
-.mcp.json                      # MCP server config (scrip mcp serve)
-```
-
-**Skills orchestrate, MCP provides data:**
-
-```markdown
----
-name: consult
-description: Research and consultation for architectural decisions. Automatically invoked during brainstorming and planning.
----
-# Consultation
-
-## Static Context (loaded once via !`command`)
-- Project: !`cat scrip.config.json | jq -r '.project' 2>/dev/null || echo "unknown"`
-- Branch: !`git branch --show-current`
-
-## Dynamic Context (call MCP tools during consultation)
-Use the `get_resources` MCP tool to find cached framework source code.
-Use the `get_progress` MCP tool to understand what's been done so far.
-
-[consultation workflow instructions — dispatch subagents, synthesize findings]
-```
-
-The skill uses `!`command`` for truly static context (project name, branch) and MCP tools for dynamic data (resources, progress) that may change during the conversation.
-
-**Why a plugin, not loose files:**
-- Namespaced skills (`/scrip:consult`) don't collide with user's global `/consult`
-- Hooks bundled with skills — enforcement comes with the capabilities
-- Versioned — `scrip init` regenerates plugin files when scrip version changes
-- Single install point — `scrip init` handles everything
-
-**Update lifecycle:**
-- `scrip init` generates plugin files + `.mcp.json` fresh (idempotent, safe to re-run)
-- Generated files include `<!-- scrip-generated: do not edit -->` markers
-- User's CLAUDE.md content outside `<!-- SCRIP:START/END -->` markers is preserved
-- Scrip version mismatch detected on `scrip work` start → offer to regenerate
-
-### Hooks: Behavior Enforcement
-
-CLAUDE.md instructions are ~70% reliable — Claude can forget, especially after context compaction. Hooks are deterministic: they fire every time, cannot be skipped.
-
-**Three hooks, installed by the plugin:**
-
-**1. UserPromptSubmit** — detects brainstorming context, injects consultation reminder:
-```json
-{
-  "type": "prompt",
-  "prompt": "Does this prompt involve architecture, design, trade-offs, or planning? If yes, return additionalContext reminding to invoke /scrip:consult."
-}
-```
-Effect: Before Claude responds to a brainstorming question, the hook injects "invoke /scrip:consult" as system context. Not a suggestion — injected context that Claude sees alongside the user's prompt.
-
-**2. Stop** — blocks session exit until verification has run:
-```json
-{
-  "type": "command",
-  "command": "scrip hooks check-verified"
-}
-```
-Effect: When Claude tries to finish, the hook checks if `/scrip:verify` ran during this session. If not, blocks with "Run /scrip:verify before stopping." Same pattern as the existing ralph-loop plugin.
-
-**3. PostToolUse** — reminds to verify after implementation:
-```json
-{
-  "matcher": "Edit|Write",
-  "type": "command",
-  "command": "echo '{\"additionalContext\": \"After implementing changes, run /scrip:verify to check correctness.\"}'"
-}
-```
-Effect: After code edits, Claude receives a verification reminder as context.
-
-**Reliability tiers (stacked for near-100% coverage):**
-
-| Mechanism | Reliability | Role |
-|-----------|-------------|------|
-| Stop hook (blocks exit) | 95%+ | Guarantees verification before session ends |
-| UserPromptSubmit hook (injects context) | 85%+ | Prompts consultation before decisions |
-| Skill description auto-match | 80% | Skills fire when description matches context |
-| CLAUDE.md instruction | 70% | Fallback general guidance |
-
-### Data Flow
-
-```
-Interactive brainstorming:
-  Skill (/scrip:consult or /scrip:verify)
-    ├── !`command` for static context (project name, branch — loaded once)
-    ├── MCP tool calls for dynamic data (resources, progress — called mid-conversation)
-    └── Subagent dispatch for analysis (expert research, adversarial review)
-
-Autonomous execution:
-  CLI (scrip work execute phase)
-    ├── Reads resource cache directly (file-based, no MCP)
-    ├── Injects consultation results into build prompt as {{resourceGuidance}}
-    └── Runs verification commands directly (no MCP — CLI controls timing)
-```
-
-In interactive mode, MCP is the primary data channel — skills call tools when they need fresh data. In autonomous mode, the CLI reads files directly and injects everything into the prompt (no MCP needed because the CLI controls timing).
-
 ### Terminology
 
 - **Item** — a single unit of work within a plan (replaces "story" / "user story")
 - **Plan** — the container of items for current work (replaces "PRD")
 - **Feature** — the overall thing being built, identified by branch/directory name
-- **Session** — one invocation of `scrip work` (may brainstorm, execute, or both)
-
-### No Separate Modes
-
-The flow adapts via state detection, not mode selection. Every tool that tried a fully unified flow ended up with implicit state-driven entry points — and that's fine. It's not "modes," it's "where are we?"
-
-The only user-facing prompts are decision points within the flow:
-- "What are you working on?" (new work)
-- "Continue / Rethink?" (resume)
-- "Execute now?" (after planning)
-- "Create branch / Continue on current?" (branch choice)
-
-These are natural pauses, not modes. The user never thinks "which mode am I in" — they just answer questions.
+- **Session** — one invocation of `scrip plan` or `scrip work`
 
 ### What This Replaces
 
-The current command structure (`prd`, `run`, `verify`, `refine`) collapses into `scrip work`:
-- `ralph prd` brainstorm + finalize → `scrip work` brainstorm phase
-- `ralph run` story loop → `scrip work` execute phase
-- `ralph verify` + archive → `scrip land`
-- `ralph refine` → `scrip work` on an existing feature (rethink flow)
-- `ralph status`, `ralph logs` → folded into `scrip work` status display
-- `ralph doctor` → `scrip init` harness audit
+| Ralph v2 | Scrip v3 |
+|----------|----------|
+| `ralph prd` (brainstorm + finalize) | `scrip plan` (interactive planning with consultation) |
+| `ralph run` (story loop) | `scrip work` (autonomous execution loop) |
+| `ralph verify` + archive | `scrip land` (comprehensive verification + finalize) |
+| `ralph refine` (post-archive interactive) | `scrip plan` on existing feature (iterate with progress context) |
+| `ralph status`, `ralph logs` | Folded into `scrip work` status display |
+| `ralph doctor` | `scrip init` harness audit |
+| `ralph.config.json` in project root | `.scrip/config.json` (inside .scrip/) |
+| `.ralph/` feature directories | `.scrip/<feature>/` |
+| `~/.ralph/resources/` | `~/.scrip/resources/` |
+| CLAUDE.md / AGENTS.md modifications | None — prompt injection only |
+| Skills, hooks, MCP server, `.claude/`, `.mcp.json` | None — self-contained CLI |
 
 ### Code Architecture
 
 Clean, non-bloated module structure:
 
 ```
-cmd_init.go     — project setup + plugin install + harness audit
-cmd_work.go     — state detection + interactive prompts + dispatch (~50 lines)
-cmd_land.go     — final verification + security + summary + merge
-brainstorm.go   — interactive Claude Code session + plan generation
-execute.go      — autonomous item loop (spawn, verify, retry, advance)
+cmd_init.go     — project setup + harness audit
+cmd_plan.go     — interactive planning with pre-computed consultation
+cmd_work.go     — autonomous item loop (spawn, verify, retry, advance)
+cmd_land.go     — final verification + security + summary + push artifacts
+consultation.go — parallel subagent consultation (framework source → guidance)
+verification.go — mechanical checks + adversarial AI review
 plan.go         — plan.md read/write + YAML frontmatter parsing
 progress.go     — progress.jsonl append/query
 state.go        — state.json runtime recovery
-plugin.go       — Claude Code plugin generation (skills, hooks, CLAUDE.md section, .mcp.json)
-mcp.go          — MCP stdio server: 5 tools (~250-300 LOC, Go MCP SDK)
+prompts.go      — prompt template rendering with {{variable}} injection
 ```
 
-Each file handles one concern. `cmd_work.go` is a thin dispatcher that detects state and calls into the appropriate module. `mcp.go` is a self-contained MCP server that reuses existing business logic (LoadRunState, resource cache queries, verification commands).
+Each file handles one concern. No plugin.go, no mcp.go — scrip is a self-contained CLI that controls Claude Code via prompt injection and marker detection.
 
-**Dropped from Ralph v2:** Provider abstraction layer (`knownProviders` map, `promptMode`/`promptFlag`/`knowledgeFile` auto-detection, `providerChoices` list, `stripNonInteractiveArgs()`, `buildProviderArgs()` multi-mode logic). Claude Code is hardcoded — `--print --dangerously-skip-permissions` for autonomous mode, interactive for brainstorming.
+**Dropped from Ralph v2:** Provider abstraction layer (`knownProviders`, `promptMode`/`promptFlag`/`knowledgeFile`, `providerChoices`, `stripNonInteractiveArgs()`, multi-mode `buildProviderArgs()`). Claude Code is hardcoded — `--print --dangerously-skip-permissions` for autonomous, interactive `claude` for planning.
