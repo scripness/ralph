@@ -671,6 +671,79 @@ end`), 0644)
 	}
 }
 
+func TestDiscoverScripCodebase_WithConfig(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies": {"next": "14.0.0"}}`), 0644)
+	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte("{}"), 0644)
+	os.WriteFile(filepath.Join(dir, "bun.lockb"), []byte(""), 0644)
+
+	cfg := &ScripConfig{
+		Services: []ScripServiceConfig{
+			{Name: "dev", Ready: "http://localhost:3000"},
+		},
+		Verify: ScripVerifyConfig{
+			Typecheck: "bun run typecheck",
+			Lint:      "bun run lint",
+			Test:      "bun run test",
+		},
+	}
+
+	ctx := DiscoverScripCodebase(dir, cfg)
+
+	if ctx.TechStack != "typescript" {
+		t.Errorf("expected stack='typescript', got '%s'", ctx.TechStack)
+	}
+	if ctx.PackageManager != "bun" {
+		t.Errorf("expected pm='bun', got '%s'", ctx.PackageManager)
+	}
+	if len(ctx.Services) != 1 {
+		t.Errorf("expected 1 service, got %d", len(ctx.Services))
+	}
+	if len(ctx.VerifyCommands) != 3 {
+		t.Errorf("expected 3 verify commands, got %d", len(ctx.VerifyCommands))
+	}
+	if ctx.TestCommand != "bun run test" {
+		t.Errorf("expected testCommand='bun run test', got '%s'", ctx.TestCommand)
+	}
+}
+
+func TestDiscoverScripCodebase_NilConfig(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test"), 0644)
+
+	ctx := DiscoverScripCodebase(dir, nil)
+
+	if ctx.TechStack != "go" {
+		t.Errorf("expected stack='go', got '%s'", ctx.TechStack)
+	}
+	if len(ctx.Services) != 0 {
+		t.Errorf("expected 0 services, got %d", len(ctx.Services))
+	}
+	if len(ctx.VerifyCommands) != 0 {
+		t.Errorf("expected 0 verify commands, got %d", len(ctx.VerifyCommands))
+	}
+}
+
+func TestDiscoverScripCodebase_PartialVerify(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test"), 0644)
+
+	cfg := &ScripConfig{
+		Verify: ScripVerifyConfig{
+			Test: "go test ./...",
+		},
+	}
+
+	ctx := DiscoverScripCodebase(dir, cfg)
+
+	if len(ctx.VerifyCommands) != 1 {
+		t.Errorf("expected 1 verify command, got %d: %v", len(ctx.VerifyCommands), ctx.VerifyCommands)
+	}
+	if ctx.TestCommand != "go test ./..." {
+		t.Errorf("expected testCommand='go test ./...', got '%s'", ctx.TestCommand)
+	}
+}
+
 func TestFormatCodebaseContext_Empty(t *testing.T) {
 	ctx := &CodebaseContext{TechStack: "unknown"}
 	result := FormatCodebaseContext(ctx)

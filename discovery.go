@@ -61,6 +61,27 @@ func DiscoverCodebase(projectRoot string, cfg *RalphConfig) *CodebaseContext {
 	return ctx
 }
 
+// DiscoverScripCodebase analyzes the project to detect tech stack and context.
+// Like DiscoverCodebase but reads from ScripConfig's flat verify structure.
+func DiscoverScripCodebase(projectRoot string, cfg *ScripConfig) *CodebaseContext {
+	ctx := &CodebaseContext{}
+
+	ctx.TechStack, ctx.PackageManager = detectTechStack(projectRoot)
+	ctx.Frameworks = detectFrameworks(projectRoot, ctx.TechStack)
+	ctx.Dependencies = ExtractDependencies(projectRoot, ctx.TechStack)
+
+	// Extract from .scrip/config.json
+	if cfg != nil {
+		for _, svc := range cfg.Services {
+			ctx.Services = append(ctx.Services, fmt.Sprintf("%s (%s)", svc.Name, svc.Ready))
+		}
+		ctx.VerifyCommands = cfg.Verify.VerifyCommands()
+		ctx.TestCommand = cfg.Verify.Test
+	}
+
+	return ctx
+}
+
 // detectTechStack detects the primary language and package manager
 func detectTechStack(projectRoot string) (techStack, packageManager string) {
 	// Check for Go
