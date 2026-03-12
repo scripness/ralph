@@ -6,7 +6,7 @@
 
 **Source of truth:** ROADMAP.md Phase 0 section (lines 471-1048) is the design document. This spec adds implementation detail — schemas, session boundaries, reuse guidance — without changing the design.
 
-**Lineage:** Scrip v1 is built on the ralph codebase (reusing ~88% of its Go source). After this rewrite, the `ralph` binary, command set, and all ralph-specific references are gone. Only `scrip` exists.
+**Lineage:** Scrip v1 is built on the ralph codebase (reusing ~75% of its Go source — direct copies + adaptations). After this rewrite, the `ralph` binary, command set, and all ralph-specific references are gone. Only `scrip` exists.
 
 ---
 
@@ -19,7 +19,9 @@
 - [Codebase Reuse Map](#codebase-reuse-map)
 - [Implementation Sessions](#implementation-sessions)
 - [Cross-Session Contract](#cross-session-contract)
+- [Testing Architecture](#testing-architecture)
 - [Partially Specified Details](#partially-specified-details)
+- [Post-Implementation Refinement](#post-implementation-refinement)
 
 ---
 
@@ -214,6 +216,8 @@ CLI parses:
 
 Parsing strategy: regex on markdown conventions, not full YAML-in-body. If frontmatter is malformed, treat entire file as markdown body (degrade gracefully).
 
+> **Note (pending refinement):** The exact plan.md format needs finalization — whether items should also be structured in YAML frontmatter (with `id`, `depends_on` fields for machine parsing) or kept as pure markdown. This spec uses markdown body only. A hybrid approach (YAML for machine fields, markdown for context) may be needed for dependency enforcement and item tracking. To be refined after initial implementation proves out the parsing approach.
+
 ### plan.jsonl
 
 One JSON object per line. Each line is one planning round.
@@ -234,11 +238,15 @@ Fields per round:
 - `finalized` (bool, optional) — true if plan.md was written
 - `verification` (object, optional) — plan verification results
 
-Progressive compression for context injection:
-- Rounds 1-5: verbatim
-- Rounds 6-15: decision-only (drop consultation text, keep user_input + summary of ai_response)
-- Rounds 16+: one-line digest per round
-- No AI summarization — CLI performs deterministic truncation
+Progressive compression for context injection (deterministic, no AI summarization):
+
+**Algorithm:** Given N total rounds, the CLI builds `{{planHistory}}` as follows:
+1. **Recent 5 rounds** (N-4 through N): include verbatim — all fields
+2. **Middle rounds** (round 6 through N-5): decision-only — include `round`, `ts`, `user_input`, first 200 chars of `ai_response` (truncated with "…"), drop `consultation` array entirely
+3. **Old rounds** (1 through 5, if N > 10): one-line digest — `"Round {n}: {user_input} → {first 80 chars of ai_response}…"`
+4. **Maximum context budget:** 8,000 tokens (~32KB). If compressed history exceeds this, drop oldest digests first, then oldest middle rounds.
+
+This is a fixed algorithm — no AI summarization, no lossy compression. The raw plan.jsonl is always preserved on disk.
 
 ### progress.jsonl
 
@@ -301,6 +309,8 @@ Summary appended to feature record.
 
 Written by CLI, not AI. Structured sections. Machine-readable enough for context injection.
 
+**`{{progressContext}}` injection format:** The CLI reads the most recent 3 sections from progress.md and injects them verbatim as the `{{progressContext}}` template variable. If progress.md exceeds 4,000 tokens (~16KB), only the last 2 sections are included. If no progress.md exists, `{{progressContext}}` is replaced with "No previous execution history for this feature."
+
 ### state.json
 
 Runtime recovery only. Deleted on clean exit.
@@ -326,7 +336,20 @@ Fields:
 - `started_at` (string, RFC3339) — when this execution started
 - `lock_holder` (string) — which command holds the lock
 
-Recovery logic: on startup, load state.json. Check if provider_pid is alive AND provider_started_at matches. If stale, resume from progress.jsonl (find last event, determine next item).
+Recovery logic (progress.jsonl is the source of truth, state.json is a hint):
+```
+1. Load progress.jsonl — find last event by type:
+   - Last item_done → that item is complete, next item follows
+   - Last item_start without matching item_done → that item was interrupted
+   - Last item_stuck → that item's attempt failed, retry or skip
+2. If state.json exists, use as optimization hint:
+   - Check provider_pid alive AND provider_started_at matches
+   - If match → provider still running, attach or kill+resume
+   - If no match → stale state, ignore
+3. If state.json and progress.jsonl disagree → progress.jsonl wins
+   (state.json may have been written but progress.jsonl append failed — the reverse is safe because progress.jsonl is append-only)
+4. Delete stale state.json, rebuild runtime state from progress.jsonl
+```
 
 ### .scrip/scrip.lock
 
@@ -415,8 +438,9 @@ Planning prompts follow the original Ralph PROMPT_plan.md structure.
 
 ```
 0a. Study the project source code using up to 500 parallel Sonnet subagents to learn the current codebase structure, existing implementations, patterns, and test coverage.
-0b. Study the consultation results provided below — framework-specific guidance, codebase analysis, and any previous planning history.
-0c. Study the progress history below — what was built before, what failed, what was learned.
+0b. Study the consultation results provided below — framework-specific guidance and codebase analysis.
+0c. Study the planning history below — previous rounds in this planning session (progressively compressed by the CLI from plan.jsonl).
+0d. Study the progress history below — what was built before, what failed, what was learned (from progress.md).
 ```
 
 **Phase 1: Plan**
@@ -455,13 +479,79 @@ Consultation subagents (spawned by the CLI) instruct the agent to research using
 Study the cached framework source code using up to 500 parallel Sonnet subagents. Read ACTUAL source files — do NOT rely on training data or memory. Use Opus subagents when evaluating architectural patterns or resolving conflicting approaches. Must cite actual source code (Source: file:line) — citations validated by CLI, uncited guidance treated as hallucination.
 ```
 
+### exec-verify.md Behavioral Requirements
+
+AI deep analysis after the provider signals DONE. Runs as a non-autonomous subagent (no `--dangerously-skip-permissions`).
+
+**Phase 0a-0c: Orient**
+
+```
+0a. Study the diff produced by this item using up to 500 parallel Sonnet subagents.
+0b. Study the acceptance criteria and test output provided below.
+0c. Study the item's context — what was requested and what the provider claimed to have implemented.
+```
+
+**Phase 1: Verify**
+
+```
+1. For each acceptance criterion, trace the implementation through the diff. Verify:
+   - The criterion is addressed by actual code changes (not just test assertions)
+   - Edge cases are handled (nil, empty, error, boundary values)
+   - No regressions to existing functionality
+   - Tests cover the claimed behavior (not just "test exists" but "test validates criterion")
+   Use up to 500 parallel Sonnet subagents for code analysis. Use Opus subagents for complex logic verification.
+```
+
+**Guardrails:**
+
+```
+99999. Important: Base your verdict on code reality, not provider claims. The provider may say DONE when work is incomplete.
+999999. Important: A passing test suite alone does NOT mean criteria are met. Verify the logic, not just the test results.
+```
+
+**Markers:**
+```
+<scrip>VERIFY_PASS</scrip>
+<scrip>VERIFY_FAIL:specific reason — which criterion failed and why</scrip>
+```
+
+Multiple VERIFY_FAIL markers supported (one per failed criterion).
+
 ### land-analyze.md Behavioral Requirements
 
-Comprehensive analysis for landing.
+Comprehensive analysis for landing. This is the final quality gate before the feature is accepted.
+
+**Phase 0a-0c: Orient**
 
 ```
-Study the full diff and all acceptance criteria using up to 500 parallel Sonnet subagents. For each item: trace execution paths, verify acceptance criteria met, check edge cases (nil, empty, error, timeout, boundary). Use Opus subagents for architecture review, cross-item consistency analysis, and security audit. Only 1 subagent for running any build/test verification.
+0a. Study the full diff (all commits for this feature) using up to 500 parallel Sonnet subagents.
+0b. Study all acceptance criteria across all plan items.
+0c. Study the verification command output (typecheck, lint, test results) provided below.
 ```
+
+**Phase 1: Analyze**
+
+```
+1. For each plan item's acceptance criteria, trace the implementation through the diff. Verify criteria are met by actual code, not just test assertions. Check edge cases: nil, empty, error, timeout, boundary values, concurrent access.
+2. Architecture review using Opus subagents: cross-item consistency, no conflicting patterns, no dead code, no orphaned imports.
+3. Security audit using Opus subagents: OWASP top 10, input validation at boundaries, no hardcoded secrets, no command injection.
+4. Only 1 subagent for running any build/test verification.
+```
+
+**Guardrails:**
+
+```
+99999. Important: Base verdicts on code reality. Trace every criterion to actual implementation.
+999999. Important: "Could be improved" is not a failure. Only report concrete, demonstrable issues.
+```
+
+**Markers:**
+```
+<scrip>VERIFY_PASS</scrip>
+<scrip>VERIFY_FAIL:specific finding — which criterion or quality gate failed</scrip>
+```
+
+Multiple VERIFY_FAIL markers supported. Each must cite a specific file:line and explain the issue.
 
 ### land-fix.md Behavioral Requirements
 
@@ -485,41 +575,74 @@ Required sections:
 
 Guidance: "Every sentence must contain a file path, function name, or concrete technical detail. Do NOT write narrative prose."
 
+### plan-create.md Behavioral Requirements
+
+First-round planning prompt. Used when no plan.md exists yet. Produces the initial plan draft.
+
+**Phase 0a-0c: Orient**
+
+```
+0a. Study the project source code using up to 500 parallel Sonnet subagents to understand architecture, patterns, existing implementations, and test coverage.
+0b. Study the feature description and consultation results provided below.
+0c. Study the progress context below — any prior execution history, learnings, and land failure findings for this feature.
+```
+
+**Phase 1: Plan**
+
+```
+1. Design a plan for the requested feature. For each item:
+   - Title: short, imperative ("Add OAuth2 login flow", not "OAuth2")
+   - Acceptance criteria: specific, testable conditions (not "works correctly" but "returns 401 on invalid token")
+   - Size: each item must be completable in one autonomous execution (~15-30 min). If larger, split.
+   - Dependencies: note if an item depends on another being completed first
+   Search the codebase using up to 500 parallel Sonnet subagents before assuming gaps. Use Opus subagents for architectural decisions. If the user's description is ambiguous, note assumptions clearly rather than guessing.
+```
+
+**Guardrails:**
+
+```
+99999. Important: Items must be sized for one exec loop iteration. An item that requires multiple files across multiple subsystems should be split.
+999999. Important: Acceptance criteria must be verifiable by automated tests. "Looks good" is not a criterion.
+9999999. Important: Don't assume not implemented — search the codebase to confirm gaps before including items.
+```
+
 ---
 
 ## Codebase Reuse Map
 
-The existing ralph codebase provides the foundation. 88% of source code copies directly into scrip v1. After this rewrite, ralph ceases to exist — only scrip remains.
+The existing ralph codebase provides the foundation. ~75% of source code copies directly or adapts with minor modifications into scrip v1. After this rewrite, ralph ceases to exist — only scrip remains.
 
 ### Direct Copy (no changes needed)
 
 | File | LOC | Purpose |
 |------|-----|---------|
 | `atomic.go` | 54 | AtomicWriteJSON, AtomicWriteFile |
-| `lock.go` | 169 | Lock file management (PID + age check) |
-| `schema.go` | 350 | PRDDefinition, StoryDefinition, RunState types |
-| `feature.go` | 211 | Feature directory management |
 | `git.go` | 251 | Git operations (branch, commit, diff) |
 | `services.go` | 266 | Service management (start/stop/health) |
 | `consultation.go` | 619 | Parallel subagent consultation |
-| `resources.go` | 307 | Resource management |
-| `resourcereg.go` | 160 | Resource registry |
-| `discovery.go` | 751 | Project type detection, verify command detection |
 | `resolve.go` | 906 | Dependency resolution (npm, Go, PyPI, crates, hex) |
 | `external_git.go` | 184 | Git clone operations |
 | `prompts.go` | 435 | Template rendering with {{var}} substitution |
 | `refine.go` | 58 | Refine session logic |
-| **Total** | **~4,721** | |
+| **Total** | **~2,773** | |
 
-### Adapt (minor modifications)
+### Adapt (minor to moderate modifications)
 
 | File | LOC | Changes |
 |------|-----|---------|
+| `lock.go` | 169 | Rename ralph→scrip in lock path and error messages |
+| `schema.go` | 350 | Rename ralph→scrip types (PRDDefinition→PlanDefinition, etc.), adapt for plan.md model |
+| `feature.go` | 211 | Rename `.ralph/`→`.scrip/` directory paths, update feature dir format |
+| `resources.go` | 307 | Rename `~/.ralph/`→`~/.scrip/` cache paths |
+| `resourcereg.go` | 9 | Rename `~/.ralph/`→`~/.scrip/` registry path |
+| `resourceregistry.go` | 160 | Rename `~/.ralph/`→`~/.scrip/` cache paths |
+| `discovery.go` | 751 | Rename `.ralph/`→`.scrip/` references in project detection |
+| `logger.go` | 849 | Rename `ralph`→`scrip` in log paths and messages |
 | `config.go` | 405 | Remove provider abstraction (knownProviders map), hardcode Claude Code, add --model/--effort, rename ralph→scrip paths |
-| `loop.go` | 1,413 | Rename ralph→scrip markers, remove multi-provider support, add --model/--effort to spawn args |
+| `loop.go` | 1,413 | Rename ralph→scrip markers, remove multi-provider support, adapt for plan.md item selection + progress.jsonl, add --model/--effort to spawn args |
 | `cleanup.go` | 96 | Rename lock path, adjust signal handling |
 | `prd.go` | 270 | Adapt for CLI-mediated rounds (remove interactive sessions, add plan.jsonl round tracking) |
-| **Total** | **~2,184** | |
+| **Total** | **~4,990** | |
 
 ### Rewrite / New
 
@@ -564,14 +687,18 @@ All `*_test.go` files for copied modules copy directly. New modules need new tes
 **Files to adapt:**
 - `config.go` — remove knownProviders/promptMode/promptFlag/knowledgeFile, hardcode claude with `--print --model opus --effort max`, rename paths (ralph→scrip), update `WriteDefaultConfig`
 
+**Files to adapt:**
+- `lock.go` — rename ralph→scrip paths
+- `schema.go` — rename types for plan.md model
+
 **Files to copy as-is:**
-- `atomic.go`, `lock.go`, `schema.go`
+- `atomic.go`
 
 **Tests:** Unit tests for all new functions. Table-driven for plan.md parsing, progress event types.
 
 **Exit criteria:** `go build` produces `scrip` binary. `go test ./...` passes. Config generates `.scrip/config.json`. State/progress/plan read/write works.
 
-**Estimated LOC:** ~600 new + ~400 adapted + ~573 copied
+**Estimated LOC:** ~600 new + ~920 adapted + ~54 copied
 
 ---
 
@@ -582,8 +709,14 @@ All `*_test.go` files for copied modules copy directly. New modules need new tes
 **Files to create:**
 - `cmd_prep.go` — project detection, config generation, dependency resolution, harness audit
 
+**Files to adapt:**
+- `discovery.go` — rename `.ralph/`→`.scrip/` references
+- `resources.go` — rename `~/.ralph/`→`~/.scrip/` cache paths
+- `resourcereg.go` — rename `~/.ralph/`→`~/.scrip/` registry path
+- `resourceregistry.go` — rename `~/.ralph/`→`~/.scrip/` cache paths
+
 **Files to copy as-is:**
-- `discovery.go`, `resolve.go`, `resources.go`, `resourcereg.go`, `external_git.go`
+- `resolve.go`, `external_git.go`
 
 **Reuse from ralph:** `cmdInit()` logic from commands.go (prompt for verify commands, services).
 
@@ -599,7 +732,7 @@ All `*_test.go` files for copied modules copy directly. New modules need new tes
 
 **Exit criteria:** `scrip prep` on a Go/Node/Elixir project produces correct config.
 
-**Estimated LOC:** ~150 new + ~2,000 copied
+**Estimated LOC:** ~150 new + ~1,227 adapted + ~1,090 copied
 
 ---
 
@@ -610,8 +743,11 @@ All `*_test.go` files for copied modules copy directly. New modules need new tes
 **Files to create:**
 - `cmd_plan.go` — round orchestration, user input loop, plan.md finalization
 
+**Files to adapt:**
+- `feature.go` — rename `.ralph/`→`.scrip/` directory paths
+
 **Files to copy as-is:**
-- `consultation.go`, `git.go`, `feature.go`
+- `consultation.go`, `git.go`
 
 **New prompt templates:**
 - `plan-round.md`, `plan-verify.md`, `plan-create.md`
@@ -620,7 +756,7 @@ All `*_test.go` files for copied modules copy directly. New modules need new tes
 - `scrip plan <feature> "description"` — create feature dir + branch, start planning
 - Each round: pre-compute consultation → build prompt → spawn `claude --print --model opus --effort max` → show response → get user feedback
 - Round history: append to plan.jsonl with progressive compression
-- Finalize: write plan.md, run adversarial verification (plan-verify.md), show warnings
+- Finalize: write plan.md, run adversarial verification (plan-verify.md), show warnings, emit `plan_created` event to progress.jsonl
 - Resume: reads plan.jsonl + progress.jsonl + progress.md for context
 - Land failure context: detect `land_failed` events in progress.jsonl, inject findings
 
@@ -628,7 +764,7 @@ All `*_test.go` files for copied modules copy directly. New modules need new tes
 
 **Exit criteria:** Full planning cycle works: create → rounds → finalize → resume.
 
-**Estimated LOC:** ~250 new + ~1,100 copied
+**Estimated LOC:** ~250 new + ~211 adapted + ~870 copied
 
 ---
 
@@ -637,7 +773,8 @@ All `*_test.go` files for copied modules copy directly. New modules need new tes
 **Goal:** Autonomous execution loop — the core Ralph technique.
 
 **Files to adapt:**
-- `loop.go` — rename markers (ralph→scrip), hardcode claude args with --model opus --effort max, adapt for plan.md item selection + progress.jsonl tracking
+- `loop.go` — rename markers (ralph→scrip), hardcode claude args with --model opus --effort max, adapt for plan.md item selection + progress.jsonl tracking (significant changes — PRD→Plan model)
+- `logger.go` — rename ralph→scrip in log paths and messages
 
 **Files to copy as-is:**
 - `services.go`, `prompts.go`
@@ -660,7 +797,7 @@ All `*_test.go` files for copied modules copy directly. New modules need new tes
 
 **Exit criteria:** Full exec cycle: items pass, progress tracked, retry works, resume works.
 
-**Estimated LOC:** ~100 new adaptation + ~1,700 copied
+**Estimated LOC:** ~400-500 new adaptation (loop.go is 1,413 LOC with significant PRD→Plan model changes) + ~700 copied
 
 ---
 
@@ -748,6 +885,57 @@ You are implementing Session N of the scrip v1 CLI — a new CLI that replaces r
 
 ---
 
+## Testing Architecture
+
+Every exported function has at least one test. Changed behavior has tests covering the new behavior.
+
+### Module test expectations
+
+| Module | Key tests | What they cover |
+|--------|----------|----------------|
+| `cmd_prep.go` | `TestDetectProject`, `TestGenerateConfig`, `TestResolveDeps` | Project detection, config generation, dependency caching |
+| `cmd_plan.go` | `TestPlanRound`, `TestPlanResume`, `TestPlanFinalize` | Round orchestration, resume from plan.jsonl, plan.md generation |
+| `cmd_exec.go` | `TestExecLoop`, `TestExecResume`, `TestExecRetry`, `TestExecQuickFix` | Item loop, crash recovery, retry with failure classification, quick fix shortcut |
+| `cmd_land.go` | `TestLandPass`, `TestLandFail`, `TestLandFailFindings` | Pass flow (purge + push), fail flow (findings → progress.jsonl) |
+| `consultation.go` | `TestConsultParallel`, `TestConsultCitationValidation`, `TestConsultCaching` | Parallel subagent dispatch, citation validation, result caching |
+| `plan.go` | `TestPlanParse`, `TestPlanWrite`, `TestPlanJsonlAppend`, `TestContextReconstruction` | YAML frontmatter, plan.md write, plan.jsonl append/query, progressive context compression |
+| `progress.go` | `TestProgressAppend`, `TestProgressQuery`, `TestProgressMdAppend` | Event append, event query by type, progress.md narrative append |
+| `state.go` | `TestAtomicWrite`, `TestCrashRecovery`, `TestLockAcquire` | Atomic JSON writes, resume from state.json, lock file management |
+| `prompts.go` | `TestTemplateRender`, `TestStrictRendering`, `TestAllVariables` | Variable injection, no leftover `{{...}}` patterns, all templates render cleanly |
+
+### Integration tests
+
+Test command-level flows with a mock `claude --print` (fake provider binary that reads prompt from stdin, returns canned responses with markers):
+
+- `TestPrepIntegration` — `scrip prep` on a real project directory, verify config generated correctly
+- `TestPlanIntegration` — full plan round: consultation subagents → planning → verification
+- `TestExecIntegration` — full item loop: consult → spawn → DONE marker → verify → advance
+- `TestLandIntegration` — pass and fail paths with mock deep analysis
+- `TestResumeFromCrash` — kill mid-exec, restart, verify resume from progress.jsonl
+- `TestLandFailPlanLoop` — land fails → plan with injected findings → exec → land passes
+
+Mock provider: a test binary (or `testProvider(responses map[string]string)` helper) that maps prompt substrings to canned responses with markers. Same `--print` interface as real Claude Code.
+
+### E2E test
+
+Full end-to-end test with real `claude --print` (requires API key, tagged `e2e`, 60min timeout):
+
+```bash
+make test-e2e  # go test -tags e2e -timeout 60m -v -run TestE2E ./...
+```
+
+E2E test project: a minimal but real project in `testdata/e2e-project/` (e.g., Go HTTP server with 2-3 endpoints). Has intentional gaps that scrip should detect and fix: missing tests for one endpoint, a TODO placeholder in one handler, linter warnings. Validates the full prep → plan → exec → land cycle.
+
+### Test patterns
+
+- **Temp directories** for tests touching `.scrip/` or `.git/` — `t.TempDir()` with setup helpers
+- **Table-driven tests** for classification logic (failure classification, project detection, marker parsing)
+- **`go test ./...` and `go vet ./...`** must pass — enforced in CI
+- **Build tags**: `e2e` for real-provider tests, no tag for unit/integration (fast, no API key needed)
+- **Test helpers**: `setupTestProject(t)` creates temp dir with `.git/` + `.scrip/`, `setupTestConfig(t)` writes valid config
+
+---
+
 ## Partially Specified Details
 
 These items have design intent in ROADMAP.md but need implementation decisions. Each session's agent should handle them as described.
@@ -828,3 +1016,16 @@ Detection: whole-line matching (not substring). DONE uses exact `==`. STUCK/LEAR
 | VERIFY_FAIL | Report failure. In exec: retry. In land: attempt fix or fail. |
 | No marker + timeout | Kill process group. Log timeout. Retry as stall. |
 | No marker + exit | Treat as stuck. Log exit code. Retry. |
+
+---
+
+## Post-Implementation Refinement
+
+After Phase 0 implementation is complete and all sessions pass their exit criteria, each command will need further refinement based on real-world usage:
+
+- **scrip prep** — harness audit heuristics, additional project type detectors, config migration for format changes
+- **scrip plan** — planning round UX polish, consultation quality tuning, plan.md format finalization (see pending refinement note in State Schemas)
+- **scrip exec** — retry heuristics, failure classification accuracy, stall detection tuning, verify-at-top performance
+- **scrip land** — fix agent prompt tuning, summary quality, land failure message clarity, push workflow options
+
+This refinement work happens iteratively after the core implementation is functional. Each command's refinement is scoped by real usage patterns — not speculated in advance.
