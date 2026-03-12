@@ -60,12 +60,6 @@ Examples:
 
 // Placeholder command handlers — replaced by cmd_*.go in Sessions 1-4.
 
-func cmdExec(args []string) {
-	_ = args
-	fmt.Fprintln(os.Stderr, "scrip exec: not yet implemented")
-	os.Exit(1)
-}
-
 func cmdLand(args []string) {
 	_ = args
 	fmt.Fprintln(os.Stderr, "scrip land: not yet implemented")
