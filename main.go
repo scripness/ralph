@@ -60,12 +60,6 @@ Examples:
 
 // Placeholder command handlers — replaced by cmd_*.go in Sessions 1-4.
 
-func cmdPrep(args []string) {
-	_ = args
-	fmt.Fprintln(os.Stderr, "scrip prep: not yet implemented")
-	os.Exit(1)
-}
-
 func cmdPlan(args []string) {
 	_ = args
 	fmt.Fprintln(os.Stderr, "scrip plan: not yet implemented")
