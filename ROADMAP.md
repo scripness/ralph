@@ -375,7 +375,7 @@ Replace `git diff --stat` with truncated full `git diff` (capped at ~8000 chars)
 
 ### 4.3 Post-Session Notes Capture
 
-After interactive refine session, prompt user for notes. If provided with zero commits, write notes directly to summary.md. If with commits, include in summarizer context. Captures decisions and rationale from interactive work. (~40 LOC in commands.go + refine.go)
+After interactive refine session, prompt user for notes. If provided with zero commits, write notes directly to progress.md. If with commits, include in summarizer context. Captures decisions and rationale from interactive work. (~40 LOC in commands.go + refine.go)
 
 ### 4.4 Prompt Polish
 
@@ -395,7 +395,7 @@ Validate feature directory paths are under `.scrip/`. Prevent path traversal via
 
 ### 4.7 Stale Feature Directory Cleanup
 
-On `scrip run` start, scan `.scrip/` for feature dirs with no summary.md, no active run-state.json, and older than 30 days. Log warnings (don't auto-delete). (~40 LOC in startup path)
+On `scrip run` start, scan `.scrip/` for feature dirs with no progress.md, no active run-state.json, and older than 30 days. Log warnings (don't auto-delete). (~40 LOC in startup path)
 
 ### 4.8 Verification Report Artifacts
 
@@ -503,7 +503,7 @@ Scrip's autonomous execution is a direct implementation of the Ralph technique (
 
 **Steering via patterns, not instructions.** The engineer moves outside the loop — observing failure patterns, tuning specs, adjusting prompts, adding utilities and code patterns that steer the agent toward correct implementations. The planning phase is where this happens in scrip: the human shapes the plan and acceptance criteria through CLI-mediated rounds, then steps away while the autonomous loop executes. "Tune it like a guitar."
 
-**Plans are disposable.** "Regenerate when trajectory diverges." The plan is a cheap artifact — what matters is the code, tests, and learnings it produced. Scrip purges plan.md after execution and regenerates from progress.jsonl + summary.md context when new work begins. Any problem created by AI can be resolved through a different series of prompts and running more loops.
+**Plans are disposable.** "Regenerate when trajectory diverges." The plan is a cheap artifact — what matters is the code, tests, and learnings it produced. Scrip purges plan.md after execution and regenerates from progress.jsonl + progress.md context when new work begins. Any problem created by AI can be resolved through a different series of prompts and running more loops.
 
 **"Don't assume not implemented."** The Achilles' heel of AI coding — agents re-implement existing functionality instead of finding and using it. The build prompt must include: "Before making changes, search the codebase first (don't assume not implemented)." This single instruction prevents the most common class of wasted iteration.
 
@@ -546,7 +546,7 @@ scrip land    # final verification + security + summary + push artifacts
 Project setup and harness audit. Creates `.scrip/` directory with all config:
 - Detect project type, package manager, test framework, linter
 - Generate `.scrip/config.json` with verify commands, services, project metadata
-- Create `.scrip/.gitignore` (ignore lock, logs, state.json, brainstorm.jsonl)
+- Create `.scrip/.gitignore` (ignore lock, logs, state.json, plan.jsonl)
 - Resolve dependencies → cache framework source to `~/.scrip/resources/`
 - Audit downstream harness: types coverage, test patterns, linter rules, SAST tools
 - Report harness gaps with actionable recommendations (not auto-fix)
@@ -565,8 +565,8 @@ CLI-mediated planning rounds with pre-computed consultation. No interactive Clau
    - Read cached framework source from `~/.scrip/resources/`
    - Run parallel consultation subagents for framework-specific research
    - Run codebase analysis for the feature area
-   - Read `progress.jsonl` + `summary.md` + `brainstorm.jsonl` (if resuming or after land failure)
-4. CLI builds planning prompt with: consultation results + codebase context + brainstorm history + user input + planning instructions
+   - Read `progress.jsonl` + `progress.md` + `plan.jsonl` (if resuming or after land failure)
+4. CLI builds planning prompt with: consultation results + codebase context + planning history + user input + planning instructions
 5. CLI spawns `claude --print` — runs in background, shows progress
 6. CLI displays AI response to user
 7. User decides:
@@ -580,7 +580,7 @@ CLI-mediated planning rounds with pre-computed consultation. No interactive Clau
 10. CLI shows plan + verification warnings
 11. User approves → plan.md saved. Or provides feedback → another round.
 
-**This is the Ralph planning loop made CLI-mediated.** In original Ralph, planning is autonomous: "Study specs, study code, compare, write IMPLEMENTATION_PLAN.md. Plan only. Do NOT implement anything." Scrip applies the same principle — gap analysis, research, plan creation — but with the user providing direction between rounds. Each round gets fresh context with accumulated brainstorming history injected by the CLI.
+**This is the Ralph planning loop made CLI-mediated.** In original Ralph, planning is autonomous: "Study specs, study code, compare, write IMPLEMENTATION_PLAN.md. Plan only. Do NOT implement anything." Scrip applies the same principle — gap analysis, research, plan creation — but with the user providing direction between rounds. Each round gets fresh context with accumulated planning history injected by the CLI.
 
 **Why non-interactive instead of open Claude Code sessions:**
 - **Zero config dependency** — factory-fresh Claude Code works. No skills, hooks, or CLAUDE.md needed.
@@ -595,12 +595,12 @@ CLI-mediated planning rounds with pre-computed consultation. No interactive Clau
 **Consultation scales with what exists:**
 - First time, no cached resources → project structure + codebase analysis only.
 - With cached resources → CLI runs parallel consultation subagents that read framework source, produce guidance about patterns/APIs/security. Injected into planning prompt.
-- Resuming after previous work → progress.jsonl + summary.md + brainstorm.jsonl provide full context.
+- Resuming after previous work → progress.jsonl + progress.md + plan.jsonl provide full context.
 - After land failure → `land_failed` event findings injected as "Previous land failed because: X. Address these issues."
 
-**Brainstorm state persists across rounds.** Each round's user input, consultation results, and AI response are appended to `brainstorm.jsonl`. When starting a new round, the CLI reads this history and injects it as context — recent rounds verbatim, older rounds progressively summarized to manage the token budget. This means you can walk away mid-planning and resume tomorrow.
+**Planning state persists across rounds.** Each round's user input, consultation results, and AI response are appended to `plan.jsonl`. When starting a new round, the CLI reads this history and injects it as context — recent rounds verbatim, older rounds progressively summarized to manage the token budget. This means you can walk away mid-planning and resume tomorrow.
 
-**State after `scrip plan`:** `plan.md` exists in `.scrip/<feature>/`. `brainstorm.jsonl` contains the round history. The user can inspect the plan, edit it manually, or iterate with another `scrip plan` invocation.
+**State after `scrip plan`:** `plan.md` exists in `.scrip/<feature>/`. `plan.jsonl` contains the round history. The user can inspect the plan, edit it manually, or iterate with another `scrip plan` invocation.
 
 #### `scrip exec`
 
@@ -636,13 +636,13 @@ Final comprehensive verification — the deepest check in the system. Land does 
 2. Run SAST tools + dependency audit (security layer)
 3. AI deep analysis via `claude --print` — architecture review, cross-item consistency, security audit
 4. If all pass:
-   - Append final summary to `summary.md` (narrative of what was built, decisions made, learnings)
+   - Append final narrative to `progress.md` (what was built, decisions made, learnings)
    - Purge `plan.md` + `state.json` (runtime state)
-   - Commit and push artifacts (`summary.md`, purged plan, `progress.jsonl`)
+   - Commit and push artifacts (`progress.md`, purged plan, `progress.jsonl`)
    - Feature is "landed" — ready for PR/merge via normal git workflow
 5. If any check fails:
    - Write `land_failed` event to `progress.jsonl` with structured findings (which checks failed, AI analysis results, specific issues found)
-   - Append failure narrative to `summary.md` ("Land attempted, failed because: X, Y, Z")
+   - Append failure narrative to `progress.md` ("Land failed: X, Y, Z")
    - Do NOT purge plan or state
    - Exit with clear message: "Land failed. Run `scrip plan` to rethink, or `scrip exec` to fix."
 
@@ -652,22 +652,22 @@ Final comprehensive verification — the deepest check in the system. Land does 
 
 **Plan: Markdown with YAML frontmatter.** Not JSON — the AI writes markdown naturally. JSON adds parsing friction for a disposable artifact.
 
-**Brainstorm: JSONL for round history.** Each planning round (user input + consultation results + AI response) is appended as one entry. The CLI reads this to reconstruct context for the next round — recent rounds verbatim, older rounds progressively summarized. Survives interruption (resume planning tomorrow where you left off).
+**Planning history: JSONL for round-by-round context.** Each planning round (user input + consultation results + AI response) is appended as one entry to `plan.jsonl`. The CLI reads this to reconstruct context for the next round — recent rounds verbatim, older rounds progressively summarized. Survives interruption (resume planning tomorrow where you left off).
 
-**Progress: JSONL for execution events.** Append-only, grep-queryable, line-safe on crash, git-friendly diffs. Plus a **summary.md** (narrative, appended after each session) for human context. The two complement each other:
+**Progress: JSONL for execution events.** Append-only, grep-queryable, line-safe on crash, git-friendly diffs. Plus a **progress.md** (narrative, appended after each session) for human context. The two complement each other:
 - `progress.jsonl` answers "what happened?" (machine-queryable)
-- `summary.md` answers "why did we do it that way?" (human-readable, carried forward as context for next planning round)
+- `progress.md` answers "why did we do it that way?" (human-readable, carried forward as context for next planning round)
 
-**summary.md is as important as progress.jsonl.** JSONL is machine-queryable but not great context for the next planning round. Summary.md (narrative, appended after each session) gives the AI the "why" alongside the "what." Both files are permanent; plan.md is the only disposable artifact.
+**progress.md is as important as progress.jsonl.** JSONL is machine-queryable but not great context for the next planning round. Progress.md (narrative, appended after each session) gives the AI the "why" alongside the "what." Both files are permanent; plan.md is the only disposable artifact.
 
 Five files, clear lifecycle:
 
 | File | Location | Lifecycle | Format | Purpose |
 |------|----------|-----------|--------|---------|
-| `brainstorm.jsonl` | `.scrip/<feature>/` | Permanent — append-only | JSONL | Planning round history (user input, consultation, AI response per round) |
+| `plan.jsonl` | `.scrip/<feature>/` | Permanent — append-only | JSONL | Planning round history (user input, consultation, AI response per round) |
 | `plan.md` | `.scrip/<feature>/` | Disposable — purged after execution or on rethink | Markdown + YAML frontmatter | Current work items with acceptance criteria |
 | `progress.jsonl` | `.scrip/<feature>/` | Permanent — append-only | JSONL | Machine-queryable event log (attempts, passes, failures, learnings) |
-| `summary.md` | `.scrip/<feature>/` | Permanent — appended after each exec session | Markdown | Human-readable narrative of all work done |
+| `progress.md` | `.scrip/<feature>/` | Permanent — appended after each exec session | Markdown | Human-readable narrative of all work done |
 | `state.json` | `.scrip/<feature>/` | Temporary — runtime recovery only | JSON | Current item, provider PID, lock info. Deleted on clean exit. |
 
 #### Plan lifecycle
@@ -678,9 +678,9 @@ Plans are ALWAYS purged after execution. The cycle:
 scrip plan → rounds until satisfied → plan.md created → scrip exec → plan.md purged
                                                                            ↓
 progress.jsonl appended ←─────────────────────────────────────────────────┘
-summary.md appended ←─────────────────────────────────────────────────────┘
+progress.md appended ←─────────────────────────────────────────────────────┘
 
-scrip plan (resume) → reads progress.jsonl + summary.md + brainstorm.jsonl → rounds with context → NEW plan.md → scrip exec
+scrip plan (resume) → reads progress.jsonl + progress.md + plan.jsonl → rounds with context → NEW plan.md → scrip exec
 ```
 
 This is exactly original Ralph's model: IMPLEMENTATION_PLAN.md is disposable, progress.txt is permanent.
@@ -713,7 +713,7 @@ created: 2026-03-11T14:32:00Z
 {"ts":"...","event":"item_done","item":"Set up OAuth2","status":"passed","commit":"abc123","learnings":["callback URL must be exact match"]}
 ```
 
-#### brainstorm.jsonl events
+#### plan.jsonl events
 
 ```jsonl
 {"round":1,"ts":"...","user_input":"add google oauth login","consultation":["Phoenix auth: ueberauth is standard...","Codebase: no auth infrastructure exists"],"ai_response":"Based on research, here are 3 approaches...","has_plan_draft":false}
@@ -721,7 +721,7 @@ created: 2026-03-11T14:32:00Z
 {"round":3,"ts":"...","user_input":"write the plan","ai_response":"[plan content written to plan.md]","finalized":true,"verification":{"items":5,"warnings":["missing CSRF on OAuth callback"]}}
 ```
 
-Context injection for round N: CLI reads brainstorm.jsonl, builds a summary of previous rounds (user decisions + key AI recommendations), injects into the fresh `--print` prompt alongside new consultation results. Progressive compression: recent rounds verbatim, older rounds summarized to manage the ~176K token budget.
+Context injection for round N: CLI reads plan.jsonl, builds a summary of previous rounds (user decisions + key AI recommendations), injects into the fresh `--print` prompt alongside new consultation results. Progressive compression: recent rounds verbatim, older rounds summarized to manage the ~176K token budget.
 
 #### progress.jsonl events
 
@@ -739,7 +739,7 @@ Context injection for round N: CLI reads brainstorm.jsonl, builds a summary of p
 {"ts":"...","event":"land_passed","summary_appended":true,"plan_purged":true}
 ```
 
-New plans are generated with full context from progress.jsonl + summary.md + brainstorm.jsonl. Land failure findings in progress.jsonl flow directly into the next planning round as injected context.
+New plans are generated with full context from progress.jsonl + progress.md + plan.jsonl. Land failure findings in progress.jsonl flow directly into the next planning round as injected context.
 
 > **Note (pending refinement):** The exact plan.md format needs finalization — whether items should also be structured in YAML frontmatter (with `id`, `depends_on` fields for machine parsing) or kept as pure markdown. The original synthesis used markdown body only. A hybrid approach (YAML for machine fields, markdown for context) may be needed for dependency enforcement and item tracking.
 
@@ -755,10 +755,10 @@ Scrip touches exactly **two directories**. Nothing else on the user's system is 
 ├── .gitignore                          # Ignore: scrip.lock, */logs/, state.json
 ├── scrip.lock                          # Lock file for concurrency control
 └── <feature>/                          # One directory per feature
-    ├── brainstorm.jsonl                # Planning round history (permanent, append-only)
+    ├── plan.jsonl                # Planning round history (permanent, append-only)
     ├── plan.md                         # Current plan (disposable)
     ├── progress.jsonl                  # Event log (permanent, append-only)
-    ├── summary.md                      # Narrative history (permanent)
+    ├── progress.md                      # Narrative history (permanent)
     ├── state.json                      # Runtime recovery (temporary, deleted on clean exit)
     └── logs/
         └── exec-NNN.jsonl             # JSONL logs per exec session
@@ -795,8 +795,8 @@ Before every `scrip plan` round and before every `scrip exec` item, the CLI:
 1. **Reads project context** — tech stack, frameworks, test patterns, directory structure (from `scrip prep` detection stored in `.scrip/config.json`)
 2. **Reads cached framework source** — if `~/.scrip/resources/` has relevant frameworks, the CLI identifies which are relevant to the current feature/item
 3. **Runs parallel consultation subagents** — spawns `claude --print` instances with consultation prompts that read the cached framework source and produce guidance about patterns, APIs, security. Each subagent is a separate process with its own context window: reads actual source code, produces guidance with `Source:` citations, validated by CLI (no citations = treated as hallucination, falls back to file paths)
-4. **Reads progress history** — `progress.jsonl` + `summary.md` + `brainstorm.jsonl` for context on what was done before, what failed, what was learned
-5. **Packages everything into the prompt** — consultation results, progress context, brainstorm history, codebase context, all injected as template variables
+4. **Reads progress history** — `progress.jsonl` + `progress.md` + `plan.jsonl` for context on what was done before, what failed, what was learned
+5. **Packages everything into the prompt** — consultation results, progress context, planning history, codebase context, all injected as template variables
 
 #### Why separate subagent calls, not prompt injection
 
@@ -815,7 +815,7 @@ Consultation and verification behaviors are NOT injected as self-directed instru
 
 | Command | What CLI pre-computes | Injected as |
 |---------|----------------------|-------------|
-| `scrip plan` (each round) | Project structure + cached framework guidance + codebase analysis + brainstorm history | Planning prompt context — agent starts informed |
+| `scrip plan` (each round) | Project structure + cached framework guidance + codebase analysis + planning history | Planning prompt context — agent starts informed |
 | `scrip plan` (after land failure) | Same + `land_failed` findings from progress.jsonl | "Land failed because: X. Address these issues." |
 | `scrip exec` (per item) | Item-specific framework guidance + learnings from previous items + retry context | Build prompt `{{resourceGuidance}}` + `{{learnings}}` + `{{retryContext}}` |
 | `scrip land` | Comprehensive framework guidance for all touched areas | Deep analysis prompt context |
@@ -879,9 +879,8 @@ cmd_exec.go     — autonomous item loop (spawn, verify, retry, advance)
 cmd_land.go     — final verification + security + summary + push artifacts
 consultation.go — parallel subagent consultation (framework source → guidance)
 verification.go — mechanical checks + adversarial AI review
-brainstorm.go   — brainstorm.jsonl append/query + context reconstruction
-plan.go         — plan.md read/write + YAML frontmatter parsing
-progress.go     — progress.jsonl append/query
+plan.go         — plan.md read/write + plan.jsonl round history + context reconstruction
+progress.go     — progress.jsonl append/query + progress.md narrative append
 state.go        — state.json runtime recovery
 prompts.go      — prompt template rendering with {{variable}} injection
 ```
@@ -889,3 +888,160 @@ prompts.go      — prompt template rendering with {{variable}} injection
 Each file handles one concern. No plugin.go, no mcp.go, no skill.go — scrip is a self-contained CLI that controls Claude Code via prompt injection and marker detection. All communication with Claude Code uses `claude --print` — no interactive sessions.
 
 **Dropped from Ralph v2:** Provider abstraction layer (`knownProviders`, `promptMode`/`promptFlag`/`knowledgeFile`, `providerChoices`, `stripNonInteractiveArgs()`, multi-mode `buildProviderArgs()`). Claude Code is hardcoded — `claude --print --dangerously-skip-permissions` for autonomous execution, `claude --print` for consultation and verification. No interactive mode.
+
+### Embedded Prompt Templates
+
+Scrip embeds all prompts at compile time via `//go:embed prompts/*`. These prompts capture the behaviors that would otherwise require installed Claude Code skills — consultation, verification, planning, and execution are all controlled by the CLI through prompt injection. The user's Claude Code needs zero custom configuration.
+
+#### Consultation prompts (replaces /consult skill)
+
+The /consult skill's core behaviors — expert-first research with parallel subagent dispatch — are embedded in scrip's consultation subagent prompts.
+
+**`consult-item.md`** — Per-item framework consultation (spawned before each `scrip exec` item):
+- Expert-first approach: learn the domain by reading cached framework source, understand the architecture, think in systems (trace dependencies and ripple effects) — then produce guidance
+- Must cite actual source code (`Source: file:line`) — citations validated by CLI, uncited guidance treated as hallucination
+- Structured output: patterns, API signatures, configuration, version-specific gotchas
+
+**`consult-feature.md`** — Feature-level consultation (spawned before `scrip plan` rounds and `scrip land`):
+- Same expert-first approach, broader scope
+- Research along 4 angles: how it works now, what are the options, what are the risks, what does the ecosystem do
+- Synthesis format: Understanding → Options → Recommendation with concrete evidence
+- Scale subagent dispatch to scope — explore broadly, synthesize concisely
+
+**Key /consult behaviors preserved:**
+- Agents are domain experts first, searchers second — understand architecture and history before exploring
+- Concrete evidence with code paths and file references, not opinions
+- Surface disagreements between subagents — don't hide conflicts, let the user decide
+- Break complex questions into independent sub-questions for parallel exploration
+
+#### Planning prompts (replaces interactive brainstorming)
+
+**`plan-round.md`** — Planning round prompt for `scrip plan`:
+- Orient: project context + consultation results + planning history + codebase analysis
+- Research-first: "Before recommending an approach, explore at least 2 alternatives with evidence from the codebase and framework source"
+- Structured analysis: present trade-offs as concrete comparisons (not "A is simpler" but "A changes 2 files, B changes 5 + needs migration")
+- When user says "write the plan": produce plan.md with items + acceptance criteria
+
+**`plan-verify.md`** — Adversarial plan verification (spawned after finalize round):
+- Extract every claim from plan.md (each item, each acceptance criterion, each architectural decision)
+- For each claim: verify against codebase reality (files exist? APIs are real? patterns match?)
+- Structured report: Claim | Verdict | Evidence
+- Flag: untestable criteria, missing items, security gaps, contradictions with existing code
+- "No concrete failure scenario = imaginary" — reject vague concerns without proof
+
+#### Execution prompts (replaces ralph run.md)
+
+**`exec-build.md`** — Build prompt for `scrip exec` items:
+- Orient → Act → Guardrails structure (from original Ralph PROMPT_build.md)
+- Injected: item description + acceptance criteria + consultation results + learnings + retry context
+- "Before making changes, search the codebase first (don't assume not implemented)"
+- "Implement completely. Stubs waste efforts and time redoing the same work."
+- "Capture the why — tests and learnings must explain importance"
+- Markers: `<ralph>DONE</ralph>`, `<ralph>STUCK:reason</ralph>`, `<ralph>LEARNING:text</ralph>`
+
+**`exec-verify.md`** — AI deep analysis after item DONE (replaces verify-analyze.md + /verify implementation mode):
+- Acceptance criteria checklist with checkboxes (from Ralph's `buildCriteriaChecklist`)
+- Extract claims from BOTH plan AND code (implicit correctness claims)
+- Expert specialist approach: understand the architecture and intent before judging. Think like the author — check why it was written that way before calling it wrong
+- Trace full execution paths, construct concrete test inputs, check edge cases (nil, empty, error, timeout, boundary)
+- Distinguish "could be improved" (not a failure) from actual bugs (concrete failure scenario required)
+- Test file heuristic: warn if no test file changes detected
+- Markers: `<ralph>VERIFY_PASS</ralph>`, `<ralph>VERIFY_FAIL:reason</ralph>` (multiple VERIFY_FAIL supported)
+
+#### Landing prompts (replaces ralph verify deep analysis)
+
+**`land-analyze.md`** — Comprehensive analysis for `scrip land` (combines verify-analyze.md + /verify audit mode):
+- Full diff across all items, all acceptance criteria
+- Architecture review: cross-item consistency, dependency correctness
+- Security audit: auth flows, input validation, data handling, CSRF, injection
+- Verify test coverage: new functions must have tests
+- Structured report: Mechanical Results + Expert Analysis (Claim | Verdict | Evidence) + Summary + Recommendation
+- "Never trust claims — verify against source code"
+
+**`land-fix.md`** — Fix prompt if `scrip land` fails (replaces verify-fix.md):
+- Verification results injected with failure details
+- Per-item execution history (passed/skipped/retries)
+- Diff summary + service URLs + verify commands
+- Instructions: investigate root cause, fix, confirm locally, commit
+
+#### What's captured from each source
+
+| Source | Key behavior | Captured in |
+|--------|-------------|-------------|
+| /consult | Expert-first (learn domain → history → systems → explore) | consult-item.md, consult-feature.md |
+| /consult | 4 angles (how now, options, risks, ecosystem) | consult-feature.md |
+| /consult | Synthesis (Understanding → Options → Recommendation) | plan-round.md |
+| /consult | Concrete evidence, surface disagreements | All consultation prompts |
+| /verify | Context detection (plan vs code vs audit) | Different prompts per stage |
+| /verify | Mechanical checks FIRST | CLI runs mechanical, then spawns AI analysis |
+| /verify | Extract claims from plan AND code | exec-verify.md, land-analyze.md |
+| /verify | Specialist approach (architecture → intent → author → verify) | exec-verify.md, land-analyze.md |
+| /verify | Structured report (Claims table + verdicts) | plan-verify.md, land-analyze.md |
+| /verify | "No concrete failure scenario = imaginary" | plan-verify.md, exec-verify.md |
+| ralph verify | VerifyReport (Pass/Fail/Warn items) | verification.go VerifyReport type |
+| ralph verify | All checks collected before verdict | CLI collects all, multiple VERIFY_FAIL markers |
+| ralph verify | Criteria checklist with checkboxes | exec-verify.md, land-analyze.md |
+| ralph verify | Verify-at-top regression detection | Pre-item verification in `scrip exec` |
+| ralph verify | Service health as hard blocker | Post-item verification in `scrip exec` |
+| ralph verify | DONE requires commit | exec-build.md + CLI hash check |
+| ralph verify | Test file heuristic (WARN) | exec-verify.md |
+
+### Testing Architecture
+
+Scrip v3 is organized by modules, each independently testable. Every exported function has at least one test. Changed behavior has tests covering the new behavior.
+
+#### Module test expectations
+
+| Module | Key tests | What they cover |
+|--------|----------|----------------|
+| `cmd_prep.go` | `TestDetectProject`, `TestGenerateConfig`, `TestResolveDeps` | Project detection, config generation, dependency caching |
+| `cmd_plan.go` | `TestPlanRound`, `TestPlanResume`, `TestPlanFinalize` | Round orchestration, resume from plan.jsonl, plan.md generation |
+| `cmd_exec.go` | `TestExecLoop`, `TestExecResume`, `TestExecRetry`, `TestExecQuickFix` | Item loop, crash recovery, retry with failure classification, quick fix shortcut |
+| `cmd_land.go` | `TestLandPass`, `TestLandFail`, `TestLandFailFindings` | Pass flow (purge + push), fail flow (findings → progress.jsonl) |
+| `consultation.go` | `TestConsultParallel`, `TestConsultCitationValidation`, `TestConsultCaching` | Parallel subagent dispatch, citation validation, result caching |
+| `verification.go` | `TestVerifyReport`, `TestVerifyCollectsAll`, `TestVerifyMarkers` | Report structure (Pass/Fail/Warn), all checks collected, marker detection |
+| `plan.go` | `TestPlanParse`, `TestPlanWrite`, `TestPlanJsonlAppend`, `TestContextReconstruction` | YAML frontmatter, plan.md write, plan.jsonl append/query, progressive context compression |
+| `progress.go` | `TestProgressAppend`, `TestProgressQuery`, `TestProgressMdAppend` | Event append, event query by type, progress.md narrative append |
+| `state.go` | `TestAtomicWrite`, `TestCrashRecovery`, `TestLockAcquire` | Atomic JSON writes, resume from state.json, lock file management |
+| `prompts.go` | `TestTemplateRender`, `TestStrictRendering`, `TestAllVariables` | Variable injection, no leftover `{{...}}` patterns, all templates render cleanly |
+
+#### Integration tests
+
+Test command-level flows with a mock `claude --print` (fake provider binary that reads prompt from stdin, returns canned responses with markers):
+
+- `TestPrepIntegration` — `scrip prep` on a real project directory, verify config generated correctly
+- `TestPlanIntegration` — full plan round: consultation subagents → planning → verification
+- `TestExecIntegration` — full item loop: consult → spawn → DONE marker → verify → advance
+- `TestLandIntegration` — pass and fail paths with mock deep analysis
+- `TestResumeFromCrash` — kill mid-exec, restart, verify resume from progress.jsonl
+- `TestLandFailPlanLoop` — land fails → plan with injected findings → exec → land passes
+
+Mock provider: a test binary (or `testProvider(responses map[string]string)` helper) that maps prompt substrings to canned responses with markers. Same `--print` interface as real Claude Code.
+
+#### E2e test
+
+Full end-to-end test with real `claude --print` (requires API key, tagged `e2e`, 60min timeout):
+
+```bash
+make test-e2e  # go test -tags e2e -timeout 60m -v -run TestE2E ./...
+```
+
+```go
+func TestE2E(t *testing.T) {
+    // 1. scrip prep on testdata/e2e-project/ (small Go HTTP server with intentional gaps)
+    // 2. scrip plan with canned user input → verify plan.md + plan.jsonl produced
+    // 3. scrip exec → verify items pass, progress.jsonl populated
+    // 4. scrip land → verify mechanical + AI checks pass, progress.md generated, plan.md purged
+    // 5. scrip plan on same feature → verify plan.jsonl + progress context injected
+}
+```
+
+**E2e test project:** A minimal but real project in `testdata/e2e-project/` (e.g., Go HTTP server with 2-3 endpoints). Has intentional gaps that scrip should detect and fix: missing tests for one endpoint, a TODO placeholder in one handler, linter warnings. Validates the full prep → plan → exec → land cycle.
+
+#### Test patterns
+
+- **Temp directories** for tests touching `.scrip/` or `.git/` — `t.TempDir()` with setup helpers
+- **Table-driven tests** for classification logic (failure classification, project detection, marker parsing)
+- **`go test ./...` and `go vet ./...`** must pass — enforced in CI
+- **Build tags**: `e2e` for real-provider tests, no tag for unit/integration (fast, no API key needed)
+- **Test helpers**: `setupTestProject(t)` creates temp dir with `.git/` + `.scrip/`, `setupTestConfig(t)` writes valid config
