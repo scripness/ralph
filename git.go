@@ -186,6 +186,26 @@ func (g *GitOps) GetDiffSummary() string {
 	return strings.TrimSpace(out)
 }
 
+// GetFullDiff returns the full unified diff from the default branch to HEAD.
+// Falls back to two-dot diff if three-dot fails (e.g., no merge-base).
+func (g *GitOps) GetFullDiff() string {
+	base := g.DefaultBranch()
+	out, err := g.run("diff", base+"...HEAD")
+	if err != nil {
+		out, err = g.run("diff", base, "HEAD")
+		if err != nil {
+			return ""
+		}
+	}
+	return strings.TrimSpace(out)
+}
+
+// Push pushes the current branch to its remote tracking branch.
+func (g *GitOps) Push() error {
+	_, err := g.run("push")
+	return err
+}
+
 // HasNewCommitSince returns true if HEAD is different from the given hash.
 func (g *GitOps) HasNewCommitSince(hash string) bool {
 	current := g.GetLastCommit()
