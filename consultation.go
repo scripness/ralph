@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -277,5 +282,201 @@ Before committing, verify your implementation against current official documenta
 
 Do not rely on memory alone — docs change between versions. Verify against the latest.
 `
+}
+
+// extractGuidance extracts text between GUIDANCE_START and GUIDANCE_END markers.
+// Returns the extracted guidance and true if markers were found and content is non-empty.
+func extractGuidance(output string) (string, bool) {
+	lines := strings.Split(output, "\n")
+	var inGuidance bool
+	var guidance []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if GuidanceStartPattern.MatchString(trimmed) {
+			inGuidance = true
+			guidance = nil // reset in case of multiple starts
+			continue
+		}
+		if GuidanceEndPattern.MatchString(trimmed) {
+			if inGuidance {
+				result := strings.TrimSpace(strings.Join(guidance, "\n"))
+				if result != "" {
+					return result, true
+				}
+			}
+			return "", false
+		}
+		if inGuidance {
+			guidance = append(guidance, line)
+		}
+	}
+	return "", false
+}
+
+// hasCitations checks if guidance contains at least one Source: citation line.
+// Guidance without citations is treated as hallucination per the spec.
+func hasCitations(guidance string) bool {
+	for _, line := range strings.Split(guidance, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "Source:") {
+			return true
+		}
+	}
+	return false
+}
+
+// generateConsultItemPrompt builds the consult-item.md prompt for per-item consultation.
+func generateConsultItemPrompt(cr CachedResource, item *PlanItem, itemIndex int, techStack string) string {
+	storyID := fmt.Sprintf("item-%d", itemIndex+1)
+
+	var criteriaLines []string
+	for _, c := range item.Acceptance {
+		criteriaLines = append(criteriaLines, "- "+c)
+	}
+
+	return getPrompt("consult-item", map[string]string{
+		"framework":          cr.Name,
+		"frameworkPath":      cr.Path,
+		"storyId":            storyID,
+		"storyTitle":         item.Title,
+		"storyDescription":   strings.Join(item.Acceptance, "\n"),
+		"techStack":          techStack,
+		"acceptanceCriteria": strings.Join(criteriaLines, "\n"),
+	})
+}
+
+// runConsultSubagent spawns a non-autonomous claude subagent for one framework consultation.
+// Uses a 30-second per-subagent timeout. Returns the consultation result (may have Error set).
+func runConsultSubagent(projectRoot string, cr CachedResource, item *PlanItem, itemIndex int, techStack string) ResourceConsultation {
+	start := time.Now()
+	prompt := generateConsultItemPrompt(cr, item, itemIndex, techStack)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	args := ScripProviderArgs(false)
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = projectRoot
+	cmd.Stdin = strings.NewReader(prompt)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = io.Discard
+
+	if err := cmd.Run(); err != nil {
+		return ResourceConsultation{
+			Framework: cr.Name,
+			Duration:  time.Since(start),
+			Error:     fmt.Errorf("consultation subagent failed: %w", err),
+		}
+	}
+
+	guidance, ok := extractGuidance(stdout.String())
+	if !ok || guidance == "" {
+		return ResourceConsultation{
+			Framework: cr.Name,
+			Duration:  time.Since(start),
+			Error:     fmt.Errorf("no guidance markers in output"),
+		}
+	}
+
+	if !hasCitations(guidance) {
+		return ResourceConsultation{
+			Framework: cr.Name,
+			Duration:  time.Since(start),
+			Error:     fmt.Errorf("guidance lacks citations — treated as hallucination"),
+		}
+	}
+
+	return ResourceConsultation{
+		Framework: cr.Name,
+		Guidance:  guidance,
+		Duration:  time.Since(start),
+	}
+}
+
+// consultForItem runs per-item consultation with relevant cached frameworks.
+// Spawns subagents in parallel, caches results, and returns formatted guidance
+// for injection into the exec-build prompt. Falls back to web search instructions
+// when no frameworks are relevant or all consultations fail.
+func consultForItem(projectRoot string, featureDir *FeatureDir, item *PlanItem, itemIndex int, rm *ResourceManager, techStack string, logger *RunLogger) string {
+	cached := rm.GetCachedResources()
+	relevant := relevantFrameworks(item, cached, 5)
+
+	if len(relevant) == 0 {
+		return buildResourceFallbackInstructions()
+	}
+
+	git := NewGitOps(projectRoot)
+	commit := git.GetLastCommit()
+	storyID := fmt.Sprintf("item-%d", itemIndex+1)
+	storyDescription := strings.Join(item.Acceptance, "\n")
+
+	result := &ConsultationResult{}
+
+	// Check cache for each relevant framework; collect uncached jobs
+	type consultJob struct {
+		cr       CachedResource
+		cacheKey string
+	}
+	var jobs []consultJob
+
+	for _, cr := range relevant {
+		cacheKey := consultCacheKey(storyID, cr.Name, commit, storyDescription)
+
+		if cachedGuidance, ok := loadCachedConsultation(featureDir.Path, cacheKey); ok {
+			result.Consultations = append(result.Consultations, ResourceConsultation{
+				Framework: cr.Name,
+				Guidance:  cachedGuidance,
+			})
+			continue
+		}
+
+		jobs = append(jobs, consultJob{cr: cr, cacheKey: cacheKey})
+	}
+
+	// Run uncached consultations in parallel
+	if len(jobs) > 0 {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		for _, job := range jobs {
+			wg.Add(1)
+			go func(j consultJob) {
+				defer wg.Done()
+				consultation := runConsultSubagent(projectRoot, j.cr, item, itemIndex, techStack)
+
+				mu.Lock()
+				defer mu.Unlock()
+				if consultation.Error != nil || consultation.Guidance == "" {
+					result.FallbackPaths = append(result.FallbackPaths, j.cr)
+					if logger != nil && consultation.Error != nil {
+						logger.Warning(fmt.Sprintf("consultation for %s: %v", j.cr.Name, consultation.Error))
+					}
+				} else {
+					result.Consultations = append(result.Consultations, consultation)
+					saveCachedConsultation(featureDir.Path, j.cacheKey, consultation.Guidance)
+				}
+			}(job)
+		}
+
+		// Wait with total budget timeout
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// All consultations finished
+		case <-time.After(ConsultTimeout):
+			if logger != nil {
+				logger.Warning("consultation budget exceeded — proceeding with partial results")
+			}
+		}
+	}
+
+	return FormatGuidance(result)
 }
 

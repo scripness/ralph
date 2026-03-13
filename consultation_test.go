@@ -438,6 +438,138 @@ func TestGetPrompt_ConsultFeature(t *testing.T) {
 }
 
 
+func TestExtractGuidance_Success(t *testing.T) {
+	output := `Some preamble text.
+
+<scrip>GUIDANCE_START</scrip>
+Use app router for server components.
+
+Source: packages/next/src/server/app-render.tsx
+<scrip>GUIDANCE_END</scrip>
+
+Some trailing text.`
+
+	guidance, ok := extractGuidance(output)
+	if !ok {
+		t.Fatal("expected guidance to be extracted")
+	}
+	if !strings.Contains(guidance, "app router") {
+		t.Error("expected guidance to contain 'app router'")
+	}
+	if !strings.Contains(guidance, "Source:") {
+		t.Error("expected guidance to contain Source: citation")
+	}
+}
+
+func TestExtractGuidance_NoMarkers(t *testing.T) {
+	output := "Just some text without any markers."
+	_, ok := extractGuidance(output)
+	if ok {
+		t.Error("expected false for output without markers")
+	}
+}
+
+func TestExtractGuidance_EmptyContent(t *testing.T) {
+	output := "<scrip>GUIDANCE_START</scrip>\n\n<scrip>GUIDANCE_END</scrip>"
+	_, ok := extractGuidance(output)
+	if ok {
+		t.Error("expected false for empty content between markers")
+	}
+}
+
+func TestExtractGuidance_OnlyStart(t *testing.T) {
+	output := "<scrip>GUIDANCE_START</scrip>\nSome guidance without end marker"
+	_, ok := extractGuidance(output)
+	if ok {
+		t.Error("expected false for missing end marker")
+	}
+}
+
+func TestHasCitations_WithSource(t *testing.T) {
+	guidance := "Use app router.\n\nSource: packages/next/src/server.ts"
+	if !hasCitations(guidance) {
+		t.Error("expected true for guidance with Source: line")
+	}
+}
+
+func TestHasCitations_WithIndentedSource(t *testing.T) {
+	guidance := "Use app router.\n\n  Source: packages/next/src/server.ts"
+	if !hasCitations(guidance) {
+		t.Error("expected true for guidance with indented Source: line")
+	}
+}
+
+func TestHasCitations_NoCitation(t *testing.T) {
+	guidance := "Use app router for server components."
+	if hasCitations(guidance) {
+		t.Error("expected false for guidance without Source: lines")
+	}
+}
+
+func TestGenerateConsultItemPrompt_Variables(t *testing.T) {
+	cr := CachedResource{Name: "next", Path: "/cache/next@15.0.0", Version: "15.0.0"}
+	item := &PlanItem{
+		Title:      "Add login form",
+		Acceptance: []string{"Form renders", "Auth works"},
+	}
+	prompt := generateConsultItemPrompt(cr, item, 0, "typescript")
+
+	checks := map[string]string{
+		"framework name": "next",
+		"framework path": "/cache/next@15.0.0",
+		"story ID":       "item-1",
+		"story title":    "Add login form",
+		"tech stack":     "typescript",
+		"criteria":       "- Form renders",
+	}
+	for desc, expected := range checks {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("prompt missing %s: expected to contain %q", desc, expected)
+		}
+	}
+}
+
+func TestGenerateConsultItemPrompt_ItemIndex(t *testing.T) {
+	cr := CachedResource{Name: "react", Path: "/cache/react"}
+	item := &PlanItem{Title: "Third item", Acceptance: []string{"OK"}}
+
+	prompt := generateConsultItemPrompt(cr, item, 2, "typescript")
+	if !strings.Contains(prompt, "item-3") {
+		t.Error("expected 1-based item ID 'item-3' for index 2")
+	}
+}
+
+func TestConsultForItem_CacheRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	item := &PlanItem{
+		Title:      "Add prisma schema and model migration",
+		Acceptance: []string{"DB table created"},
+	}
+
+	storyID := "item-1"
+	storyDescription := strings.Join(item.Acceptance, "\n")
+	cacheKey := consultCacheKey(storyID, "prisma", "abc123", storyDescription)
+
+	// Pre-populate cache
+	cachedGuidance := "Use prisma migrate.\n\nSource: packages/client/src/runtime.ts"
+	saveCachedConsultation(dir, cacheKey, cachedGuidance)
+
+	// Cache read should return the saved guidance
+	loaded, ok := loadCachedConsultation(dir, cacheKey)
+	if !ok {
+		t.Fatal("expected cache hit")
+	}
+	if loaded != cachedGuidance {
+		t.Errorf("expected cached guidance, got %q", loaded)
+	}
+
+	// Different key should miss
+	_, ok = loadCachedConsultation(dir, consultCacheKey(storyID, "react", "abc123", storyDescription))
+	if ok {
+		t.Error("expected cache miss for different framework")
+	}
+}
+
 func TestDependencyNameVariants(t *testing.T) {
 	tests := []struct {
 		name     string

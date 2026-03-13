@@ -334,11 +334,11 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 		// Capture commit hash BEFORE provider runs
 		preRunCommit := git.GetLastCommit()
 
-		// Build resource guidance
+		// Build resource guidance via per-item consultation
 		var resourceGuidance string
 		if rm != nil && rm.HasDetectedResources() {
-			// TODO: per-item consultation when consult-item.md is implemented
-			resourceGuidance = buildResourceFallbackInstructions()
+			fmt.Println("  Consulting frameworks...")
+			resourceGuidance = consultForItem(cfg.ProjectRoot, featureDir, item, scripItemIndex(plan, item), rm, codebaseCtx.TechStack, logger)
 		} else {
 			resourceGuidance = buildResourceFallbackInstructions()
 		}
