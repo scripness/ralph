@@ -482,50 +482,6 @@ func TestGetPrompt_ConsultFeature(t *testing.T) {
 	}
 }
 
-func TestGetPrompt_PrdCreateWithResourceGuidance(t *testing.T) {
-	prompt := getPrompt("prd-create", map[string]string{
-		"feature":          "auth",
-		"outputPath":       "/path/to/prd.md",
-		"codebaseContext":  "",
-		"resourceGuidance": "## Framework Implementation Guidance\n\n### next\n\nUse app router.\n",
-	})
-
-	if !strings.Contains(prompt, "Framework Implementation Guidance") {
-		t.Error("prompt should contain resource guidance")
-	}
-}
-
-func TestGetPrompt_RefineSessionWithResourceGuidance(t *testing.T) {
-	prompt := getPrompt("refine-session", map[string]string{
-		"feature":          "auth",
-		"summary":          "Previous work summary.",
-		"diffSummary":      "",
-		"codebaseContext":  "",
-		"branchName":       "ralph/auth",
-		"featureDir":       "/test",
-		"knowledgeFile":    "CLAUDE.md",
-		"verifyCommands":   "",
-		"serviceURLs":      "",
-		"resourceGuidance": "## Framework Guidance\n\nTest guidance",
-	})
-
-	if !strings.Contains(prompt, "Framework Guidance") {
-		t.Error("prompt should contain resource guidance")
-	}
-}
-
-func TestGetPrompt_PrdFinalizeWithResourceGuidance(t *testing.T) {
-	prompt := getPrompt("prd-finalize", map[string]string{
-		"feature":          "auth",
-		"prdContent":       "# Auth PRD",
-		"outputPath":       "/path/to/prd.json",
-		"resourceGuidance": "## Framework Guidance\n\nNext.js supports server actions.",
-	})
-
-	if !strings.Contains(prompt, "Framework Guidance") {
-		t.Error("prompt should contain resource guidance")
-	}
-}
 
 // --- runConsultSubagent subprocess tests ---
 

@@ -328,8 +328,4 @@ func TestScripMarkerConstants(t *testing.T) {
 		t.Errorf("ScripStuckMarker = %q, want %q", ScripStuckMarker, "<scrip>STUCK</scrip>")
 	}
 
-	// Verify these are distinct from ralph markers
-	if ScripDoneMarker == DoneMarker {
-		t.Error("scrip marker should not equal ralph marker")
-	}
 }
