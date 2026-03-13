@@ -66,7 +66,7 @@ func TestRunLogger_EventLogging(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	logger.RunStart("auth", "ralph/auth", 3)
+	logger.RunStart("auth", "scrip/auth", 3)
 	logger.SetIteration(1)
 	logger.SetCurrentStory("US-001")
 	logger.IterationStart("US-001", "User login", 0)
@@ -261,7 +261,7 @@ func TestGetRunSummary(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	logger.RunStart("auth", "ralph/auth", 2)
+	logger.RunStart("auth", "scrip/auth", 2)
 	logger.SetIteration(1)
 	logger.IterationStart("US-001", "User login", 0)
 	logger.IterationEnd(true)
@@ -278,8 +278,8 @@ func TestGetRunSummary(t *testing.T) {
 	if summary.Feature != "auth" {
 		t.Errorf("expected feature 'auth', got %s", summary.Feature)
 	}
-	if summary.Branch != "ralph/auth" {
-		t.Errorf("expected branch 'ralph/auth', got %s", summary.Branch)
+	if summary.Branch != "scrip/auth" {
+		t.Errorf("expected branch 'scrip/auth', got %s", summary.Branch)
 	}
 	if summary.Success == nil || !*summary.Success {
 		t.Error("expected success=true")

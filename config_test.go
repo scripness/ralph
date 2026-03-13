@@ -245,7 +245,7 @@ func TestValidateScripConfig_ServicesOptional(t *testing.T) {
 	cfg := &ScripConfig{
 		Project: ProjectConfig{Name: "test", Type: "go"},
 		Verify:  ScripVerifyConfig{Test: "go test ./..."},
-		// No services — should be valid (unlike ralph which requires >=1)
+		// No services — should be valid (services are optional in scrip)
 	}
 	err := validateScripConfig(cfg)
 	if err != nil {

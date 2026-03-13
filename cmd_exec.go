@@ -166,8 +166,8 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 	// Start services if configured
 	var svcMgr *ServiceManager
 	if len(cfg.Config.Services) > 0 {
-		ralphSvcs := scripToRalphServices(cfg.Config.Services)
-		svcMgr = NewServiceManager(cfg.ProjectRoot, ralphSvcs)
+		svcs := toServiceConfigs(cfg.Config.Services)
+		svcMgr = NewServiceManager(cfg.ProjectRoot, svcs)
 		cleanup.SetServiceManager(svcMgr)
 		defer svcMgr.StopAll()
 
@@ -752,8 +752,8 @@ func generateExecVerifyPrompt(item *PlanItem, diff, testOutput string) string {
 	})
 }
 
-// scripToRalphServices converts ScripServiceConfig to ServiceConfig for the ServiceManager.
-func scripToRalphServices(services []ScripServiceConfig) []ServiceConfig {
+// toServiceConfigs converts ScripServiceConfig to ServiceConfig for the ServiceManager.
+func toServiceConfigs(services []ScripServiceConfig) []ServiceConfig {
 	var result []ServiceConfig
 	for _, svc := range services {
 		result = append(result, ServiceConfig{

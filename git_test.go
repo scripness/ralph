@@ -98,24 +98,24 @@ func TestGitOps_EnsureBranch(t *testing.T) {
 	_, git := initTestRepo(t)
 
 	// Creates new branch
-	err := git.EnsureBranch("ralph/auth")
+	err := git.EnsureBranch("scrip/auth")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	current, _ := git.CurrentBranch()
-	if current != "ralph/auth" {
-		t.Errorf("expected branch='ralph/auth', got '%s'", current)
+	if current != "scrip/auth" {
+		t.Errorf("expected branch='scrip/auth', got '%s'", current)
 	}
 
 	// Switch away and back
 	git.Checkout("main")
-	err = git.EnsureBranch("ralph/auth")
+	err = git.EnsureBranch("scrip/auth")
 	if err != nil {
 		t.Fatalf("unexpected error switching back: %v", err)
 	}
 	current, _ = git.CurrentBranch()
-	if current != "ralph/auth" {
-		t.Errorf("expected branch='ralph/auth', got '%s'", current)
+	if current != "scrip/auth" {
+		t.Errorf("expected branch='scrip/auth', got '%s'", current)
 	}
 }
 
@@ -272,7 +272,7 @@ func TestGitOps_GetDiffSummary(t *testing.T) {
 	dir, git := initTestRepo(t)
 
 	// Create a branch and add a commit
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 	os.WriteFile(filepath.Join(dir, "new-file.txt"), []byte("content"), 0644)
 
 	run := func(args ...string) {
@@ -320,7 +320,7 @@ func TestGitOps_HasFileChanged(t *testing.T) {
 	dir, git := initTestRepo(t)
 
 	// Create a branch and modify a file
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 
 	run := func(args ...string) {
 		t.Helper()
@@ -464,7 +464,7 @@ func TestGitOps_GetChangedFiles(t *testing.T) {
 	}
 
 	// Create branch and add files
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 
 	run := func(args ...string) {
 		t.Helper()
@@ -512,7 +512,7 @@ func TestGitOps_GetChangedFiles(t *testing.T) {
 
 func TestGitOps_HasTestFileChanges(t *testing.T) {
 	dir, git := initTestRepo(t)
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 
 	run := func(args ...string) {
 		t.Helper()
@@ -554,7 +554,7 @@ func TestGitOps_HasTestFileChanges(t *testing.T) {
 
 func TestGitOps_HasTestFileChanges_JSPatterns(t *testing.T) {
 	dir, git := initTestRepo(t)
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 
 	run := func(args ...string) {
 		t.Helper()
@@ -583,7 +583,7 @@ func TestGitOps_HasTestFileChanges_JSPatterns(t *testing.T) {
 
 func TestGitOps_HasTestFileChanges_SpecPattern(t *testing.T) {
 	dir, git := initTestRepo(t)
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 
 	run := func(args ...string) {
 		t.Helper()
@@ -611,7 +611,7 @@ func TestGitOps_HasTestFileChanges_SpecPattern(t *testing.T) {
 
 func TestGitOps_HasTestFileChanges_TestsDir(t *testing.T) {
 	dir, git := initTestRepo(t)
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 
 	run := func(args ...string) {
 		t.Helper()
@@ -710,7 +710,7 @@ func TestGitOps_DefaultBranch_FallbackToOriginMaster(t *testing.T) {
 
 func TestGitOps_GetChangedFiles_FallbackTwoDotDiff(t *testing.T) {
 	dir, git := initTestRepo(t)
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 
 	run := func(args ...string) {
 		t.Helper()
@@ -748,7 +748,7 @@ func TestGitOps_EnsureBranch_RefusesSwitchWithDirtyTree(t *testing.T) {
 	dir, git := initTestRepo(t)
 
 	// Create target branch
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 	git.Checkout("main")
 
 	// Make uncommitted change
@@ -771,7 +771,7 @@ func TestGitOps_EnsureBranch_RefusesSwitchWithDirtyTree(t *testing.T) {
 	}
 	run("add", "dirty.txt")
 
-	err := git.EnsureBranch("ralph/feature")
+	err := git.EnsureBranch("scrip/feature")
 	if err == nil {
 		t.Fatal("expected error when switching with dirty tree")
 	}
@@ -803,13 +803,13 @@ func TestGitOps_EnsureBranch_AllowsCreateWithDirtyTree(t *testing.T) {
 	run("add", "dirty.txt")
 
 	// Creating a new branch should succeed even with dirty tree
-	err := git.EnsureBranch("ralph/new-feature")
+	err := git.EnsureBranch("scrip/new-feature")
 	if err != nil {
 		t.Fatalf("expected no error when creating branch with dirty tree, got: %v", err)
 	}
 	current, _ := git.CurrentBranch()
-	if current != "ralph/new-feature" {
-		t.Errorf("expected branch 'ralph/new-feature', got '%s'", current)
+	if current != "scrip/new-feature" {
+		t.Errorf("expected branch 'scrip/new-feature', got '%s'", current)
 	}
 }
 
@@ -817,17 +817,17 @@ func TestGitOps_EnsureBranch_AllowsSwitchWithCleanTree(t *testing.T) {
 	_, git := initTestRepo(t)
 
 	// Create target branch
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 	git.Checkout("main")
 
 	// Clean tree — switch should succeed
-	err := git.EnsureBranch("ralph/feature")
+	err := git.EnsureBranch("scrip/feature")
 	if err != nil {
 		t.Fatalf("expected no error when switching with clean tree, got: %v", err)
 	}
 	current, _ := git.CurrentBranch()
-	if current != "ralph/feature" {
-		t.Errorf("expected branch 'ralph/feature', got '%s'", current)
+	if current != "scrip/feature" {
+		t.Errorf("expected branch 'scrip/feature', got '%s'", current)
 	}
 }
 
@@ -860,14 +860,14 @@ func TestGitOps_CreateBranchFrom(t *testing.T) {
 	run("commit", "-m", "other branch commit")
 
 	// CreateBranchFrom should create from main, not from current HEAD
-	err := git.CreateBranchFrom("ralph/feature", "main")
+	err := git.CreateBranchFrom("scrip/feature", "main")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	current, _ := git.CurrentBranch()
-	if current != "ralph/feature" {
-		t.Errorf("expected branch 'ralph/feature', got '%s'", current)
+	if current != "scrip/feature" {
+		t.Errorf("expected branch 'scrip/feature', got '%s'", current)
 	}
 
 	// The new branch should be at main's commit, not other's
@@ -905,14 +905,14 @@ func TestGitOps_EnsureBranch_CreatesFromStartPoint(t *testing.T) {
 	run("commit", "-m", "other branch commit")
 
 	// EnsureBranch with startPoint should create from main
-	err := git.EnsureBranch("ralph/feature", "main")
+	err := git.EnsureBranch("scrip/feature", "main")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	current, _ := git.CurrentBranch()
-	if current != "ralph/feature" {
-		t.Errorf("expected branch 'ralph/feature', got '%s'", current)
+	if current != "scrip/feature" {
+		t.Errorf("expected branch 'scrip/feature', got '%s'", current)
 	}
 
 	newHash := git.GetLastCommit()
@@ -925,16 +925,16 @@ func TestGitOps_EnsureBranch_ExistingBranchIgnoresStartPoint(t *testing.T) {
 	_, git := initTestRepo(t)
 
 	// Create the branch first
-	git.CreateBranch("ralph/feature")
+	git.CreateBranch("scrip/feature")
 	git.Checkout("main")
 
 	// EnsureBranch with startPoint on existing branch should just checkout
-	err := git.EnsureBranch("ralph/feature", "main")
+	err := git.EnsureBranch("scrip/feature", "main")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	current, _ := git.CurrentBranch()
-	if current != "ralph/feature" {
-		t.Errorf("expected branch 'ralph/feature', got '%s'", current)
+	if current != "scrip/feature" {
+		t.Errorf("expected branch 'scrip/feature', got '%s'", current)
 	}
 }

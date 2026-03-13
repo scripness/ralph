@@ -60,7 +60,7 @@ func TestScripProcessLine(t *testing.T) {
 			line: "The <scrip>DONE</scrip> marker should only match full lines",
 		},
 		{
-			name: "ralph markers not detected",
+			name: "non-scrip markers not detected",
 			line: "<ralph>DONE</ralph>",
 		},
 	}
@@ -119,40 +119,40 @@ func TestScripProcessLineMultipleMarkers(t *testing.T) {
 	}
 }
 
-func TestScripToRalphServices(t *testing.T) {
+func TestToServiceConfigs(t *testing.T) {
 	scrip := []ScripServiceConfig{
 		{Name: "web", Command: "npm run dev", Ready: "http://localhost:3000", Timeout: 45},
 		{Name: "api", Command: "go run .", Ready: "http://localhost:8080", Timeout: 30},
 	}
 
-	ralph := scripToRalphServices(scrip)
+	result := toServiceConfigs(scrip)
 
-	if len(ralph) != 2 {
-		t.Fatalf("expected 2 services, got %d", len(ralph))
-	}
-
-	if ralph[0].Name != "web" {
-		t.Errorf("service[0].Name = %q, want %q", ralph[0].Name, "web")
-	}
-	if ralph[0].Start != "npm run dev" {
-		t.Errorf("service[0].Start = %q, want %q", ralph[0].Start, "npm run dev")
-	}
-	if ralph[0].Ready != "http://localhost:3000" {
-		t.Errorf("service[0].Ready = %q, want %q", ralph[0].Ready, "http://localhost:3000")
-	}
-	if ralph[0].ReadyTimeout != 45 {
-		t.Errorf("service[0].ReadyTimeout = %d, want %d", ralph[0].ReadyTimeout, 45)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 services, got %d", len(result))
 	}
 
-	if ralph[1].Name != "api" {
-		t.Errorf("service[1].Name = %q, want %q", ralph[1].Name, "api")
+	if result[0].Name != "web" {
+		t.Errorf("service[0].Name = %q, want %q", result[0].Name, "web")
+	}
+	if result[0].Start != "npm run dev" {
+		t.Errorf("service[0].Start = %q, want %q", result[0].Start, "npm run dev")
+	}
+	if result[0].Ready != "http://localhost:3000" {
+		t.Errorf("service[0].Ready = %q, want %q", result[0].Ready, "http://localhost:3000")
+	}
+	if result[0].ReadyTimeout != 45 {
+		t.Errorf("service[0].ReadyTimeout = %d, want %d", result[0].ReadyTimeout, 45)
+	}
+
+	if result[1].Name != "api" {
+		t.Errorf("service[1].Name = %q, want %q", result[1].Name, "api")
 	}
 }
 
-func TestScripToRalphServicesEmpty(t *testing.T) {
-	ralph := scripToRalphServices(nil)
-	if ralph != nil {
-		t.Errorf("expected nil for empty input, got %v", ralph)
+func TestToServiceConfigsEmpty(t *testing.T) {
+	result := toServiceConfigs(nil)
+	if result != nil {
+		t.Errorf("expected nil for empty input, got %v", result)
 	}
 }
 
