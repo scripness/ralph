@@ -115,28 +115,16 @@ var frameworkTagMap = map[string][]string{
 	"realtime": {"phoenix", "phoenix_live_view"},
 }
 
-// relevantFrameworks returns cached resources relevant to a story.
-// Uses tag matching, keyword matching (requires 2+ keyword hits), and
-// name-based matching for auto-resolved deps without keyword entries.
-// Caps at maxFrameworks.
-func relevantFrameworks(story *StoryDefinition, cached []CachedResource, maxFrameworks int) []CachedResource {
-	if len(cached) == 0 || story == nil {
+// relevantFrameworks returns cached resources relevant to a plan item.
+// Uses keyword matching (requires 2+ keyword hits) and name-based matching
+// for auto-resolved deps without keyword entries. Caps at maxFrameworks.
+func relevantFrameworks(item *PlanItem, cached []CachedResource, maxFrameworks int) []CachedResource {
+	if len(cached) == 0 || item == nil {
 		return nil
 	}
 
-	// Build set of candidate names from tags
-	tagCandidates := make(map[string]bool)
-	for _, tag := range story.Tags {
-		tag = strings.ToLower(tag)
-		if names, ok := frameworkTagMap[tag]; ok {
-			for _, n := range names {
-				tagCandidates[n] = true
-			}
-		}
-	}
-
-	// Build searchable text from story
-	searchText := strings.ToLower(story.Title + " " + story.Description + " " + strings.Join(story.AcceptanceCriteria, " "))
+	// Build searchable text from item
+	searchText := strings.ToLower(item.Title + " " + strings.Join(item.Acceptance, " "))
 
 	type scored struct {
 		resource CachedResource
@@ -146,11 +134,6 @@ func relevantFrameworks(story *StoryDefinition, cached []CachedResource, maxFram
 	var results []scored
 	for _, cr := range cached {
 		score := 0
-
-		// Tag match = 2 points (enough to qualify on its own)
-		if tagCandidates[cr.Name] {
-			score += 2
-		}
 
 		// Keyword matching (for deps with keyword entries)
 		if keywords, ok := frameworkKeywords[cr.Name]; ok {

@@ -21,7 +21,7 @@ func newTestResourceManager(cacheDir string, resources map[string]*Resource) *Re
 	}
 }
 
-func TestRelevantFrameworks_TagMatching(t *testing.T) {
+func TestRelevantFrameworks_KeywordMatchingMultiple(t *testing.T) {
 	cached := []CachedResource{
 		{Name: "next", Path: "/cache/next"},
 		{Name: "react", Path: "/cache/react"},
@@ -29,39 +29,19 @@ func TestRelevantFrameworks_TagMatching(t *testing.T) {
 		{Name: "express", Path: "/cache/express"},
 	}
 
-	// UI tag should match next and react
-	story := &StoryDefinition{
-		ID:    "US-001",
-		Title: "Add login form",
-		Tags:  []string{"ui"},
+	// Item mentioning prisma keywords (model, schema, migrate) → should match prisma
+	item := &PlanItem{
+		Title:      "Add user model with prisma schema and migrate",
+		Acceptance: []string{"User table created"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 
 	names := make(map[string]bool)
 	for _, r := range result {
 		names[r.Name] = true
 	}
-	if !names["next"] {
-		t.Error("expected UI tag to match 'next'")
-	}
-	if !names["react"] {
-		t.Error("expected UI tag to match 'react'")
-	}
-
-	// DB tag should match prisma
-	story = &StoryDefinition{
-		ID:    "US-002",
-		Title: "Add user table",
-		Tags:  []string{"db"},
-	}
-	result = relevantFrameworks(story, cached, 3)
-
-	names = make(map[string]bool)
-	for _, r := range result {
-		names[r.Name] = true
-	}
 	if !names["prisma"] {
-		t.Error("expected DB tag to match 'prisma'")
+		t.Error("expected prisma to match via keyword hits (model, schema, migrate)")
 	}
 }
 
@@ -72,14 +52,12 @@ func TestRelevantFrameworks_KeywordMatching(t *testing.T) {
 		{Name: "express", Path: "/cache/express"},
 	}
 
-	// Story with multiple Next.js keywords
-	story := &StoryDefinition{
-		ID:                 "US-001",
-		Title:              "Add server action for form",
-		Description:        "Create a server component with app router",
-		AcceptanceCriteria: []string{"Page renders correctly"},
+	// Item with multiple Next.js keywords in title and acceptance
+	item := &PlanItem{
+		Title:      "Add server action for form with app router",
+		Acceptance: []string{"Page renders as server component"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 
 	found := false
 	for _, r := range result {
@@ -89,7 +67,7 @@ func TestRelevantFrameworks_KeywordMatching(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected 'server action' + 'server component' + 'app router' to match next")
+		t.Error("expected 'server action' + 'app router' + 'server component' to match next")
 	}
 }
 
@@ -98,13 +76,12 @@ func TestRelevantFrameworks_RequiresTwoHits(t *testing.T) {
 		{Name: "prisma", Path: "/cache/prisma"},
 	}
 
-	// Story with only 1 keyword hit — should NOT match
-	story := &StoryDefinition{
-		ID:          "US-001",
-		Title:       "Fix the button",
-		Description: "Update the button color",
+	// Item with only 1 keyword hit — should NOT match
+	item := &PlanItem{
+		Title:      "Fix the button color",
+		Acceptance: []string{"Button looks correct"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 	if len(result) != 0 {
 		t.Errorf("expected 0 matches with no relevant keywords, got %d", len(result))
 	}
@@ -119,55 +96,53 @@ func TestRelevantFrameworks_Cap(t *testing.T) {
 		{Name: "vitest", Path: "/cache/vitest"},
 	}
 
-	// Story with tags that match many frameworks
-	story := &StoryDefinition{
-		ID:    "US-001",
-		Title: "Build the entire stack with prisma model and express middleware and react component using vitest describe",
-		Tags:  []string{"ui", "db", "api", "test"},
+	// Item with keywords that match many frameworks
+	item := &PlanItem{
+		Title:      "Build prisma model schema migration with express middleware route handler and react component useState and vitest describe expect using next server action app router",
+		Acceptance: []string{"All frameworks integrated"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 	if len(result) > 3 {
 		t.Errorf("expected max 3 frameworks, got %d", len(result))
 	}
 }
 
 func TestRelevantFrameworks_NoResources(t *testing.T) {
-	story := &StoryDefinition{ID: "US-001", Title: "Test"}
+	item := &PlanItem{Title: "Test"}
 
-	result := relevantFrameworks(story, nil, 3)
+	result := relevantFrameworks(item, nil, 3)
 	if result != nil {
 		t.Error("expected nil for empty cache")
 	}
 
-	result = relevantFrameworks(story, []CachedResource{}, 3)
+	result = relevantFrameworks(item, []CachedResource{}, 3)
 	if result != nil {
 		t.Error("expected nil for empty cache")
 	}
 }
 
-func TestRelevantFrameworks_NilStory(t *testing.T) {
+func TestRelevantFrameworks_NilItem(t *testing.T) {
 	cached := []CachedResource{{Name: "next", Path: "/cache/next"}}
 	result := relevantFrameworks(nil, cached, 3)
 	if result != nil {
-		t.Error("expected nil for nil story")
+		t.Error("expected nil for nil item")
 	}
 }
 
 func TestRelevantFrameworks_NameBasedMatching(t *testing.T) {
 	// Auto-resolved dep without frameworkKeywords entry.
 	// Scoped package "@scope/name" produces 2 variants: ["scope", "name"],
-	// so if both appear in story text, score reaches 2.
+	// so if both appear in item text, score reaches 2.
 	cached := []CachedResource{
 		{Name: "@sentry/node", Path: "/cache/@sentry/node@8.0.0", Version: "8.0.0"},
 	}
 
-	// Story mentioning both "sentry" and "node" → 2 variant hits → qualifies
-	story := &StoryDefinition{
-		ID:          "US-001",
-		Title:       "Add sentry error tracking to node API",
-		Description: "Integrate error monitoring",
+	// Item mentioning both "sentry" and "node" → 2 variant hits → qualifies
+	item := &PlanItem{
+		Title:      "Add sentry error tracking to node API",
+		Acceptance: []string{"Error monitoring integrated"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 	found := false
 	for _, r := range result {
 		if r.Name == "@sentry/node" {
@@ -182,29 +157,13 @@ func TestRelevantFrameworks_NameBasedMatching(t *testing.T) {
 	cached2 := []CachedResource{
 		{Name: "pino", Path: "/cache/pino@8.0.0", Version: "8.0.0"},
 	}
-	story2 := &StoryDefinition{
-		ID:          "US-002",
-		Title:       "Add pino logging",
-		Description: "Use pino for structured logging",
+	item2 := &PlanItem{
+		Title:      "Add pino logging",
+		Acceptance: []string{"Structured logging works"},
 	}
-	result2 := relevantFrameworks(story2, cached2, 3)
+	result2 := relevantFrameworks(item2, cached2, 3)
 	if len(result2) != 0 {
 		t.Error("single-word dep without keywords should not qualify on name alone (score=1)")
-	}
-
-	// Single-word dep WITH tag match: tag gives 2 points, name adds 1 → qualifies
-	cached3 := []CachedResource{
-		{Name: "pino", Path: "/cache/pino@8.0.0", Version: "8.0.0"},
-	}
-	story3 := &StoryDefinition{
-		ID:    "US-003",
-		Title: "Add pino logging",
-		Tags:  []string{"api"}, // "api" tag maps to known frameworks, not pino
-	}
-	result3 := relevantFrameworks(story3, cached3, 3)
-	// pino is not in frameworkTagMap["api"], so no tag points either
-	if len(result3) != 0 {
-		t.Error("pino should not match api tag")
 	}
 }
 

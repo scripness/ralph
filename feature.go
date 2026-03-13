@@ -199,11 +199,6 @@ func (fd *FeatureDir) PrdJsonPath() string {
 	return filepath.Join(fd.Path, "prd.json")
 }
 
-// RunStatePath returns the path to run-state.json
-func (fd *FeatureDir) RunStatePath() string {
-	return filepath.Join(fd.Path, "run-state.json")
-}
-
 // EnsureExists creates the feature directory if it doesn't exist
 func (fd *FeatureDir) EnsureExists() error {
 	return os.MkdirAll(fd.Path, 0755)

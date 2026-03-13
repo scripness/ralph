@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -197,29 +196,6 @@ func TestFeatureDir_EnsureExists(t *testing.T) {
 
 	if !fileExists(fd.Path) {
 		t.Error("directory should exist after EnsureExists")
-	}
-}
-
-func TestFeatureDir_RunStatePath(t *testing.T) {
-	fd := &FeatureDir{
-		Path: "/project/.scrip/2024-01-15-auth",
-	}
-
-	expected := "/project/.scrip/2024-01-15-auth/run-state.json"
-	if got := fd.RunStatePath(); got != expected {
-		t.Errorf("RunStatePath() = %q, want %q", got, expected)
-	}
-}
-
-// helper to write a run-state.json in a feature directory
-func writeTestRunState(t *testing.T, featureDir string, state *RunState) {
-	t.Helper()
-	data, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(featureDir, "run-state.json"), data, 0644); err != nil {
-		t.Fatal(err)
 	}
 }
 
