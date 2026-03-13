@@ -53,7 +53,7 @@ type Event struct {
 	Data      map[string]interface{} `json:"data,omitempty"`
 }
 
-// RunLogger handles logging for a single Ralph run
+// RunLogger handles logging for a single scrip run
 type RunLogger struct {
 	file         *os.File
 	encoder      *json.Encoder

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// GitOps handles git operations for Ralph
+// GitOps handles git operations for scrip
 type GitOps struct {
 	projectRoot string
 }

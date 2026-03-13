@@ -11,12 +11,10 @@ import (
 
 // FeatureDir represents a feature directory in .scrip/
 type FeatureDir struct {
-	Name       string    // Full directory name (e.g., "2024-01-15-auth")
-	Feature    string    // Feature suffix (e.g., "auth")
-	Timestamp  time.Time // Parsed datetime
-	Path       string    // Full path to directory
-	HasPrdMd   bool      // prd.md exists
-	HasPrdJson bool      // prd.json exists
+	Name      string    // Full directory name (e.g., "2024-01-15-auth")
+	Feature   string    // Feature suffix (e.g., "auth")
+	Timestamp time.Time // Parsed datetime
+	Path      string    // Full path to directory
 }
 
 // FindFeatureDir finds a feature directory by suffix match.
@@ -127,12 +125,10 @@ func parseFeatureDir(scripDir, name string) *FeatureDir {
 			if t, err := time.Parse("20060102", dateStr); err == nil {
 				path := filepath.Join(scripDir, name)
 				return &FeatureDir{
-					Name:       name,
-					Feature:    feature,
-					Timestamp:  t,
-					Path:       path,
-					HasPrdMd:   fileExists(filepath.Join(path, "prd.md")),
-					HasPrdJson: fileExists(filepath.Join(path, "prd.json")),
+					Name:      name,
+					Feature:   feature,
+					Timestamp: t,
+					Path:      path,
 				}
 			}
 		}
@@ -150,12 +146,10 @@ func parseFeatureDir(scripDir, name string) *FeatureDir {
 
 	path := filepath.Join(scripDir, name)
 	return &FeatureDir{
-		Name:       name,
-		Feature:    feature,
-		Timestamp:  t,
-		Path:       path,
-		HasPrdMd:   fileExists(filepath.Join(path, "prd.md")),
-		HasPrdJson: fileExists(filepath.Join(path, "prd.json")),
+		Name:      name,
+		Feature:   feature,
+		Timestamp: t,
+		Path:      path,
 	}
 }
 
@@ -166,12 +160,10 @@ func newFeatureDir(scripDir, feature string) *FeatureDir {
 	path := filepath.Join(scripDir, name)
 	
 	return &FeatureDir{
-		Name:       name,
-		Feature:    feature,
-		Timestamp:  now,
-		Path:       path,
-		HasPrdMd:   false,
-		HasPrdJson: false,
+		Name:      name,
+		Feature:   feature,
+		Timestamp: now,
+		Path:      path,
 	}
 }
 
@@ -189,15 +181,6 @@ func LoadFeatureSummary(featureDir *FeatureDir) string {
 	return string(data)
 }
 
-// PrdMdPath returns the path to prd.md
-func (fd *FeatureDir) PrdMdPath() string {
-	return filepath.Join(fd.Path, "prd.md")
-}
-
-// PrdJsonPath returns the path to prd.json
-func (fd *FeatureDir) PrdJsonPath() string {
-	return filepath.Join(fd.Path, "prd.json")
-}
 
 // EnsureExists creates the feature directory if it doesn't exist
 func (fd *FeatureDir) EnsureExists() error {

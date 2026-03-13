@@ -73,35 +73,6 @@ func TestFindFeatureDir_MatchMostRecent(t *testing.T) {
 	}
 }
 
-func TestFindFeatureDir_DetectsPrdFiles(t *testing.T) {
-	dir := t.TempDir()
-	scripDir := filepath.Join(dir, ".scrip")
-	featureDir := filepath.Join(scripDir, "2024-01-15-auth")
-	os.MkdirAll(featureDir, 0755)
-
-	// Create prd.md only
-	os.WriteFile(filepath.Join(featureDir, "prd.md"), []byte("# PRD"), 0644)
-
-	fd, err := FindFeatureDir(dir, "auth", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !fd.HasPrdMd {
-		t.Error("expected HasPrdMd=true")
-	}
-	if fd.HasPrdJson {
-		t.Error("expected HasPrdJson=false")
-	}
-
-	// Add prd.json
-	os.WriteFile(filepath.Join(featureDir, "prd.json"), []byte("{}"), 0644)
-
-	fd, _ = FindFeatureDir(dir, "auth", false)
-	if !fd.HasPrdJson {
-		t.Error("expected HasPrdJson=true")
-	}
-}
 
 func TestFindFeatureDir_YYYYMMDDFormat(t *testing.T) {
 	dir := t.TempDir()
@@ -147,18 +118,6 @@ func TestListFeatures(t *testing.T) {
 	}
 }
 
-func TestFeatureDir_Paths(t *testing.T) {
-	fd := &FeatureDir{
-		Path: "/project/.scrip/2024-01-15-auth",
-	}
-
-	if fd.PrdMdPath() != "/project/.scrip/2024-01-15-auth/prd.md" {
-		t.Errorf("unexpected PrdMdPath: %s", fd.PrdMdPath())
-	}
-	if fd.PrdJsonPath() != "/project/.scrip/2024-01-15-auth/prd.json" {
-		t.Errorf("unexpected PrdJsonPath: %s", fd.PrdJsonPath())
-	}
-}
 
 func TestFindFeatureDir_CaseInsensitive(t *testing.T) {
 	dir := t.TempDir()
