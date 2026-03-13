@@ -128,7 +128,7 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 	defer logger.Close()
 
 	// Acquire lock
-	lock := NewScripLockFile(cfg.ProjectRoot)
+	lock := NewLockFile(cfg.ProjectRoot)
 	if err := lock.Acquire(featureDir.Feature, "plan/"+featureDir.Feature); err != nil {
 		return err
 	}

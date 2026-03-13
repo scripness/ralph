@@ -83,7 +83,7 @@ func landFeature(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan) e
 	cleanup.SetLogger(logger)
 
 	// Acquire lock
-	lock := NewScripLockFile(cfg.ProjectRoot)
+	lock := NewLockFile(cfg.ProjectRoot)
 	if err := lock.Acquire(featureDir.Feature, "land/"+featureDir.Feature); err != nil {
 		return err
 	}
