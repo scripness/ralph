@@ -37,7 +37,7 @@ func TestResourcesConfig_IsEnabled_Explicit(t *testing.T) {
 }
 
 func TestResourcesConfig_GetCacheDir(t *testing.T) {
-	// Default should be ~/.ralph/resources
+	// Default should be ~/.scrip/resources
 	var cfg *ResourcesConfig
 	dir := cfg.GetCacheDir()
 	if dir == "" {
@@ -164,39 +164,6 @@ func TestExpandHomePath(t *testing.T) {
 	}
 }
 
-func TestEnsureResourceSync_Disabled(t *testing.T) {
-	disabled := false
-	cfg := &ResolvedConfig{
-		Config: RalphConfig{
-			Resources: &ResourcesConfig{Enabled: &disabled},
-		},
-	}
-	codebaseCtx := &CodebaseContext{}
-	rm := ensureResourceSync(cfg, codebaseCtx)
-	if rm != nil {
-		t.Error("expected nil ResourceManager when resources disabled")
-	}
-}
-
-func TestEnsureResourceSync_NoDeps(t *testing.T) {
-	cfg := &ResolvedConfig{
-		ProjectRoot: t.TempDir(),
-		Config:      RalphConfig{},
-	}
-	codebaseCtx := &CodebaseContext{
-		TechStack:    "typescript",
-		Dependencies: []Dependency{},
-	}
-	rm := ensureResourceSync(cfg, codebaseCtx)
-	// Should return a ResourceManager even with no deps (no sync needed)
-	if rm == nil {
-		t.Error("expected non-nil ResourceManager")
-	}
-	if rm.HasDetectedResources() {
-		t.Error("expected no detected resources")
-	}
-}
-
 func TestGetCachedResources_Empty(t *testing.T) {
 	rm := NewResourceManager(nil, nil, "npm", t.TempDir())
 	cached := rm.GetCachedResources()
@@ -256,14 +223,6 @@ func TestDefaultScripResourcesCacheDir(t *testing.T) {
 	expected := filepath.Join(home, ".scrip", "resources")
 	if dir != expected {
 		t.Errorf("expected '%s', got '%s'", expected, dir)
-	}
-}
-
-func TestDefaultScripResourcesCacheDir_DiffersFromRalph(t *testing.T) {
-	scrip := DefaultScripResourcesCacheDir()
-	ralph := DefaultResourcesCacheDir()
-	if scrip == ralph {
-		t.Errorf("scrip and ralph cache dirs should differ: both are '%s'", scrip)
 	}
 }
 

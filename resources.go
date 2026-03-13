@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// ResourcesConfig for ralph.config.json
+// ResourcesConfig configures dependency resource caching.
 type ResourcesConfig struct {
 	Enabled  *bool  `json:"enabled,omitempty"`  // default: true
-	CacheDir string `json:"cacheDir,omitempty"` // default: ~/.ralph/resources (ralph) or ~/.scrip/resources (scrip)
+	CacheDir string `json:"cacheDir,omitempty"` // default: ~/.scrip/resources
 }
 
 // IsEnabled returns whether resources are enabled (defaults to true).
@@ -26,21 +26,12 @@ func (c *ResourcesConfig) IsEnabled() bool {
 // GetCacheDir returns the cache directory, expanding ~ to home.
 func (c *ResourcesConfig) GetCacheDir() string {
 	if c == nil || c.CacheDir == "" {
-		return DefaultResourcesCacheDir()
+		return DefaultScripResourcesCacheDir()
 	}
 	return expandHomePath(c.CacheDir)
 }
 
-// DefaultResourcesCacheDir returns the default ralph cache directory.
-func DefaultResourcesCacheDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ".ralph/resources"
-	}
-	return filepath.Join(home, ".ralph", "resources")
-}
-
-// DefaultScripResourcesCacheDir returns the default scrip cache directory (~/.scrip/resources).
+// DefaultScripResourcesCacheDir returns the default cache directory (~/.scrip/resources).
 func DefaultScripResourcesCacheDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -73,7 +64,7 @@ type ResourceManager struct {
 // NewResourceManager creates a manager for detected dependencies.
 // It resolves repo URLs and exact versions for all dependencies.
 func NewResourceManager(cfg *ResourcesConfig, deps []Dependency, ecosystem, projectRoot string) *ResourceManager {
-	cacheDir := DefaultResourcesCacheDir()
+	cacheDir := DefaultScripResourcesCacheDir()
 	if cfg != nil && cfg.CacheDir != "" {
 		cacheDir = cfg.GetCacheDir()
 	}
@@ -290,29 +281,6 @@ func (rm *ResourceManager) GetCachedResources() []CachedResource {
 	})
 
 	return cached
-}
-
-// ensureResourceSync syncs framework source code resources (ralph).
-// Returns nil ResourceManager if resources are disabled or no deps detected.
-// Non-fatal: prints warnings on errors but does not fail.
-func ensureResourceSync(cfg *ResolvedConfig, codebaseCtx *CodebaseContext) *ResourceManager {
-	if cfg.Config.Resources != nil && !cfg.Config.Resources.IsEnabled() {
-		return nil
-	}
-
-	ecosystem := ecosystemFromTechStack(codebaseCtx.TechStack)
-	rm := NewResourceManager(cfg.Config.Resources, codebaseCtx.Dependencies, ecosystem, cfg.ProjectRoot)
-	if !rm.HasDetectedResources() {
-		return rm
-	}
-
-	detected := rm.ListDetected()
-	fmt.Printf("  Resolving %d dependencies...\n", len(detected))
-	if err := rm.EnsureResources(); err != nil {
-		fmt.Fprintf(os.Stderr, "  Warning: resource sync failed: %s\n", err.Error())
-	}
-
-	return rm
 }
 
 // ensureScripResourceSync syncs framework source code resources for scrip.

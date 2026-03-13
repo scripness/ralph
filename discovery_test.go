@@ -311,41 +311,6 @@ sqlalchemy==2.0.0`
 	}
 }
 
-func TestDiscoverCodebase_WithConfig(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies": {"next": "14.0.0"}}`), 0644)
-	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte("{}"), 0644)
-	os.WriteFile(filepath.Join(dir, "bun.lockb"), []byte(""), 0644)
-
-	cfg := &RalphConfig{
-		Services: []ServiceConfig{
-			{Name: "dev", Ready: "http://localhost:3000"},
-		},
-		Verify: VerifyConfig{
-			Default: []string{"bun run typecheck", "bun run lint", "bun run test"},
-			UI:      []string{"bun run test:e2e"},
-		},
-	}
-
-	ctx := DiscoverCodebase(dir, cfg)
-
-	if ctx.TechStack != "typescript" {
-		t.Errorf("expected stack='typescript', got '%s'", ctx.TechStack)
-	}
-	if ctx.PackageManager != "bun" {
-		t.Errorf("expected pm='bun', got '%s'", ctx.PackageManager)
-	}
-	if len(ctx.Services) != 1 {
-		t.Errorf("expected 1 service, got %d", len(ctx.Services))
-	}
-	if len(ctx.VerifyCommands) != 4 {
-		t.Errorf("expected 4 verify commands, got %d", len(ctx.VerifyCommands))
-	}
-	if ctx.TestCommand != "bun run test" {
-		t.Errorf("expected testCommand='bun run test', got '%s'", ctx.TestCommand)
-	}
-}
-
 func TestDetectVerifyCommands_JSProject(t *testing.T) {
 	dir := t.TempDir()
 	pkgJSON := `{"scripts":{"typecheck":"tsc --noEmit","lint":"eslint .","test:unit":"vitest run","test":"vitest"}}`

@@ -156,56 +156,6 @@ func TestBuildProviderArgs_ProviderIntegration(t *testing.T) {
 	}
 }
 
-func TestBuildProviderArgs_EndToEnd(t *testing.T) {
-	// Full pipeline: JSON config → LoadConfig → buildProviderArgs
-	// Verifies the final command each provider would execute
-	tests := []struct {
-		command  string
-		wantArgs []string // expected args AFTER buildProviderArgs (prompt included for arg mode)
-	}{
-		{"amp", []string{"--dangerously-allow-all"}},
-		{"claude", []string{"--print", "--dangerously-skip-permissions"}},
-		{"opencode", []string{"run", "test prompt"}},
-		{"aider", []string{"--yes-always", "--message", "test prompt"}},
-		{"codex", []string{"exec", "--full-auto", "test prompt"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.command, func(t *testing.T) {
-			dir := t.TempDir()
-			configContent := fmt.Sprintf(`{
-				"provider": {"command": %q},
-				"verify": {"default": ["echo ok"]},
-				"services": [{"name": "dev", "ready": "http://localhost:3000"}]
-			}`, tt.command)
-			os.WriteFile(filepath.Join(dir, "ralph.config.json"), []byte(configContent), 0644)
-
-			cfg, err := LoadConfig(dir)
-			if err != nil {
-				t.Fatalf("LoadConfig error: %v", err)
-			}
-
-			p := cfg.Config.Provider
-			args, promptFile, err := buildProviderArgs(p.Args, p.PromptMode, p.PromptFlag, "test prompt")
-			if err != nil {
-				t.Fatalf("buildProviderArgs error: %v", err)
-			}
-			if promptFile != "" {
-				os.Remove(promptFile)
-			}
-
-			if len(args) != len(tt.wantArgs) {
-				t.Fatalf("args: got %v, want %v", args, tt.wantArgs)
-			}
-			for i, a := range tt.wantArgs {
-				if args[i] != a {
-					t.Errorf("args[%d]: got %q, want %q", i, args[i], a)
-				}
-			}
-		})
-	}
-}
-
 func TestRunCommand_Timeout(t *testing.T) {
 	dir := t.TempDir()
 	output, err := runCommand(dir, "sleep 10", 1)
