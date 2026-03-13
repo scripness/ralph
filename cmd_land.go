@@ -475,9 +475,9 @@ func generateLandFixPrompt(findings []string, verifyResults, diff, consultation 
 	})
 }
 
-// generateLandSummaryPrompt builds the land-summary.md prompt.
+// generateLandSummaryPrompt builds the summary.md prompt.
 func generateLandSummaryPrompt(feature string, events []ProgressEvent, diff string, learnings []string) string {
-	return getPrompt("land-summary", map[string]string{
+	return getPrompt("summary", map[string]string{
 		"feature":        feature,
 		"progressEvents": landFormatProgressEvents(events),
 		"diff":           diff,

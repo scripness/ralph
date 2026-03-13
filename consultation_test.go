@@ -388,7 +388,7 @@ func TestFrameworkTagMap_ValidFrameworks(t *testing.T) {
 }
 
 func TestGetPrompt_Consult(t *testing.T) {
-	prompt := getPrompt("consult", map[string]string{
+	prompt := getPrompt("consult-item", map[string]string{
 		"framework":          "next v15.0.0",
 		"frameworkPath":      "/cache/next@15.0.0",
 		"storyId":            "US-001",
