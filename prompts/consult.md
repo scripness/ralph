@@ -28,12 +28,12 @@ You are a framework documentation expert. Search the source code of **{{framewor
 
 Wrap your guidance in these markers exactly:
 
-<ralph>GUIDANCE_START</ralph>
+<scrip>GUIDANCE_START</scrip>
 [Your concise implementation guide here]
 
 Source: path/to/relevant/file.ts
 Source: path/to/another/file.ts
-<ralph>GUIDANCE_END</ralph>
+<scrip>GUIDANCE_END</scrip>
 
 **Important:**
 - Be specific and actionable — the reader is an AI agent implementing this story

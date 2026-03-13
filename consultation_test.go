@@ -492,7 +492,7 @@ func TestRunConsultSubagent_Success(t *testing.T) {
 		Config: RalphConfig{
 			Provider: ProviderConfig{
 				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Use hooks for state management.'; echo ''; echo 'Source: src/hooks.ts'; echo '<ralph>GUIDANCE_END</ralph>'`},
+				Args:       []string{"-c", `echo '<scrip>GUIDANCE_START</scrip>'; echo 'Use hooks for state management.'; echo ''; echo 'Source: src/hooks.ts'; echo '<scrip>GUIDANCE_END</scrip>'`},
 				PromptMode: "arg",
 			},
 		},
@@ -537,7 +537,7 @@ func TestRunConsultSubagent_MissingSourceCitation(t *testing.T) {
 		Config: RalphConfig{
 			Provider: ProviderConfig{
 				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Use hooks.'; echo '<ralph>GUIDANCE_END</ralph>'`},
+				Args:       []string{"-c", `echo '<scrip>GUIDANCE_START</scrip>'; echo 'Use hooks.'; echo '<scrip>GUIDANCE_END</scrip>'`},
 				PromptMode: "arg",
 			},
 		},
@@ -580,7 +580,7 @@ func TestRunConsultSubagent_StderrMarkers(t *testing.T) {
 		Config: RalphConfig{
 			Provider: ProviderConfig{
 				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>' >&2; echo 'Guidance via stderr.' >&2; echo 'Source: lib/core.ts' >&2; echo '<ralph>GUIDANCE_END</ralph>' >&2`},
+				Args:       []string{"-c", `echo '<scrip>GUIDANCE_START</scrip>' >&2; echo 'Guidance via stderr.' >&2; echo 'Source: lib/core.ts' >&2; echo '<scrip>GUIDANCE_END</scrip>' >&2`},
 				PromptMode: "arg",
 			},
 		},
@@ -633,7 +633,7 @@ func TestConsultResources_Integration(t *testing.T) {
 		Config: RalphConfig{
 			Provider: ProviderConfig{
 				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Use hooks for state.'; echo ''; echo 'Source: packages/react/src/hooks.ts'; echo '<ralph>GUIDANCE_END</ralph>'`},
+				Args:       []string{"-c", `echo '<scrip>GUIDANCE_START</scrip>'; echo 'Use hooks for state.'; echo ''; echo 'Source: packages/react/src/hooks.ts'; echo '<scrip>GUIDANCE_END</scrip>'`},
 				PromptMode: "arg",
 			},
 		},
@@ -784,7 +784,7 @@ func TestConsultResourcesForFeature_Integration(t *testing.T) {
 		Config: RalphConfig{
 			Provider: ProviderConfig{
 				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Feature-level react guidance.'; echo ''; echo 'Source: packages/react/src/index.ts'; echo '<ralph>GUIDANCE_END</ralph>'`},
+				Args:       []string{"-c", `echo '<scrip>GUIDANCE_START</scrip>'; echo 'Feature-level react guidance.'; echo ''; echo 'Source: packages/react/src/index.ts'; echo '<scrip>GUIDANCE_END</scrip>'`},
 				PromptMode: "arg",
 			},
 		},

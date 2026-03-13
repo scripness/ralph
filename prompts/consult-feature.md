@@ -21,12 +21,12 @@ You are a framework documentation expert. Search the source code of **{{framewor
 
 Wrap your guidance in these markers exactly:
 
-<ralph>GUIDANCE_START</ralph>
+<scrip>GUIDANCE_START</scrip>
 [Your concise capability overview here]
 
 Source: path/to/relevant/file.ts
 Source: path/to/another/file.ts
-<ralph>GUIDANCE_END</ralph>
+<scrip>GUIDANCE_END</scrip>
 
 **Important:**
 - Focus on what the framework CAN do for this feature — help the PRD author write realistic stories

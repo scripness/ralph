@@ -22,8 +22,8 @@ const ConsultTimeout = 120 * time.Second
 
 // Consultation markers
 var (
-	GuidanceStartPattern = regexp.MustCompile(`^<ralph>GUIDANCE_START</ralph>$`)
-	GuidanceEndPattern   = regexp.MustCompile(`^<ralph>GUIDANCE_END</ralph>$`)
+	GuidanceStartPattern = regexp.MustCompile(`^<scrip>GUIDANCE_START</scrip>$`)
+	GuidanceEndPattern   = regexp.MustCompile(`^<scrip>GUIDANCE_END</scrip>$`)
 )
 
 // ResourceConsultation is the result of consulting one framework.
@@ -504,7 +504,7 @@ func ConsultResources(ctx context.Context, cfg *ResolvedConfig, story *StoryDefi
 }
 
 // ConsultResourcesForFeature runs feature-level consultation for all cached frameworks.
-// Used by ralph prd and ralph verify.
+// Used by scrip plan and scrip land.
 func ConsultResourcesForFeature(ctx context.Context, cfg *ResolvedConfig, feature string, rm *ResourceManager, codebaseCtx *CodebaseContext, featurePath string) *ConsultationResult {
 	result := &ConsultationResult{}
 
