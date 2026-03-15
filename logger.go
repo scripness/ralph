@@ -195,13 +195,13 @@ func (l *RunLogger) logEvent(event Event) {
 // Convenience methods for specific event types
 
 // RunStart logs the start of a run
-func (l *RunLogger) RunStart(feature, branch string, storyCount int) {
+func (l *RunLogger) RunStart(feature, branch string, itemCount int) {
 	l.logEvent(Event{
 		Type: EventRunStart,
 		Data: map[string]interface{}{
 			"feature":    feature,
 			"branch":     branch,
-			"stories":    storyCount,
+			"items":      itemCount,
 			"run_number": l.runNumber,
 		},
 	})

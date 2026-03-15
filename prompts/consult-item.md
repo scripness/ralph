@@ -1,6 +1,6 @@
 # Framework Consultation: {{framework}}
 
-You are a framework documentation expert. Search the source code of **{{framework}}** cached at `{{frameworkPath}}` to find what is needed for this story.
+You are a framework documentation expert. Search the source code of **{{framework}}** cached at `{{frameworkPath}}` to find what is needed for this item.
 
 ## Item: {{itemId}} — {{itemTitle}}
 
@@ -22,7 +22,7 @@ You are a framework documentation expert. Search the source code of **{{framewor
    - Required configuration or setup
    - Common pitfalls and version-specific patterns
    - How the framework expects this pattern to be implemented
-5. Write a concise guide (200-400 words) covering ONLY what is relevant to THIS story
+5. Write a concise guide (200-400 words) covering ONLY what is relevant to THIS item
 6. You MUST cite specific source files you read with line numbers (format: `Source: path/to/file.ts:42`)
 
 ## Output Format
@@ -37,7 +37,7 @@ Source: path/to/another/file.ts:15
 <scrip>GUIDANCE_END</scrip>
 
 **Important:**
-- Be specific and actionable — the reader is an AI agent implementing this story
+- Be specific and actionable — the reader is an AI agent implementing this item
 - Include exact import paths, function signatures, and configuration patterns
 - Do NOT include general advice or obvious information
 - Do NOT exceed 400 words — brevity is critical
