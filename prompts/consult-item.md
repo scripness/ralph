@@ -14,15 +14,16 @@ You are a framework documentation expert. Search the source code of **{{framewor
 
 ## Instructions
 
-1. Search the source at `{{frameworkPath}}` for APIs, patterns, and configuration relevant to this story
-2. Read ACTUAL source files — do NOT rely on training data or memory
-3. Focus on:
+1. Study the cached framework source code at `{{frameworkPath}}` using up to 500 parallel Sonnet subagents for source exploration
+2. Use Opus subagents when evaluating architectural patterns or resolving conflicting approaches
+3. Read ACTUAL source files — do NOT rely on training data or memory
+4. Focus on:
    - Correct import paths and function signatures
    - Required configuration or setup
    - Common pitfalls and version-specific patterns
    - How the framework expects this pattern to be implemented
-4. Write a concise guide (200-400 words) covering ONLY what is relevant to THIS story
-5. You MUST cite specific source files you read (format: `Source: path/to/file.ts`)
+5. Write a concise guide (200-400 words) covering ONLY what is relevant to THIS story
+6. You MUST cite specific source files you read with line numbers (format: `Source: path/to/file.ts:42`)
 
 ## Output Format
 
@@ -31,8 +32,8 @@ Wrap your guidance in these markers exactly:
 <scrip>GUIDANCE_START</scrip>
 [Your concise implementation guide here]
 
-Source: path/to/relevant/file.ts
-Source: path/to/another/file.ts
+Source: path/to/relevant/file.ts:42
+Source: path/to/another/file.ts:15
 <scrip>GUIDANCE_END</scrip>
 
 **Important:**
@@ -41,3 +42,4 @@ Source: path/to/another/file.ts
 - Do NOT include general advice or obvious information
 - Do NOT exceed 400 words — brevity is critical
 - Every claim must be backed by a source file you actually read
+- Uncited guidance is treated as hallucination and will be discarded by the CLI
