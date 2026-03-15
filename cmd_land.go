@@ -140,7 +140,7 @@ func landFeature(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan) e
 	fmt.Println("\n  Running AI deep analysis...")
 	startTime := time.Now()
 	analyzePrompt := generateLandAnalyzePrompt(allCriteria, fullDiff, verifyFormatted, consultation)
-	analyzeResult, analyzeErr := scripSpawnProvider(cfg.ProjectRoot, analyzePrompt, cfg.Config.Provider.Timeout, false, logger, cleanup)
+	analyzeResult, analyzeErr := scripSpawnProvider(cfg.ProjectRoot, analyzePrompt, cfg.Config.Provider.Timeout, false, logger, cleanup, nil, "")
 	fmt.Printf("  Analysis done (%s)\n", FormatDuration(time.Since(startTime)))
 
 	if analyzeErr != nil {
@@ -169,7 +169,7 @@ func landFeature(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan) e
 
 		fixPrompt := generateLandFixPrompt(failures, currentVerify, currentDiff, consultation)
 		fixStart := time.Now()
-		fixResult, fixErr := scripSpawnProvider(cfg.ProjectRoot, fixPrompt, cfg.Config.Provider.Timeout, true, logger, cleanup)
+		fixResult, fixErr := scripSpawnProvider(cfg.ProjectRoot, fixPrompt, cfg.Config.Provider.Timeout, true, logger, cleanup, nil, "")
 		fmt.Printf("    Fix agent done (%s)\n", FormatDuration(time.Since(fixStart)))
 
 		if fixErr != nil {
@@ -242,7 +242,7 @@ func landSuccessPath(
 	fmt.Println("\n  Generating feature summary...")
 	summaryPrompt := generateLandSummaryPrompt(featureDir.Feature, events, fullDiff, learnings)
 	summaryStart := time.Now()
-	summaryResult, summaryErr := scripSpawnProvider(cfg.ProjectRoot, summaryPrompt, cfg.Config.Provider.Timeout, false, logger, cleanup)
+	summaryResult, summaryErr := scripSpawnProvider(cfg.ProjectRoot, summaryPrompt, cfg.Config.Provider.Timeout, false, logger, cleanup, nil, "")
 	fmt.Printf("  Summary generation done (%s)\n", FormatDuration(time.Since(summaryStart)))
 
 	var summaryText string

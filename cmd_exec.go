@@ -367,7 +367,7 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 		logger.ProviderStart()
 		providerStart := time.Now()
 
-		result, provErr := scripSpawnProvider(cfg.ProjectRoot, prompt, cfg.Config.Provider.Timeout, true, logger, cleanup)
+		result, provErr := scripSpawnProvider(cfg.ProjectRoot, prompt, cfg.Config.Provider.Timeout, true, logger, cleanup, sessState, statePath)
 
 		// Log provider end
 		var detectedMarkers []string
@@ -558,7 +558,7 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 
 // scripSpawnProvider spawns claude with scrip-specific args and processes output.
 // Always uses stdin mode (claude reads prompt from stdin).
-func scripSpawnProvider(projectRoot, prompt string, timeoutSec int, autonomous bool, logger *RunLogger, cleanup *CleanupCoordinator) (*ProviderResult, error) {
+func scripSpawnProvider(projectRoot, prompt string, timeoutSec int, autonomous bool, logger *RunLogger, cleanup *CleanupCoordinator, sessState *SessionState, statePath string) (*ProviderResult, error) {
 	timeout := time.Duration(timeoutSec) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -595,6 +595,12 @@ func scripSpawnProvider(projectRoot, prompt string, timeoutSec int, autonomous b
 	if cleanup != nil {
 		cleanup.SetProvider(cmd)
 		defer cleanup.ClearProvider()
+	}
+
+	// Record provider PID in session state for crash recovery
+	if sessState != nil && statePath != "" {
+		sessState.SetProvider(cmd.Process.Pid)
+		_ = SaveSessionState(statePath, sessState)
 	}
 
 	// Write prompt to stdin
