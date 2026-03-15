@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Ralph Configuration",
-  "description": "Configuration for Ralph CLI (ralph.config.json)",
+  "title": "Scrip Configuration",
+  "description": "Configuration for Scrip CLI (.scrip/config.json)",
   "type": "object",
   "properties": {
     "$schema": {
@@ -10,13 +10,13 @@
     },
     "project": {
       "type": "string",
-      "description": "Project name (auto-derived from repository directory during ralph init)"
+      "description": "Project name (auto-derived from repository directory during scrip prep)"
     },
     "maxRetries": {
       "type": "integer",
       "minimum": 1,
       "default": 3,
-      "description": "Maximum retry attempts per story before auto-skipping"
+      "description": "Maximum retry attempts per item before auto-skipping"
     },
     "provider": {
       "type": "object",
@@ -102,7 +102,7 @@
         "ui": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "UI/e2e test commands (run for UI-tagged stories)"
+          "description": "UI/e2e test commands (run for UI-tagged items)"
         },
         "timeout": {
           "type": "integer",
@@ -119,7 +119,7 @@
         "prdChanges": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically commit PRD state changes during runs"
+          "description": "Automatically commit plan state changes during exec"
         }
       }
     },
@@ -161,7 +161,7 @@
         },
         "cacheDir": {
           "type": "string",
-          "default": "~/.ralph/resources",
+          "default": "~/.scrip/resources",
           "description": "Directory for cached framework source code"
         }
       }
