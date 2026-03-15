@@ -403,7 +403,32 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 		sessState.ClearProvider()
 		_ = SaveSessionState(statePath, sessState)
 
-		// Handle provider error (failed to start)
+		// Handle provider timeout — retryable (same path as STUCK)
+		if provErr != nil && result != nil && result.TimedOut {
+			reason := fmt.Sprintf("Provider timed out after %d seconds", cfg.Config.Provider.Timeout)
+			fmt.Printf("\n  ⏱ %s\n", reason)
+
+			_ = AppendProgressEvent(progressPath, &ProgressEvent{
+				Event:   ProgressItemStuck,
+				Item:    item.Title,
+				Attempt: itemState.Attempts + 1,
+				Reason:  reason,
+			})
+
+			if itemState.Attempts+1 >= scripMaxRetries {
+				fmt.Printf("  ! Skipping %s after %d attempts\n", item.Title, scripMaxRetries)
+				_ = AppendProgressEvent(progressPath, &ProgressEvent{
+					Event:  ProgressItemDone,
+					Item:   item.Title,
+					Status: "skipped",
+				})
+			}
+
+			logger.IterationEnd(false)
+			continue
+		}
+
+		// Handle provider error (failed to start — result is nil)
 		if provErr != nil {
 			logger.Error("provider error", provErr)
 			logger.IterationEnd(false)
