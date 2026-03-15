@@ -26,6 +26,7 @@ type ProviderResult struct {
 type StoryVerifyResult struct {
 	passed bool
 	reason string
+	output string // combined command output (available even on success)
 }
 
 // buildProviderArgs builds the final argument list for a provider subprocess.

@@ -542,6 +542,40 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 		}
 		logger.VerifyEnd(true)
 
+		// AI deep analysis — adversarial verification of the implementation
+		fmt.Println("\n  Running AI deep analysis...")
+		itemDiff := git.DiffSince(preRunCommit)
+		verifyPrompt := generateExecVerifyPrompt(item, itemDiff, vResult.output)
+		analyzeResult, analyzeErr := scripSpawnProvider(cfg.ProjectRoot, verifyPrompt, cfg.Config.Provider.Timeout, cfg.Config.Provider.StallTimeout, false, logger, cleanup, nil, "")
+
+		if analyzeErr == nil && analyzeResult != nil {
+			deepPassed, failures := landParseAnalysis(analyzeResult)
+			if !deepPassed {
+				reason := fmt.Sprintf("AI deep analysis: %s", strings.Join(failures, "; "))
+				fmt.Printf("\n  ! %s\n", reason)
+
+				_ = AppendProgressEvent(progressPath, &ProgressEvent{
+					Event:  ProgressItemStuck,
+					Item:   item.Title,
+					Reason: reason,
+				})
+
+				if itemState.Attempts+1 >= scripMaxRetries {
+					_ = AppendProgressEvent(progressPath, &ProgressEvent{
+						Event:  ProgressItemDone,
+						Item:   item.Title,
+						Status: "skipped",
+					})
+				}
+
+				logger.IterationEnd(false)
+				continue
+			}
+		} else if analyzeErr != nil {
+			// AI deep analysis failed to run — log warning but don't block
+			fmt.Printf("\n  ! AI deep analysis unavailable: %v\n", analyzeErr)
+		}
+
 		// Item passed!
 		lastCommit := git.GetLastCommit()
 		_ = AppendProgressEvent(progressPath, &ProgressEvent{
@@ -763,6 +797,7 @@ func scripProcessLine(line string, result *ProviderResult, logger *RunLogger) {
 // Returns a result indicating pass/fail with reason.
 func scripRunVerify(projectRoot string, verify *ScripVerifyConfig, timeoutSec int, logger *RunLogger) *StoryVerifyResult {
 	result := &StoryVerifyResult{passed: true}
+	var allOutput []string
 
 	for _, cmd := range verify.VerifyCommands() {
 		if logger != nil {
@@ -782,6 +817,8 @@ func scripRunVerify(projectRoot string, verify *ScripVerifyConfig, timeoutSec in
 			return result
 		}
 
+		allOutput = append(allOutput, fmt.Sprintf("$ %s\n%s", cmd, output))
+
 		if logger != nil {
 			logger.VerifyCmdEnd(cmd, true, output, duration.Nanoseconds())
 			if logger.config != nil && logger.config.ConsoleDurations {
@@ -790,9 +827,7 @@ func scripRunVerify(projectRoot string, verify *ScripVerifyConfig, timeoutSec in
 		}
 	}
 
-	// Check service health if services are running
-	// (services are managed by the caller; health check is delegated)
-
+	result.output = strings.Join(allOutput, "\n\n")
 	return result
 }
 

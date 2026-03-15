@@ -206,6 +206,15 @@ func (g *GitOps) Push() error {
 	return err
 }
 
+// DiffSince returns the diff between the given commit hash and HEAD.
+func (g *GitOps) DiffSince(hash string) string {
+	out, err := g.run("diff", hash+"..HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
 // HasNewCommitSince returns true if HEAD is different from the given hash.
 func (g *GitOps) HasNewCommitSince(hash string) bool {
 	current := g.GetLastCommit()
