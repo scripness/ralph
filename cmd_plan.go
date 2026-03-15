@@ -81,7 +81,7 @@ func cmdPlan(args []string) {
 	// Pre-compute context (done once, reused across rounds)
 	codebaseCtx := DiscoverScripCodebase(projectRoot, &resolved.Config)
 	codebaseStr := FormatCodebaseContext(codebaseCtx)
-	consultation := buildPlanConsultation(resolved, codebaseCtx)
+	consultation := buildPlanConsultation(resolved, featureDir, codebaseCtx)
 	progressCtx := GetProgressContext(progressMdPath)
 	landFailureCtx := buildLandFailureContext(progressJsonlPath)
 
@@ -277,33 +277,15 @@ func extractPlanContent(response string) string {
 
 // --- Consultation ---
 
-// buildPlanConsultation syncs cached framework resources and formats them
-// as context for planning prompts. Returns a summary of available resources
-// or a fallback message when none are cached.
-func buildPlanConsultation(cfg *ScripResolvedConfig, codebaseCtx *CodebaseContext) string {
+// buildPlanConsultation syncs cached framework resources and runs feature-level
+// consultation via subagents. Returns consultation guidance with citations, or
+// falls back to web search instructions when no resources are cached.
+func buildPlanConsultation(cfg *ScripResolvedConfig, featureDir *FeatureDir, codebaseCtx *CodebaseContext) string {
 	rm := ensureScripResourceSync(cfg, codebaseCtx)
 	if rm == nil || !rm.HasDetectedResources() {
-		return "(No cached framework resources. The AI agent will use its training data.)"
+		return buildResourceFallbackInstructions()
 	}
-
-	cached := rm.GetCachedResources()
-	if len(cached) == 0 {
-		return "(No cached framework resources. The AI agent will use its training data.)"
-	}
-
-	var lines []string
-	lines = append(lines, "## Cached Framework Resources")
-	lines = append(lines, "")
-	lines = append(lines, "The following framework source code is cached locally for reference:")
-	for _, r := range cached {
-		line := fmt.Sprintf("- %s", r.Name)
-		if r.Version != "" {
-			line += "@" + r.Version
-		}
-		line += fmt.Sprintf(" (%s)", r.Path)
-		lines = append(lines, line)
-	}
-	return strings.Join(lines, "\n")
+	return consultForFeature(cfg.ProjectRoot, featureDir, rm, codebaseCtx.TechStack, nil)
 }
 
 // --- Land failure context ---

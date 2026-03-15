@@ -395,6 +395,149 @@ func runConsultSubagent(projectRoot string, cr CachedResource, item *PlanItem, i
 	}
 }
 
+// generateConsultFeaturePrompt builds the consult-feature.md prompt for feature-level consultation.
+func generateConsultFeaturePrompt(cr CachedResource, feature, techStack string) string {
+	label := cr.Name
+	if cr.Version != "" {
+		label = cr.Name + " v" + cr.Version
+	}
+
+	return getPrompt("consult-feature", map[string]string{
+		"framework":     label,
+		"frameworkPath": cr.Path,
+		"feature":       feature,
+		"techStack":     techStack,
+	})
+}
+
+// runFeatureConsultSubagent spawns a non-autonomous claude subagent for one framework's feature-level consultation.
+func runFeatureConsultSubagent(projectRoot string, cr CachedResource, feature, techStack string) ResourceConsultation {
+	start := time.Now()
+	prompt := generateConsultFeaturePrompt(cr, feature, techStack)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	args := ScripProviderArgs(false)
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = projectRoot
+	cmd.Stdin = strings.NewReader(prompt)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = io.Discard
+
+	if err := cmd.Run(); err != nil {
+		return ResourceConsultation{
+			Framework: cr.Name,
+			Duration:  time.Since(start),
+			Error:     fmt.Errorf("consultation subagent failed: %w", err),
+		}
+	}
+
+	guidance, ok := extractGuidance(stdout.String())
+	if !ok || guidance == "" {
+		return ResourceConsultation{
+			Framework: cr.Name,
+			Duration:  time.Since(start),
+			Error:     fmt.Errorf("no guidance markers in output"),
+		}
+	}
+
+	if !hasCitations(guidance) {
+		return ResourceConsultation{
+			Framework: cr.Name,
+			Duration:  time.Since(start),
+			Error:     fmt.Errorf("guidance lacks citations — treated as hallucination"),
+		}
+	}
+
+	return ResourceConsultation{
+		Framework: cr.Name,
+		Guidance:  guidance,
+		Duration:  time.Since(start),
+	}
+}
+
+// consultForFeature runs feature-level consultation with all cached frameworks.
+// Spawns subagents in parallel, caches results, and returns formatted guidance
+// for injection into plan/land prompts. Falls back to web search instructions
+// when no frameworks are cached or all consultations fail.
+func consultForFeature(projectRoot string, featureDir *FeatureDir, rm *ResourceManager, techStack string, logger *RunLogger) string {
+	cached := rm.GetCachedResources()
+	frameworks := allCachedFrameworks(cached, 5)
+
+	if len(frameworks) == 0 {
+		return buildResourceFallbackInstructions()
+	}
+
+	git := NewGitOps(projectRoot)
+	commit := git.GetLastCommit()
+
+	result := &ConsultationResult{}
+
+	type consultJob struct {
+		cr       CachedResource
+		cacheKey string
+	}
+	var jobs []consultJob
+
+	for _, cr := range frameworks {
+		cacheKey := featureConsultCacheKey(featureDir.Feature, cr.Name, commit)
+
+		if cachedGuidance, ok := loadCachedConsultation(featureDir.Path, cacheKey); ok {
+			result.Consultations = append(result.Consultations, ResourceConsultation{
+				Framework: cr.Name,
+				Guidance:  cachedGuidance,
+			})
+			continue
+		}
+
+		jobs = append(jobs, consultJob{cr: cr, cacheKey: cacheKey})
+	}
+
+	if len(jobs) > 0 {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		for _, job := range jobs {
+			wg.Add(1)
+			go func(j consultJob) {
+				defer wg.Done()
+				consultation := runFeatureConsultSubagent(projectRoot, j.cr, featureDir.Feature, techStack)
+
+				mu.Lock()
+				defer mu.Unlock()
+				if consultation.Error != nil || consultation.Guidance == "" {
+					result.FallbackPaths = append(result.FallbackPaths, j.cr)
+					if logger != nil && consultation.Error != nil {
+						logger.Warning(fmt.Sprintf("feature consultation for %s: %v", j.cr.Name, consultation.Error))
+					}
+				} else {
+					result.Consultations = append(result.Consultations, consultation)
+					saveCachedConsultation(featureDir.Path, j.cacheKey, consultation.Guidance)
+				}
+			}(job)
+		}
+
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(ConsultTimeout):
+			if logger != nil {
+				logger.Warning("feature consultation budget exceeded — proceeding with partial results")
+			}
+		}
+	}
+
+	return FormatGuidance(result)
+}
+
 // consultForItem runs per-item consultation with relevant cached frameworks.
 // Spawns subagents in parallel, caches results, and returns formatted guidance
 // for injection into the exec-build prompt. Falls back to web search instructions

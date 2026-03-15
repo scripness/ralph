@@ -133,8 +133,12 @@ func landFeature(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan) e
 	// Build consultation
 	codebaseCtx := DiscoverScripCodebase(cfg.ProjectRoot, &cfg.Config)
 	rm := ensureScripResourceSync(cfg, codebaseCtx)
-	consultation := buildResourceFallbackInstructions()
-	_ = rm // consultation falls back to web search instructions when no cached resources
+	var consultation string
+	if rm != nil && rm.HasDetectedResources() {
+		consultation = consultForFeature(cfg.ProjectRoot, featureDir, rm, codebaseCtx.TechStack, logger)
+	} else {
+		consultation = buildResourceFallbackInstructions()
+	}
 
 	// Step 3: AI deep analysis
 	fmt.Println("\n  Running AI deep analysis...")
