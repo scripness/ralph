@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -75,3 +77,60 @@ func contains(s, substr string) bool {
 	}
 	return false
 }
+
+func TestStrictRendering(t *testing.T) {
+	entries, err := promptsFS.ReadDir("prompts")
+	if err != nil {
+		t.Fatalf("failed to read prompts dir: %v", err)
+	}
+
+	// Templates known to be referenced by production getPrompt() calls.
+	// If a new template is added without wiring it, this test catches it.
+	referenced := map[string]bool{
+		"plan-create":     true,
+		"plan-round":      true,
+		"plan-verify":     true,
+		"exec-build":      true,
+		"exec-verify":     true,
+		"land-analyze":    true,
+		"land-fix":        true,
+		"summary":         true,
+		"consult-feature": true,
+		"consult-item":    true,
+	}
+
+	varPattern := regexp.MustCompile(`\{\{(\w+)\}\}`)
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		name := strings.TrimSuffix(entry.Name(), ".md")
+		t.Run(name, func(t *testing.T) {
+			data, err := promptsFS.ReadFile("prompts/" + entry.Name())
+			if err != nil {
+				t.Fatalf("failed to read template: %v", err)
+			}
+
+			// Extract all {{varName}} patterns and build dummy map
+			matches := varPattern.FindAllStringSubmatch(string(data), -1)
+			vars := make(map[string]string)
+			for _, m := range matches {
+				vars[m[1]] = "TEST_VALUE_" + m[1]
+			}
+
+			// Render and verify no leftover {{...}} patterns
+			rendered := getPrompt(name, vars)
+			if leftovers := varPattern.FindAllString(rendered, -1); len(leftovers) > 0 {
+				t.Errorf("unreplaced variables after rendering: %v", leftovers)
+			}
+
+			// Verify template is referenced by production code
+			if !referenced[name] {
+				t.Errorf("template %q is not referenced by any getPrompt() call (dead template)", name)
+			}
+		})
+	}
+}
+
