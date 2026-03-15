@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -27,38 +26,6 @@ type StoryVerifyResult struct {
 	passed bool
 	reason string
 	output string // combined command output (available even on success)
-}
-
-// buildProviderArgs builds the final argument list for a provider subprocess.
-func buildProviderArgs(baseArgs []string, promptMode, promptFlag, prompt string) (args []string, promptFile string, err error) {
-	args = append([]string{}, baseArgs...)
-
-	switch promptMode {
-	case "arg":
-		if promptFlag != "" {
-			args = append(args, promptFlag)
-		}
-		args = append(args, prompt)
-	case "file":
-		f, ferr := os.CreateTemp("", "scrip-prompt-*.md")
-		if ferr != nil {
-			return nil, "", fmt.Errorf("failed to create temp prompt file: %w", ferr)
-		}
-		promptFile = f.Name()
-		if _, ferr := f.WriteString(prompt); ferr != nil {
-			f.Close()
-			os.Remove(promptFile)
-			return nil, "", fmt.Errorf("failed to write prompt file: %w", ferr)
-		}
-		f.Close()
-		if promptFlag != "" {
-			args = append(args, promptFlag)
-		}
-		args = append(args, promptFile)
-	}
-	// "stdin" mode doesn't modify args
-
-	return args, promptFile, nil
 }
 
 // runCommand runs a shell command with a per-command timeout.
