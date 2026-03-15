@@ -265,7 +265,7 @@ func TestConsultCacheKey_Deterministic(t *testing.T) {
 	// Different inputs should produce different keys
 	key3 := consultCacheKey("US-002", "next", "abc123", "Add login form")
 	if key1 == key3 {
-		t.Error("different story ID should produce different key")
+		t.Error("different item ID should produce different key")
 	}
 
 	key4 := consultCacheKey("US-001", "react", "abc123", "Add login form")
@@ -391,9 +391,9 @@ func TestGetPrompt_Consult(t *testing.T) {
 	prompt := getPrompt("consult-item", map[string]string{
 		"framework":          "next v15.0.0",
 		"frameworkPath":      "/cache/next@15.0.0",
-		"storyId":            "US-001",
-		"storyTitle":         "Add login form",
-		"storyDescription":   "As a user...",
+		"itemId":             "US-001",
+		"itemTitle":          "Add login form",
+		"itemDescription":    "As a user...",
 		"acceptanceCriteria": "- Form renders\n- Auth works",
 		"techStack":          "typescript",
 	})
@@ -405,7 +405,7 @@ func TestGetPrompt_Consult(t *testing.T) {
 		t.Error("prompt should contain framework path")
 	}
 	if !strings.Contains(prompt, "US-001") {
-		t.Error("prompt should contain story ID")
+		t.Error("prompt should contain item ID")
 	}
 	if !strings.Contains(prompt, "GUIDANCE_START") {
 		t.Error("prompt should contain GUIDANCE_START marker")
@@ -517,8 +517,8 @@ func TestGenerateConsultItemPrompt_Variables(t *testing.T) {
 	checks := map[string]string{
 		"framework name": "next",
 		"framework path": "/cache/next@15.0.0",
-		"story ID":       "item-1",
-		"story title":    "Add login form",
+		"item ID":        "item-1",
+		"item title":     "Add login form",
 		"tech stack":     "typescript",
 		"criteria":       "- Form renders",
 	}
@@ -546,9 +546,9 @@ func TestConsultForItem_CacheRoundtrip(t *testing.T) {
 		Acceptance: []string{"DB table created"},
 	}
 
-	storyID := "item-1"
-	storyDescription := strings.Join(item.Acceptance, "\n")
-	cacheKey := consultCacheKey(storyID, "prisma", "abc123", storyDescription)
+	itemID := "item-1"
+	itemDescription := strings.Join(item.Acceptance, "\n")
+	cacheKey := consultCacheKey(itemID, "prisma", "abc123", itemDescription)
 
 	// Pre-populate cache
 	cachedGuidance := "Use prisma migrate.\n\nSource: packages/client/src/runtime.ts"
@@ -564,7 +564,7 @@ func TestConsultForItem_CacheRoundtrip(t *testing.T) {
 	}
 
 	// Different key should miss
-	_, ok = loadCachedConsultation(dir, consultCacheKey(storyID, "react", "abc123", storyDescription))
+	_, ok = loadCachedConsultation(dir, consultCacheKey(itemID, "react", "abc123", itemDescription))
 	if ok {
 		t.Error("expected cache miss for different framework")
 	}

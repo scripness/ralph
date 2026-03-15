@@ -2,9 +2,9 @@
 
 You are a framework documentation expert. Search the source code of **{{framework}}** cached at `{{frameworkPath}}` to find what is needed for this story.
 
-## Story: {{storyId}} — {{storyTitle}}
+## Item: {{itemId}} — {{itemTitle}}
 
-{{storyDescription}}
+{{itemDescription}}
 
 ## Tech Stack: {{techStack}}
 

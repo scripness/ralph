@@ -68,7 +68,7 @@ func TestRunLogger_EventLogging(t *testing.T) {
 
 	logger.RunStart("auth", "scrip/auth", 3)
 	logger.SetIteration(1)
-	logger.SetCurrentStory("US-001")
+	logger.SetCurrentItem("US-001")
 	logger.IterationStart("US-001", "User login", 0)
 	logger.ProviderStart()
 	logger.MarkerDetected("DONE", "")
@@ -187,25 +187,25 @@ func TestRunLogger_Rotation(t *testing.T) {
 func TestEventFilter(t *testing.T) {
 	filter := &EventFilter{
 		EventType: EventError,
-		StoryID:   "US-001",
+		ItemID:    "US-001",
 	}
 
 	// Should match
-	e1 := &Event{Type: EventError, StoryID: "US-001"}
+	e1 := &Event{Type: EventError, ItemID: "US-001"}
 	if !filter.Match(e1) {
 		t.Error("expected e1 to match filter")
 	}
 
 	// Wrong type
-	e2 := &Event{Type: EventWarning, StoryID: "US-001"}
+	e2 := &Event{Type: EventWarning, ItemID: "US-001"}
 	if filter.Match(e2) {
 		t.Error("expected e2 to not match filter (wrong type)")
 	}
 
-	// Wrong story
-	e3 := &Event{Type: EventError, StoryID: "US-002"}
+	// Wrong item
+	e3 := &Event{Type: EventError, ItemID: "US-002"}
 	if filter.Match(e3) {
-		t.Error("expected e3 to not match filter (wrong story)")
+		t.Error("expected e3 to not match filter (wrong item)")
 	}
 
 	// Empty filter matches all
@@ -223,8 +223,8 @@ func TestReadEvents(t *testing.T) {
 	f, _ := os.Create(logPath)
 	events := []Event{
 		{Timestamp: time.Now(), Type: EventRunStart},
-		{Timestamp: time.Now(), Type: EventError, StoryID: "US-001"},
-		{Timestamp: time.Now(), Type: EventWarning, StoryID: "US-002"},
+		{Timestamp: time.Now(), Type: EventError, ItemID: "US-001"},
+		{Timestamp: time.Now(), Type: EventWarning, ItemID: "US-002"},
 		{Timestamp: time.Now(), Type: EventRunEnd},
 	}
 	enc := json.NewEncoder(f)

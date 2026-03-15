@@ -46,7 +46,7 @@ type Event struct {
 	Timestamp time.Time              `json:"ts"`
 	Type      EventType              `json:"type"`
 	Iteration int                    `json:"iter,omitempty"`
-	StoryID   string                 `json:"story,omitempty"`
+	ItemID    string                 `json:"story,omitempty"`
 	Duration  *int64                 `json:"duration,omitempty"` // nanoseconds
 	Success   *bool                  `json:"success,omitempty"`
 	Message   string                 `json:"msg,omitempty"`
@@ -60,7 +60,7 @@ type RunLogger struct {
 	mu           sync.Mutex
 	runNumber    int
 	iteration    int
-	currentStory string
+	currentItem string
 	startTime    time.Time
 	featureDir   string
 	enabled      bool
@@ -163,11 +163,11 @@ func (l *RunLogger) SetIteration(n int) {
 	l.iteration = n
 }
 
-// SetCurrentStory sets the current story ID
-func (l *RunLogger) SetCurrentStory(id string) {
+// SetCurrentItem sets the current item ID
+func (l *RunLogger) SetCurrentItem(id string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.currentStory = id
+	l.currentItem = id
 }
 
 // logEvent is an internal helper that writes an event with all fields
@@ -185,8 +185,8 @@ func (l *RunLogger) logEvent(event Event) {
 	if event.Iteration == 0 {
 		event.Iteration = l.iteration
 	}
-	if event.StoryID == "" {
-		event.StoryID = l.currentStory
+	if event.ItemID == "" {
+		event.ItemID = l.currentItem
 	}
 
 	l.encoder.Encode(event)
@@ -219,11 +219,11 @@ func (l *RunLogger) RunEnd(success bool, summary string) {
 }
 
 // IterationStart logs the start of an iteration
-func (l *RunLogger) IterationStart(storyID, title string, retries int) {
+func (l *RunLogger) IterationStart(itemID, title string, retries int) {
 	l.iterationStart = time.Now()
 	l.logEvent(Event{
-		Type:    EventIterationStart,
-		StoryID: storyID,
+		Type:   EventIterationStart,
+		ItemID: itemID,
 		Data: map[string]interface{}{
 			"title":   title,
 			"retries": retries,
@@ -385,8 +385,8 @@ func (l *RunLogger) ServiceHealth(name string, healthy bool, issue string) {
 	})
 }
 
-// StateChange logs a story state change
-func (l *RunLogger) StateChange(storyID, from, to string, details map[string]interface{}) {
+// StateChange logs an item state change
+func (l *RunLogger) StateChange(itemID, from, to string, details map[string]interface{}) {
 	data := map[string]interface{}{
 		"from": from,
 		"to":   to,
@@ -395,8 +395,8 @@ func (l *RunLogger) StateChange(storyID, from, to string, details map[string]int
 		data[k] = v
 	}
 	l.logEvent(Event{
-		Type:    EventStateChange,
-		StoryID: storyID,
+		Type:   EventStateChange,
+		ItemID: itemID,
 		Data:    data,
 	})
 }
@@ -702,7 +702,7 @@ func ReadEventsFromReader(r io.Reader, filter *EventFilter) ([]Event, error) {
 // EventFilter filters events when reading logs
 type EventFilter struct {
 	EventType EventType
-	StoryID   string
+	ItemID    string
 }
 
 // Match returns true if the event matches the filter
@@ -710,7 +710,7 @@ func (f *EventFilter) Match(event *Event) bool {
 	if f.EventType != "" && event.Type != f.EventType {
 		return false
 	}
-	if f.StoryID != "" && event.StoryID != f.StoryID {
+	if f.ItemID != "" && event.ItemID != f.ItemID {
 		return false
 	}
 	return true
@@ -724,11 +724,11 @@ func GetRunSummary(logPath string) (*DetailedRunSummary, error) {
 	}
 
 	summary := &DetailedRunSummary{
-		Stories: make(map[string]*StorySummary),
+		Items: make(map[string]*ItemSummary),
 	}
 
-	var currentStory string
-	storyStarts := make(map[string]time.Time)
+	var currentItem string
+	itemStarts := make(map[string]time.Time)
 
 	for _, event := range events {
 		switch event.Type {
@@ -752,26 +752,26 @@ func GetRunSummary(logPath string) (*DetailedRunSummary, error) {
 			summary.Result = event.Message
 
 		case EventIterationStart:
-			currentStory = event.StoryID
-			storyStarts[currentStory] = event.Timestamp
+			currentItem = event.ItemID
+			itemStarts[currentItem] = event.Timestamp
 
-			if _, exists := summary.Stories[currentStory]; !exists {
-				summary.Stories[currentStory] = &StorySummary{
-					ID: currentStory,
+			if _, exists := summary.Items[currentItem]; !exists {
+				summary.Items[currentItem] = &ItemSummary{
+					ID: currentItem,
 				}
 			}
 			if event.Data != nil {
 				if t, ok := event.Data["title"].(string); ok {
-					summary.Stories[currentStory].Title = t
+					summary.Items[currentItem].Title = t
 				}
 				if r, ok := event.Data["retries"].(float64); ok {
-					summary.Stories[currentStory].Retries = int(r)
+					summary.Items[currentItem].Retries = int(r)
 				}
 			}
 
 		case EventIterationEnd:
-			if s, exists := summary.Stories[currentStory]; exists {
-				if start, ok := storyStarts[currentStory]; ok {
+			if s, exists := summary.Items[currentItem]; exists {
+				if start, ok := itemStarts[currentItem]; ok {
 					d := event.Timestamp.Sub(start)
 					s.Duration = &d
 				}
@@ -824,15 +824,15 @@ type DetailedRunSummary struct {
 	Duration      *time.Duration
 	Success       *bool
 	Result        string
-	Stories       map[string]*StorySummary
+	Items         map[string]*ItemSummary
 	VerifyResults []VerifyResult
 	Learnings     []string
 	Warnings      int
 	Errors        int
 }
 
-// StorySummary contains summary info about a story's execution
-type StorySummary struct {
+// ItemSummary contains summary info about an item's execution
+type ItemSummary struct {
 	ID       string
 	Title    string
 	Duration *time.Duration

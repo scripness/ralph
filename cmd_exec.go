@@ -317,7 +317,7 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 		}
 		fmt.Println(strings.Repeat("=", 60))
 
-		logger.SetCurrentStory(item.Title)
+		logger.SetCurrentItem(item.Title)
 		logger.IterationStart(item.Title, item.Title, itemState.Attempts)
 
 		// Log item_start to progress
@@ -795,8 +795,8 @@ func scripProcessLine(line string, result *ProviderResult, logger *RunLogger) {
 
 // scripRunVerify runs verification commands from ScripVerifyConfig.
 // Returns a result indicating pass/fail with reason.
-func scripRunVerify(projectRoot string, verify *ScripVerifyConfig, timeoutSec int, logger *RunLogger) *StoryVerifyResult {
-	result := &StoryVerifyResult{passed: true}
+func scripRunVerify(projectRoot string, verify *ScripVerifyConfig, timeoutSec int, logger *RunLogger) *ItemVerifyResult {
+	result := &ItemVerifyResult{passed: true}
 	var allOutput []string
 
 	for _, cmd := range verify.VerifyCommands() {

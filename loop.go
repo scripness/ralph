@@ -21,8 +21,8 @@ type ProviderResult struct {
 	TimedOut  bool
 }
 
-// StoryVerifyResult contains the result of story verification
-type StoryVerifyResult struct {
+// ItemVerifyResult contains the result of item verification
+type ItemVerifyResult struct {
 	passed bool
 	reason string
 	output string // combined command output (available even on success)

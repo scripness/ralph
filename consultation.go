@@ -40,7 +40,7 @@ type ConsultationResult struct {
 }
 
 // frameworkKeywords maps resource names to keywords that indicate relevance.
-// A story must match 2+ keywords to be considered relevant.
+// An item must match 2+ keywords to be considered relevant.
 var frameworkKeywords = map[string][]string{
 	// Frontend
 	"next": {"next", "app router", "server action", "server component", "client component",
@@ -107,7 +107,7 @@ var frameworkKeywords = map[string][]string{
 	"chi":   {"chi", "router", "handler", "middleware", "r.Get", "r.Post"},
 }
 
-// frameworkTagMap maps story tags to relevant resource names.
+// frameworkTagMap maps item tags to relevant resource names.
 var frameworkTagMap = map[string][]string{
 	"ui":       {"next", "react", "svelte", "@sveltejs/kit", "vue", "nuxt", "angular", "tailwindcss", "phoenix_live_view"},
 	"db":       {"prisma", "@prisma/client", "drizzle-orm", "ecto"},
@@ -151,7 +151,7 @@ func relevantFrameworks(item *PlanItem, cached []CachedResource, maxFrameworks i
 			score += hits
 		} else {
 			// Name-based matching for auto-resolved deps without keyword entries.
-			// Check if any name variant appears in the story text.
+			// Check if any name variant appears in the item text.
 			variants := dependencyNameVariants(cr.Name)
 			for _, v := range variants {
 				if len(v) >= 3 && strings.Contains(searchText, v) {
@@ -195,11 +195,11 @@ func allCachedFrameworks(cached []CachedResource, maxFrameworks int) []CachedRes
 	return cached[:maxFrameworks]
 }
 
-// consultCacheKey generates a deterministic cache key for a story+framework consultation.
-func consultCacheKey(storyID, framework, commit, storyDescription string) string {
+// consultCacheKey generates a deterministic cache key for an item+framework consultation.
+func consultCacheKey(itemID, framework, commit, itemDescription string) string {
 	h := sha256.New()
-	h.Write([]byte(storyID + "\x00" + framework + "\x00" + commit + "\x00" + storyDescription))
-	return fmt.Sprintf("%s-%s-%x", storyID, framework, h.Sum(nil)[:8])
+	h.Write([]byte(itemID + "\x00" + framework + "\x00" + commit + "\x00" + itemDescription))
+	return fmt.Sprintf("%s-%s-%x", itemID, framework, h.Sum(nil)[:8])
 }
 
 // featureConsultCacheKey generates a cache key for feature-level consultation.
@@ -327,7 +327,7 @@ func hasCitations(guidance string) bool {
 
 // generateConsultItemPrompt builds the consult-item.md prompt for per-item consultation.
 func generateConsultItemPrompt(cr CachedResource, item *PlanItem, itemIndex int, techStack string) string {
-	storyID := fmt.Sprintf("item-%d", itemIndex+1)
+	itemID := fmt.Sprintf("item-%d", itemIndex+1)
 
 	var criteriaLines []string
 	for _, c := range item.Acceptance {
@@ -337,9 +337,9 @@ func generateConsultItemPrompt(cr CachedResource, item *PlanItem, itemIndex int,
 	return getPrompt("consult-item", map[string]string{
 		"framework":          cr.Name,
 		"frameworkPath":      cr.Path,
-		"storyId":            storyID,
-		"storyTitle":         item.Title,
-		"storyDescription":   strings.Join(item.Acceptance, "\n"),
+		"itemId":             itemID,
+		"itemTitle":          item.Title,
+		"itemDescription":    strings.Join(item.Acceptance, "\n"),
 		"techStack":          techStack,
 		"acceptanceCriteria": strings.Join(criteriaLines, "\n"),
 	})
@@ -552,8 +552,8 @@ func consultForItem(projectRoot string, featureDir *FeatureDir, item *PlanItem, 
 
 	git := NewGitOps(projectRoot)
 	commit := git.GetLastCommit()
-	storyID := fmt.Sprintf("item-%d", itemIndex+1)
-	storyDescription := strings.Join(item.Acceptance, "\n")
+	itemID := fmt.Sprintf("item-%d", itemIndex+1)
+	itemDescription := strings.Join(item.Acceptance, "\n")
 
 	result := &ConsultationResult{}
 
@@ -565,7 +565,7 @@ func consultForItem(projectRoot string, featureDir *FeatureDir, item *PlanItem, 
 	var jobs []consultJob
 
 	for _, cr := range relevant {
-		cacheKey := consultCacheKey(storyID, cr.Name, commit, storyDescription)
+		cacheKey := consultCacheKey(itemID, cr.Name, commit, itemDescription)
 
 		if cachedGuidance, ok := loadCachedConsultation(featureDir.Path, cacheKey); ok {
 			result.Consultations = append(result.Consultations, ResourceConsultation{
