@@ -11,11 +11,11 @@ builds:
       - arm64
     ldflags:
       - -s -w -X main.version={{.Version}}
-    binary: ralph
+    binary: scrip
 
 archives:
   - formats: [binary]
-    name_template: "ralph-{{ .Os }}-{{ .Arch }}"
+    name_template: "scrip-{{ .Os }}-{{ .Arch }}"
 
 release:
   github:
