@@ -674,6 +674,134 @@ func TestExecStuckSkip(t *testing.T) {
 	t.Log("Stuck-skip lifecycle completed successfully")
 }
 
+// --- Land Fail → Retry → Pass ---
+
+// TestLandFailPlanLoop exercises the land-fail→retry→pass cycle:
+// prep → plan → exec → land (fail: VERIFY_FAIL + fix stuck) → land (pass).
+// Verifies progress.jsonl contains land_failed before land_passed events.
+func TestLandFailPlanLoop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	scripBin, mockDir := ensureIntegrationBinaries(t)
+	projectDir := setupIntegrationProject(t)
+
+	counterPath := filepath.Join(os.TempDir(), "mock-claude-counter")
+	os.Remove(counterPath)
+	t.Cleanup(func() { os.Remove(counterPath) })
+
+	// Phase 1: prep/plan/exec + first land (analysis fails, fix loop stuck).
+	// Order matters: land-fix.md contains "autonomous coding agent", so
+	// "Landing Fix" must precede that match to avoid false DONE responses.
+	configPath := writeMockConfig(t, []mockResponse{
+		{Match: "planning agent", Response: mockPlanDraft},
+		{Match: "adversarial verification", Response: mockVerifyPass},
+		{Match: "Landing Analysis", Response: "<scrip>VERIFY_FAIL:Missing error handling in main.go:5</scrip>\n"},
+		{Match: "Landing Fix", Response: mockStuck},
+		{Match: "autonomous coding agent", Response: mockExecDone, Commit: true},
+	})
+	env := envWithMockPath(integrationEnv(projectDir, configPath), mockDir)
+
+	// Prep + Plan + Exec
+	runCmd(t, scripBin, projectDir, env, "prep")
+	runCmdExpect(t, scripBin, projectDir, env,
+		map[string]string{"Finalize?": "yes"},
+		2*time.Minute,
+		"plan", "test-feat", "Add test endpoint",
+	)
+	runCmd(t, scripBin, projectDir, env, "exec", "test-feat")
+
+	// First land — expected to fail (VERIFY_FAIL → 3 STUCK fix attempts → land_failed)
+	t.Log("First land attempt (expected to fail)")
+	cmd := exec.Command(scripBin, "land", "test-feat")
+	cmd.Dir = projectDir
+	cmd.Env = env
+	var landOut1, landErr1 bytes.Buffer
+	cmd.Stdout = &landOut1
+	cmd.Stderr = &landErr1
+	landErr := cmd.Run()
+	if landErr == nil {
+		t.Fatal("expected first scrip land to fail, but it succeeded")
+	}
+
+	// Verify land_failed event after first land
+	featureDir := findFeatureDir(t, projectDir, "test-feat")
+	progressJsonl := filepath.Join(featureDir, "progress.jsonl")
+	events, err := LoadProgressEvents(progressJsonl)
+	if err != nil {
+		t.Fatalf("load progress events: %v", err)
+	}
+	hasLandFailed := false
+	for _, e := range events {
+		if e.Event == ProgressLandFailed {
+			hasLandFailed = true
+		}
+	}
+	if !hasLandFailed {
+		t.Error("progress.jsonl missing land_failed event after first land attempt")
+	}
+
+	// Phase 2: overwrite mock config for second land (analysis passes).
+	// Must write to same configPath — t.TempDir() returns unique dirs per call.
+	phase2Data, _ := json.Marshal([]mockResponse{
+		{Match: "Landing Analysis", Response: mockVerifyPass},
+		{Match: "Feature Summary Generation", Response: mockSummary},
+	})
+	if err := os.WriteFile(configPath, phase2Data, 0644); err != nil {
+		t.Fatalf("write phase 2 config: %v", err)
+	}
+
+	// Second land — should succeed (VERIFY_PASS → summary → land_passed)
+	t.Log("Second land attempt (expected to succeed)")
+	cmd2 := exec.Command(scripBin, "land", "test-feat")
+	cmd2.Dir = projectDir
+	cmd2.Env = env
+	var landOut2, landErr2 bytes.Buffer
+	cmd2.Stdout = &landOut2
+	cmd2.Stderr = &landErr2
+	if err := cmd2.Run(); err != nil {
+		t.Fatalf("second scrip land failed:\nSTDOUT: %s\nSTDERR: %s\nError: %v",
+			landOut2.String(), landErr2.String(), err)
+	}
+
+	// Verify progress events: land_failed before land_passed
+	events, _ = LoadProgressEvents(progressJsonl)
+	landFailedIdx := -1
+	landPassedIdx := -1
+	for i, e := range events {
+		if e.Event == ProgressLandFailed && landFailedIdx == -1 {
+			landFailedIdx = i
+		}
+		if e.Event == ProgressLandPassed && landPassedIdx == -1 {
+			landPassedIdx = i
+		}
+	}
+	if landFailedIdx == -1 {
+		t.Error("progress.jsonl missing land_failed event")
+	}
+	if landPassedIdx == -1 {
+		t.Error("progress.jsonl missing land_passed event")
+	}
+	if landFailedIdx >= 0 && landPassedIdx >= 0 && landFailedIdx >= landPassedIdx {
+		t.Error("land_failed should appear before land_passed in progress.jsonl")
+	}
+
+	// Verify summary was generated
+	summaryMd := filepath.Join(featureDir, "summary.md")
+	if _, err := os.Stat(summaryMd); os.IsNotExist(err) {
+		t.Error("summary.md not created after successful second land")
+	}
+
+	// Verify plan.md was purged
+	planMd := filepath.Join(featureDir, "plan.md")
+	if _, err := os.Stat(planMd); err == nil {
+		t.Error("plan.md still exists after successful land")
+	}
+
+	t.Log("Land-fail-fix-pass lifecycle completed successfully")
+}
+
 // --- Helpers ---
 
 func findFeatureDir(t *testing.T, projectDir, feature string) string {
