@@ -483,6 +483,197 @@ func TestPrepPlanExecLand(t *testing.T) {
 	t.Log("Full lifecycle completed successfully")
 }
 
+// --- Retry / Stuck Integration Tests ---
+
+const mockStuck = "<scrip>STUCK:intentionally stuck</scrip>\n"
+
+// setupRetryTestProject creates a test project where go test fails
+// until impl-1.txt exists (created by mock provider's git commit).
+// This ensures verify-at-top doesn't short-circuit retry attempts.
+func setupRetryTestProject(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "test@scrip.dev"},
+		{"config", "user.name", "Scrip Test"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	writeFile(t, dir, "go.mod", "module example.com/retry-test\n\ngo 1.21\n")
+	writeFile(t, dir, "main.go", "package main\n\nfunc main() {}\n")
+	writeFile(t, dir, "main_test.go", `package main
+
+import (
+	"os"
+	"testing"
+)
+
+func TestImplementation(t *testing.T) {
+	if _, err := os.Stat("impl-1.txt"); err != nil {
+		t.Fatal("implementation not found")
+	}
+}
+`)
+
+	gitRun(t, dir, "add", "-A")
+	gitRun(t, dir, "commit", "-m", "initial commit")
+
+	return dir
+}
+
+// TestExecRetryThenPass verifies that an item stuck on first attempt
+// is retried and passes on second attempt with a commit.
+func TestExecRetryThenPass(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	scripBin, mockDir := ensureIntegrationBinaries(t)
+	projectDir := setupRetryTestProject(t)
+
+	counterPath := filepath.Join(os.TempDir(), "mock-claude-counter")
+	os.Remove(counterPath)
+	t.Cleanup(func() { os.Remove(counterPath) })
+
+	configPath := writeMockConfig(t, []mockResponse{
+		{Match: "planning agent", Response: mockPlanDraft},
+		{Match: "adversarial verification", Response: mockVerifyPass},
+		// Retry attempt: prompt contains "Retry Context" — commit + DONE
+		{Match: "Retry Context", Response: mockExecDone, Commit: true},
+		// First attempt: only "autonomous coding agent" matches — STUCK
+		{Match: "autonomous coding agent", Response: mockStuck},
+	})
+
+	env := envWithMockPath(integrationEnv(projectDir, configPath), mockDir)
+
+	// Prep + Plan
+	runCmd(t, scripBin, projectDir, env, "prep")
+	runCmdExpect(t, scripBin, projectDir, env,
+		map[string]string{"Finalize?": "yes"},
+		2*time.Minute,
+		"plan", "test-feat", "Add test endpoint",
+	)
+
+	// Exec — STUCK on first attempt, DONE on retry
+	runCmd(t, scripBin, projectDir, env, "exec", "test-feat")
+
+	// Verify progress events
+	featureDir := findFeatureDir(t, projectDir, "test-feat")
+	progressJsonl := filepath.Join(featureDir, "progress.jsonl")
+	events, err := LoadProgressEvents(progressJsonl)
+	if err != nil {
+		t.Fatalf("load progress events: %v", err)
+	}
+
+	hasItemStuck := false
+	hasItemDonePassed := false
+	stuckIdx, doneIdx := -1, -1
+	for i, e := range events {
+		if e.Event == ProgressItemStuck && stuckIdx == -1 {
+			hasItemStuck = true
+			stuckIdx = i
+		}
+		if e.Event == ProgressItemDone && e.Status == "passed" {
+			hasItemDonePassed = true
+			doneIdx = i
+		}
+	}
+
+	if !hasItemStuck {
+		t.Error("progress.jsonl missing item_stuck event")
+	}
+	if !hasItemDonePassed {
+		t.Error("progress.jsonl missing item_done(passed) event")
+	}
+	if stuckIdx >= 0 && doneIdx >= 0 && stuckIdx >= doneIdx {
+		t.Error("item_stuck should appear before item_done(passed)")
+	}
+
+	t.Log("Retry-then-pass lifecycle completed successfully")
+}
+
+// TestExecStuckSkip verifies that an item stuck on all retry attempts
+// (scripMaxRetries=3) is auto-skipped.
+func TestExecStuckSkip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	scripBin, mockDir := ensureIntegrationBinaries(t)
+	projectDir := setupRetryTestProject(t)
+
+	counterPath := filepath.Join(os.TempDir(), "mock-claude-counter")
+	os.Remove(counterPath)
+	t.Cleanup(func() { os.Remove(counterPath) })
+
+	configPath := writeMockConfig(t, []mockResponse{
+		{Match: "planning agent", Response: mockPlanDraft},
+		{Match: "adversarial verification", Response: mockVerifyPass},
+		// All exec attempts return STUCK
+		{Match: "autonomous coding agent", Response: mockStuck},
+	})
+
+	env := envWithMockPath(integrationEnv(projectDir, configPath), mockDir)
+
+	// Prep + Plan
+	runCmd(t, scripBin, projectDir, env, "prep")
+	runCmdExpect(t, scripBin, projectDir, env,
+		map[string]string{"Finalize?": "yes"},
+		2*time.Minute,
+		"plan", "test-feat", "Add test endpoint",
+	)
+
+	// Exec — all 3 attempts STUCK → item skipped
+	runCmd(t, scripBin, projectDir, env, "exec", "test-feat")
+
+	// Verify progress events
+	featureDir := findFeatureDir(t, projectDir, "test-feat")
+	progressJsonl := filepath.Join(featureDir, "progress.jsonl")
+	events, err := LoadProgressEvents(progressJsonl)
+	if err != nil {
+		t.Fatalf("load progress events: %v", err)
+	}
+
+	stuckCount := 0
+	hasSkipped := false
+	for _, e := range events {
+		if e.Event == ProgressItemStuck {
+			stuckCount++
+		}
+		if e.Event == ProgressItemDone && e.Status == "skipped" {
+			hasSkipped = true
+		}
+	}
+
+	if stuckCount < 3 {
+		t.Errorf("expected at least 3 item_stuck events, got %d", stuckCount)
+	}
+	if !hasSkipped {
+		t.Error("progress.jsonl missing item_done(skipped) event")
+	}
+
+	// Verify exec_end counts
+	execEnd := LastEventByType(events, ProgressExecEnd)
+	if execEnd == nil {
+		t.Fatal("progress.jsonl missing exec_end event")
+	}
+	if execEnd.Passed != 0 {
+		t.Errorf("exec_end.passed = %d, want 0", execEnd.Passed)
+	}
+	if execEnd.Skipped != 1 {
+		t.Errorf("exec_end.skipped = %d, want 1", execEnd.Skipped)
+	}
+
+	t.Log("Stuck-skip lifecycle completed successfully")
+}
+
 // --- Helpers ---
 
 func findFeatureDir(t *testing.T, projectDir, feature string) string {
