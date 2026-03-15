@@ -215,6 +215,15 @@ func (g *GitOps) DiffSince(hash string) string {
 	return strings.TrimSpace(out)
 }
 
+// DiffBetweenCommits returns the diff between two commit hashes.
+func (g *GitOps) DiffBetweenCommits(hash1, hash2 string) (string, error) {
+	out, err := g.run("diff", hash1+".."+hash2)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // HasNewCommitSince returns true if HEAD is different from the given hash.
 func (g *GitOps) HasNewCommitSince(hash string) bool {
 	current := g.GetLastCommit()

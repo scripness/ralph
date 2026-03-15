@@ -351,6 +351,17 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 				"## Retry Context\n\nYou are retrying (attempt %d of %d). Previous attempt failed:\n%s\n\nDo NOT re-implement from scratch. Focus on the specific failure and try a different approach.",
 				itemState.Attempts+1, scripMaxRetries, itemState.LastFailure,
 			)
+			// Append diff from previous failed attempt if available
+			if itemState.LastCommit != "" {
+				diff, err := git.DiffBetweenCommits(preRunCommit, itemState.LastCommit)
+				if err == nil && diff != "" {
+					const maxDiffBytes = 8192
+					if len(diff) > maxDiffBytes {
+						diff = diff[:maxDiffBytes] + "\n... (truncated)"
+					}
+					retryContext += fmt.Sprintf("\n\n## Previous Attempt Diff\n\n```diff\n%s\n```", diff)
+				}
+			}
 		}
 
 		// Collect learnings from progress events for prompt injection

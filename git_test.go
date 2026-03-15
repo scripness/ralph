@@ -176,6 +176,37 @@ func TestGitOps_CommitFiles_NoChanges(t *testing.T) {
 	}
 }
 
+func TestGitOps_DiffBetweenCommits(t *testing.T) {
+	dir, git := initTestRepo(t)
+
+	hash1 := git.GetLastCommit()
+
+	// Create a file and commit
+	os.WriteFile(filepath.Join(dir, "diff-test.txt"), []byte("hello"), 0644)
+	git.CommitFiles([]string{"diff-test.txt"}, "add diff-test")
+	hash2 := git.GetLastCommit()
+
+	diff, err := git.DiffBetweenCommits(hash1, hash2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(diff, "diff-test.txt") {
+		t.Errorf("expected diff to mention diff-test.txt, got: %s", diff)
+	}
+	if !strings.Contains(diff, "+hello") {
+		t.Errorf("expected diff to contain +hello, got: %s", diff)
+	}
+
+	// Same hash — empty diff
+	diff, err = git.DiffBetweenCommits(hash2, hash2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if diff != "" {
+		t.Errorf("expected empty diff for same hash, got: %s", diff)
+	}
+}
+
 func TestGitOps_GetLastCommit(t *testing.T) {
 	_, git := initTestRepo(t)
 
