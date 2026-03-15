@@ -16,7 +16,7 @@ type Dependency struct {
 }
 
 // CodebaseContext contains discovered information about the codebase
-// Used to provide context to PRD creation prompts
+// Used to provide context to plan creation prompts
 type CodebaseContext struct {
 	TechStack      string       // "typescript", "go", "python", "rust", etc.
 	PackageManager string       // "bun", "npm", "yarn", "pnpm", "go", "cargo", "pip"

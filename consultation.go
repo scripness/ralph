@@ -187,7 +187,7 @@ func relevantFrameworks(item *PlanItem, cached []CachedResource, maxFrameworks i
 }
 
 // allCachedFrameworks returns all cached resources, capped at maxFrameworks.
-// Used for feature-level consultations (PRD, verify) where all frameworks are relevant.
+// Used for feature-level consultations (plan, land) where all frameworks are relevant.
 func allCachedFrameworks(cached []CachedResource, maxFrameworks int) []CachedResource {
 	if len(cached) <= maxFrameworks {
 		return cached
