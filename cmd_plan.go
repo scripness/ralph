@@ -147,10 +147,15 @@ func cmdPlan(args []string) {
 
 		hasDraft := containsPlanDraft(response)
 
+		var consultationSlice []string
+		if consultation != "" {
+			consultationSlice = []string{consultation}
+		}
 		round := &PlanRound{
 			Round:        roundNum,
 			Timestamp:    time.Now().UTC().Format(time.RFC3339),
 			UserInput:    userInput,
+			Consultation: consultationSlice,
 			AIResponse:   response,
 			HasPlanDraft: hasDraft,
 		}
