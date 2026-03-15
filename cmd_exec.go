@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -367,7 +368,7 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 		logger.ProviderStart()
 		providerStart := time.Now()
 
-		result, provErr := scripSpawnProvider(cfg.ProjectRoot, prompt, cfg.Config.Provider.Timeout, true, logger, cleanup, sessState, statePath)
+		result, provErr := scripSpawnProvider(cfg.ProjectRoot, prompt, cfg.Config.Provider.Timeout, cfg.Config.Provider.StallTimeout, true, logger, cleanup, sessState, statePath)
 
 		// Log provider end
 		var detectedMarkers []string
@@ -558,7 +559,9 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 
 // scripSpawnProvider spawns claude with scrip-specific args and processes output.
 // Always uses stdin mode (claude reads prompt from stdin).
-func scripSpawnProvider(projectRoot, prompt string, timeoutSec int, autonomous bool, logger *RunLogger, cleanup *CleanupCoordinator, sessState *SessionState, statePath string) (*ProviderResult, error) {
+// stallTimeoutSec controls idle-output detection: if the provider produces no output
+// for this many seconds, it is killed (same as hard timeout). 0 disables stall detection.
+func scripSpawnProvider(projectRoot, prompt string, timeoutSec, stallTimeoutSec int, autonomous bool, logger *RunLogger, cleanup *CleanupCoordinator, sessState *SessionState, statePath string) (*ProviderResult, error) {
 	timeout := time.Duration(timeoutSec) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -614,6 +617,44 @@ func scripSpawnProvider(projectRoot, prompt string, timeoutSec int, autonomous b
 	var outputBuilder strings.Builder
 	result := &ProviderResult{}
 
+	// Stall timeout: kill provider if no output for stallTimeoutSec seconds.
+	// Activity channel is buffered so scanner loops never block on send.
+	var stallTimedOut atomic.Bool
+	activityCh := make(chan struct{}, 1)
+	if stallTimeoutSec > 0 {
+		stallDuration := time.Duration(stallTimeoutSec) * time.Second
+		go func() {
+			stallTimer := time.NewTimer(stallDuration)
+			defer stallTimer.Stop()
+			for {
+				select {
+				case <-activityCh:
+					if !stallTimer.Stop() {
+						select {
+						case <-stallTimer.C:
+						default:
+						}
+					}
+					stallTimer.Reset(stallDuration)
+				case <-stallTimer.C:
+					stallTimedOut.Store(true)
+					cancel()
+					return
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// notifyActivity sends a non-blocking signal on the activity channel.
+	notifyActivity := func() {
+		select {
+		case activityCh <- struct{}{}:
+		default:
+		}
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 
@@ -624,6 +665,7 @@ func scripSpawnProvider(projectRoot, prompt string, timeoutSec int, autonomous b
 		s.Buffer(make([]byte, 64*1024), 1024*1024)
 		for s.Scan() {
 			line := s.Text()
+			notifyActivity()
 			if logger != nil {
 				logger.ProviderLine("stderr", line)
 			}
@@ -639,6 +681,7 @@ func scripSpawnProvider(projectRoot, prompt string, timeoutSec int, autonomous b
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
+		notifyActivity()
 		if logger != nil {
 			logger.ProviderLine("stdout", line)
 		}
@@ -657,8 +700,11 @@ func scripSpawnProvider(projectRoot, prompt string, timeoutSec int, autonomous b
 	err = cmd.Wait()
 	result.Output = outputBuilder.String()
 
-	if ctx.Err() == context.DeadlineExceeded {
+	if ctx.Err() == context.DeadlineExceeded || stallTimedOut.Load() {
 		result.TimedOut = true
+		if stallTimedOut.Load() {
+			return result, fmt.Errorf("provider stalled (no output for %ds)", stallTimeoutSec)
+		}
 		return result, fmt.Errorf("provider timed out after %v", timeout)
 	}
 
