@@ -458,6 +458,42 @@ func TestScripConfigRoundTrip(t *testing.T) {
 	}
 }
 
+func TestScripVerifyConfig_DeepVerifyDefault(t *testing.T) {
+	dir := t.TempDir()
+	scripDir := filepath.Join(dir, ".scrip")
+	os.MkdirAll(scripDir, 0755)
+
+	// Config without deepVerify field — should default to false
+	configContent := `{
+		"project": {"name": "test", "type": "go"},
+		"verify": {"test": "go test ./..."}
+	}`
+	os.WriteFile(filepath.Join(scripDir, "config.json"), []byte(configContent), 0644)
+
+	loaded, err := LoadScripConfig(dir)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if loaded.Config.Verify.DeepVerify {
+		t.Error("DeepVerify should default to false when absent from config")
+	}
+
+	// Config with deepVerify: true
+	configContent = `{
+		"project": {"name": "test", "type": "go"},
+		"verify": {"test": "go test ./...", "deepVerify": true}
+	}`
+	os.WriteFile(filepath.Join(scripDir, "config.json"), []byte(configContent), 0644)
+
+	loaded, err = LoadScripConfig(dir)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if !loaded.Config.Verify.DeepVerify {
+		t.Error("DeepVerify should be true when set in config")
+	}
+}
+
 func TestLoadScripConfig_ServiceDefaults(t *testing.T) {
 	dir := t.TempDir()
 	scripDir := filepath.Join(dir, ".scrip")

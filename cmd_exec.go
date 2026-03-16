@@ -553,38 +553,40 @@ func scripExecLoop(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan)
 		}
 		logger.VerifyEnd(true)
 
-		// AI deep analysis — adversarial verification of the implementation
-		fmt.Println("\n  Running AI deep analysis...")
-		itemDiff := git.DiffSince(preRunCommit)
-		verifyPrompt := generateExecVerifyPrompt(item, itemDiff, vResult.output)
-		analyzeResult, analyzeErr := scripSpawnProvider(cfg.ProjectRoot, verifyPrompt, cfg.Config.Provider.Timeout, cfg.Config.Provider.StallTimeout, false, logger, cleanup, nil, "")
+		// AI deep analysis — adversarial verification of the implementation (opt-in)
+		if cfg.Config.Verify.DeepVerify {
+			fmt.Println("\n  Running AI deep analysis...")
+			itemDiff := git.DiffSince(preRunCommit)
+			verifyPrompt := generateExecVerifyPrompt(item, itemDiff, vResult.output)
+			analyzeResult, analyzeErr := scripSpawnProvider(cfg.ProjectRoot, verifyPrompt, cfg.Config.Provider.Timeout, cfg.Config.Provider.StallTimeout, false, logger, cleanup, nil, "")
 
-		if analyzeErr == nil && analyzeResult != nil {
-			deepPassed, failures := landParseAnalysis(analyzeResult)
-			if !deepPassed {
-				reason := fmt.Sprintf("AI deep analysis: %s", strings.Join(failures, "; "))
-				fmt.Printf("\n  ! %s\n", reason)
+			if analyzeErr == nil && analyzeResult != nil {
+				deepPassed, failures := landParseAnalysis(analyzeResult)
+				if !deepPassed {
+					reason := fmt.Sprintf("AI deep analysis: %s", strings.Join(failures, "; "))
+					fmt.Printf("\n  ! %s\n", reason)
 
-				_ = AppendProgressEvent(progressPath, &ProgressEvent{
-					Event:  ProgressItemStuck,
-					Item:   item.Title,
-					Reason: reason,
-				})
-
-				if itemState.Attempts+1 >= scripMaxRetries {
 					_ = AppendProgressEvent(progressPath, &ProgressEvent{
-						Event:  ProgressItemDone,
+						Event:  ProgressItemStuck,
 						Item:   item.Title,
-						Status: "skipped",
+						Reason: reason,
 					})
-				}
 
-				logger.IterationEnd(false)
-				continue
+					if itemState.Attempts+1 >= scripMaxRetries {
+						_ = AppendProgressEvent(progressPath, &ProgressEvent{
+							Event:  ProgressItemDone,
+							Item:   item.Title,
+							Status: "skipped",
+						})
+					}
+
+					logger.IterationEnd(false)
+					continue
+				}
+			} else if analyzeErr != nil {
+				// AI deep analysis failed to run — log warning but don't block
+				fmt.Printf("\n  ! AI deep analysis unavailable: %v\n", analyzeErr)
 			}
-		} else if analyzeErr != nil {
-			// AI deep analysis failed to run — log warning but don't block
-			fmt.Printf("\n  ! AI deep analysis unavailable: %v\n", analyzeErr)
 		}
 
 		// Item passed!

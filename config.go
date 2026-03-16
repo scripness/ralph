@@ -61,9 +61,10 @@ type ScripProviderConfig struct {
 
 // ScripVerifyConfig configures verification commands.
 type ScripVerifyConfig struct {
-	Typecheck string `json:"typecheck,omitempty"`
-	Lint      string `json:"lint,omitempty"`
-	Test      string `json:"test"`
+	Typecheck  string `json:"typecheck,omitempty"`
+	Lint       string `json:"lint,omitempty"`
+	Test       string `json:"test"`
+	DeepVerify bool   `json:"deepVerify,omitempty"`
 }
 
 // VerifyCommands returns the ordered list of non-empty verify commands.
