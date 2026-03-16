@@ -381,6 +381,11 @@ func landParseAnalysis(result *ProviderResult) (passed bool, failures []string) 
 		passed = false
 	}
 
+	// Non-empty output with no markers at all — synthetic failure
+	if !passed && len(failures) == 0 && result.Output != "" {
+		failures = append(failures, "Analysis produced output but no VERIFY_PASS/VERIFY_FAIL markers — provider may have truncated or failed to follow instructions")
+	}
+
 	return passed, failures
 }
 

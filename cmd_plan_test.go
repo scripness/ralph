@@ -214,8 +214,14 @@ Item 3 too large.
 			wantFirst:    "Missing database migration for users table",
 		},
 		{
-			name:         "no markers at all",
+			name:         "no markers at all — inconclusive",
 			output:       "Some analysis without any markers",
+			wantWarnings: 1,
+			wantFirst:    "Verification produced output but no markers — treat as inconclusive",
+		},
+		{
+			name:         "empty output — no warnings",
+			output:       "",
 			wantWarnings: 0,
 		},
 		{

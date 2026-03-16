@@ -123,6 +123,21 @@ func TestLandParseAnalysis_EmptyOutput(t *testing.T) {
 	}
 }
 
+func TestLandParseAnalysis_MarkerlessOutput(t *testing.T) {
+	// Non-empty output with no VERIFY_PASS/VERIFY_FAIL markers should produce a synthetic failure
+	result := &ProviderResult{Output: "The code looks fine overall. I reviewed all the changes."}
+	passed, failures := landParseAnalysis(result)
+	if passed {
+		t.Error("expected passed=false for markerless output")
+	}
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 synthetic failure, got %d: %v", len(failures), failures)
+	}
+	if !strings.Contains(failures[0], "no VERIFY_PASS/VERIFY_FAIL markers") {
+		t.Errorf("expected synthetic failure message about missing markers, got %q", failures[0])
+	}
+}
+
 func TestLandExtractSummary(t *testing.T) {
 	output := `Some preamble text.
 <scrip>SUMMARY_START</scrip>

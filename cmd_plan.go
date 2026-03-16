@@ -401,14 +401,22 @@ func runPlanVerification(projectRoot, planContent, codebaseStr string) (*PlanVer
 // the verification agent's output.
 func parsePlanVerifyOutput(output string) *PlanVerification {
 	v := &PlanVerification{}
+	passed := false
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if scripVerifyPassRe.MatchString(trimmed) {
+			passed = true
 			continue
 		}
 		if m := scripVerifyFailRe.FindStringSubmatch(trimmed); len(m) == 2 {
 			v.Warnings = append(v.Warnings, strings.TrimSpace(m[1]))
 		}
 	}
+
+	// Non-empty output with no markers — treat as inconclusive
+	if len(v.Warnings) == 0 && !passed && output != "" {
+		v.Warnings = append(v.Warnings, "Verification produced output but no markers — treat as inconclusive")
+	}
+
 	return v
 }
