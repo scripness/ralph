@@ -371,36 +371,6 @@ func landBuildCriteria(plan *Plan) string {
 	return buf.String()
 }
 
-// landParseAnalysis extracts VERIFY_PASS/VERIFY_FAIL markers from analysis output.
-// Multiple VERIFY_FAIL markers may be present. Failures override pass.
-func landParseAnalysis(result *ProviderResult) (passed bool, failures []string) {
-	if result == nil || result.Output == "" {
-		return false, []string{"analysis produced no output"}
-	}
-
-	for _, line := range strings.Split(result.Output, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if scripVerifyPassRe.MatchString(trimmed) {
-			passed = true
-		}
-		if m := scripVerifyFailRe.FindStringSubmatch(trimmed); len(m) == 2 {
-			failures = append(failures, strings.TrimSpace(m[1]))
-		}
-	}
-
-	// Failures override pass
-	if len(failures) > 0 {
-		passed = false
-	}
-
-	// Non-empty output with no markers at all — synthetic failure
-	if !passed && len(failures) == 0 && result.Output != "" {
-		failures = append(failures, "Analysis produced output but no VERIFY_PASS/VERIFY_FAIL markers — provider may have truncated or failed to follow instructions")
-	}
-
-	return passed, failures
-}
-
 // landExtractSummary extracts text between SUMMARY_START and SUMMARY_END markers.
 // Returns (summary, true) on success, ("", false) if markers missing or content empty.
 func landExtractSummary(output string) (string, bool) {

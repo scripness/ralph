@@ -7,14 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
-)
-
-var (
-	scripVerifyPassRe = regexp.MustCompile(`^\s*<scrip>VERIFY_PASS</scrip>\s*$`)
-	scripVerifyFailRe = regexp.MustCompile(`^\s*<scrip>VERIFY_FAIL:(.+)</scrip>\s*$`)
 )
 
 // cmdPlan implements "scrip plan <feature> [description]" — CLI-mediated
