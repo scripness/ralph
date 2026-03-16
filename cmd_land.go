@@ -171,6 +171,7 @@ func landFeature(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan) e
 		currentDiff := git.GetFullDiff()
 		currentVerify, _ := landRunVerifyCommands(cfg.ProjectRoot, &cfg.Config.Verify, cfg.Config.Provider.Timeout)
 
+		preFixCommit := git.GetLastCommit()
 		fixPrompt := generateLandFixPrompt(failures, currentVerify, currentDiff, consultation)
 		fixStart := time.Now()
 		fixResult, fixErr := scripSpawnProvider(cfg.ProjectRoot, fixPrompt, cfg.Config.Provider.Timeout, cfg.Config.Provider.StallTimeout, true, logger, cleanup, nil, "")
@@ -197,6 +198,17 @@ func landFeature(cfg *ScripResolvedConfig, featureDir *FeatureDir, plan *Plan) e
 				stuckReason = fixResult.StuckNote
 			}
 			fmt.Printf("    %s\n", stuckReason)
+			continue
+		}
+
+		// Verify the fix agent actually committed something
+		if !git.HasNewCommitSince(preFixCommit) {
+			fmt.Println("\n    ! Fix agent signaled DONE but made no new commit.")
+			_ = AppendProgressEvent(progressPath, &ProgressEvent{
+				Event:  ProgressItemStuck,
+				Item:   "landing-fix",
+				Reason: "Fix agent claimed completion without committing changes",
+			})
 			continue
 		}
 
