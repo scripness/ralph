@@ -5,21 +5,6 @@ import (
 	"time"
 )
 
-func TestResourceType_HasFields(t *testing.T) {
-	r := Resource{
-		Name:    "next",
-		URL:     "https://github.com/vercel/next.js",
-		Branch:  "v15.0.0",
-		Version: "15.0.0",
-	}
-	if r.Name != "next" {
-		t.Errorf("unexpected Name: %s", r.Name)
-	}
-	if r.Version != "15.0.0" {
-		t.Errorf("unexpected Version: %s", r.Version)
-	}
-}
-
 func TestResourceRegistry_ResolvedURLCache(t *testing.T) {
 	dir := t.TempDir()
 	reg, err := LoadResourceRegistry(dir)
