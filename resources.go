@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// ResourcesConfig for ralph.config.json
+// ResourcesConfig configures dependency resource caching.
 type ResourcesConfig struct {
 	Enabled  *bool  `json:"enabled,omitempty"`  // default: true
-	CacheDir string `json:"cacheDir,omitempty"` // default: ~/.ralph/resources
+	CacheDir string `json:"cacheDir,omitempty"` // default: ~/.scrip/resources
 }
 
 // IsEnabled returns whether resources are enabled (defaults to true).
@@ -26,18 +26,18 @@ func (c *ResourcesConfig) IsEnabled() bool {
 // GetCacheDir returns the cache directory, expanding ~ to home.
 func (c *ResourcesConfig) GetCacheDir() string {
 	if c == nil || c.CacheDir == "" {
-		return DefaultResourcesCacheDir()
+		return DefaultScripResourcesCacheDir()
 	}
 	return expandHomePath(c.CacheDir)
 }
 
-// DefaultResourcesCacheDir returns the default cache directory.
-func DefaultResourcesCacheDir() string {
+// DefaultScripResourcesCacheDir returns the default cache directory (~/.scrip/resources).
+func DefaultScripResourcesCacheDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".ralph/resources"
+		return ".scrip/resources"
 	}
-	return filepath.Join(home, ".ralph", "resources")
+	return filepath.Join(home, ".scrip", "resources")
 }
 
 // expandHomePath expands ~ to the user's home directory.
@@ -52,6 +52,14 @@ func expandHomePath(path string) string {
 	return path
 }
 
+// Resource maps a framework/library to its source code repository
+type Resource struct {
+	Name    string // e.g., "nextjs", "react", "svelte"
+	URL     string // GitHub repo URL (full source)
+	Branch  string // e.g., "main", "canary" (legacy, used as ref)
+	Version string // resolved exact version (e.g., "3.24.4")
+}
+
 // ResourceManager handles source code repo lifecycle.
 type ResourceManager struct {
 	cacheDir    string
@@ -64,7 +72,7 @@ type ResourceManager struct {
 // NewResourceManager creates a manager for detected dependencies.
 // It resolves repo URLs and exact versions for all dependencies.
 func NewResourceManager(cfg *ResourcesConfig, deps []Dependency, ecosystem, projectRoot string) *ResourceManager {
-	cacheDir := DefaultResourcesCacheDir()
+	cacheDir := DefaultScripResourcesCacheDir()
 	if cfg != nil && cfg.CacheDir != "" {
 		cacheDir = cfg.GetCacheDir()
 	}
@@ -283,16 +291,14 @@ func (rm *ResourceManager) GetCachedResources() []CachedResource {
 	return cached
 }
 
-// ensureResourceSync syncs framework source code resources.
-// Returns nil ResourceManager if resources are disabled or no deps detected.
+// ensureScripResourceSync syncs framework source code resources for scrip.
+// Uses ~/.scrip/resources as the cache directory. Resources are always enabled in scrip.
+// Returns nil ResourceManager if no deps detected.
 // Non-fatal: prints warnings on errors but does not fail.
-func ensureResourceSync(cfg *ResolvedConfig, codebaseCtx *CodebaseContext) *ResourceManager {
-	if cfg.Config.Resources != nil && !cfg.Config.Resources.IsEnabled() {
-		return nil
-	}
-
+func ensureScripResourceSync(cfg *ScripResolvedConfig, codebaseCtx *CodebaseContext) *ResourceManager {
 	ecosystem := ecosystemFromTechStack(codebaseCtx.TechStack)
-	rm := NewResourceManager(cfg.Config.Resources, codebaseCtx.Dependencies, ecosystem, cfg.ProjectRoot)
+	rcfg := &ResourcesConfig{CacheDir: DefaultScripResourcesCacheDir()}
+	rm := NewResourceManager(rcfg, codebaseCtx.Dependencies, ecosystem, cfg.ProjectRoot)
 	if !rm.HasDetectedResources() {
 		return rm
 	}

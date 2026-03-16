@@ -4,7 +4,7 @@ release:
 	gh workflow run release.yml --field bump=patch
 
 build:
-	go build -ldflags="-s -w" -o ralph .
+	go build -ldflags="-s -w" -o scrip .
 
 test:
 	go test ./...

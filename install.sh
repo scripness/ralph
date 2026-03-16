@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Ralph installer
+# Scrip installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/scripness/ralph/main/install.sh | bash
 
 REPO="scripness/ralph"
@@ -43,42 +43,42 @@ get_latest_version() {
 }
 
 # Download and install
-install_ralph() {
+install_scrip() {
     detect_platform
-    
+
     echo "Detecting platform: $PLATFORM"
-    
+
     VERSION=$(get_latest_version)
     if [ -z "$VERSION" ]; then
         echo "Failed to get latest version"
         exit 1
     fi
-    
+
     echo "Latest version: v$VERSION"
-    
-    ASSET_NAME="ralph-${PLATFORM}"
+
+    ASSET_NAME="scrip-${PLATFORM}"
     DOWNLOAD_URL="https://github.com/$REPO/releases/download/v$VERSION/$ASSET_NAME"
-    
+
     echo "Downloading $ASSET_NAME..."
-    
+
     # Create install directory
     mkdir -p "$INSTALL_DIR"
-    
+
     # Download binary
     TMP_FILE=$(mktemp)
     if ! curl -fsSL "$DOWNLOAD_URL" -o "$TMP_FILE"; then
-        echo "Failed to download ralph"
+        echo "Failed to download scrip"
         rm -f "$TMP_FILE"
         exit 1
     fi
-    
+
     # Install binary
     chmod +x "$TMP_FILE"
-    mv "$TMP_FILE" "$INSTALL_DIR/ralph"
-    
+    mv "$TMP_FILE" "$INSTALL_DIR/scrip"
+
     echo ""
-    echo "✓ Ralph v$VERSION installed to $INSTALL_DIR/ralph"
-    
+    echo "Scrip v$VERSION installed to $INSTALL_DIR/scrip"
+
     # Check if install dir is in PATH
     if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
         echo ""
@@ -92,9 +92,9 @@ install_ralph() {
         echo "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zshrc"
         echo "  source ~/.zshrc"
     fi
-    
+
     echo ""
-    echo "Run 'ralph --help' to get started."
+    echo "Run 'scrip --help' to get started."
 }
 
-install_ralph
+install_scrip

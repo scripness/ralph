@@ -302,7 +302,7 @@ func resolveCrates(name string, client *http.Client) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "ralph-cli (https://github.com/scripness/ralph)")
+	req.Header.Set("User-Agent", "scrip-cli (https://github.com/scripness/scrip)")
 
 	resp, err := client.Do(req)
 	if err != nil {

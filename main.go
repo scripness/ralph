@@ -14,69 +14,47 @@ func main() {
 	}
 
 	cmd := os.Args[1]
-	args := os.Args[2:]
-
-	if cmd != "upgrade" {
-		startUpdateCheck()
-		defer printUpdateNotice()
-	}
 
 	switch cmd {
 	case "-h", "--help", "help":
 		showHelp()
 	case "-v", "--version", "version":
-		fmt.Printf("ralph v%s\n", version)
-	case "init":
-		cmdInit(args)
-	case "run":
-		cmdRun(args)
-	case "verify":
-		cmdVerify(args)
-	case "prd":
-		cmdPrd(args)
-	case "status":
-		cmdStatus(args)
-	case "refine":
-		cmdRefine(args)
-	case "doctor":
-		cmdDoctor(args)
-	case "logs":
-		cmdLogs(args)
-	case "upgrade":
-		cmdUpgrade(args)
+		fmt.Printf("scrip v%s\n", version)
+	case "prep":
+		cmdPrep(os.Args[2:])
+	case "plan":
+		cmdPlan(os.Args[2:])
+	case "exec":
+		cmdExec(os.Args[2:])
+	case "land":
+		cmdLand(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-		fmt.Fprintln(os.Stderr, "Run 'ralph --help' for usage.")
+		fmt.Fprintln(os.Stderr, "Run 'scrip --help' for usage.")
 		os.Exit(1)
 	}
 }
 
 func showHelp() {
-	fmt.Printf(`ralph v%s - Autonomous AI agent loop
+	fmt.Printf(`scrip v%s — AI-assisted software development
 
-Usage: ralph <command> [feature] [options]
+Usage: scrip <command> [options]
 
 Commands:
-  init [--force]       Initialize Ralph (creates ralph.config.json + .ralph/)
-  prd <feature>        Create, refine, or manage a PRD for a feature
-  run <feature>        Run the agent loop for a feature
-  verify <feature>     Run verification checks (interactive fix on failure)
-  refine <feature>     Interactive AI session for post-verification refinement
-  status [feature]     Show story status (all features or specific)
-  logs <feature>       View run logs (--list, --summary, --follow, etc.)
-  doctor               Check Ralph environment
-  upgrade              Upgrade Ralph to the latest version
+  prep              Detect project, generate config, cache dependencies
+  plan <feature>    Iterative planning with AI consultation
+  exec <feature>    Autonomous execution loop
+  land <feature>    Verify, summarize, and push
 
 Options:
-  -h, --help           Show this help message
-  -v, --version        Show version number
+  -h, --help        Show this help message
+  -v, --version     Show version number
 
 Examples:
-  ralph init                    # Initialize Ralph in current project
-  ralph prd auth                # Create, refine, or manage PRD for 'auth' feature
-  ralph run auth                # Run the loop for 'auth' feature
-  ralph verify auth             # Run all verification checks for 'auth' feature
-  ralph status                  # Show status of all features
-  ralph status auth             # Show status of 'auth' feature
+  scrip prep                      Set up scrip for this project
+  scrip plan auth "add login"     Plan the auth feature
+  scrip exec auth                 Execute the plan
+  scrip land auth                 Verify and land the feature
 `, version)
 }
+

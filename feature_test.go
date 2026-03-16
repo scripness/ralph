@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,7 +9,7 @@ import (
 
 func TestFindFeatureDir_NoMatch(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".ralph"), 0755)
+	os.MkdirAll(filepath.Join(dir, ".scrip"), 0755)
 
 	_, err := FindFeatureDir(dir, "auth", false)
 	if err == nil {
@@ -39,8 +38,8 @@ func TestFindFeatureDir_CreateNew(t *testing.T) {
 
 func TestFindFeatureDir_MatchExisting(t *testing.T) {
 	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-	featureDir := filepath.Join(ralphDir, "2024-01-15-auth")
+	scripDir := filepath.Join(dir, ".scrip")
+	featureDir := filepath.Join(scripDir, "2024-01-15-auth")
 	os.MkdirAll(featureDir, 0755)
 
 	fd, err := FindFeatureDir(dir, "auth", false)
@@ -58,56 +57,27 @@ func TestFindFeatureDir_MatchExisting(t *testing.T) {
 
 func TestFindFeatureDir_MatchMostRecent(t *testing.T) {
 	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-	os.MkdirAll(filepath.Join(ralphDir, "2024-01-10-auth"), 0755)
-	os.MkdirAll(filepath.Join(ralphDir, "2024-01-20-auth"), 0755)
-	os.MkdirAll(filepath.Join(ralphDir, "2024-01-15-auth"), 0755)
+	scripDir := filepath.Join(dir, ".scrip")
+	os.MkdirAll(filepath.Join(scripDir, "2024-01-10-auth"), 0755)
+	os.MkdirAll(filepath.Join(scripDir, "2024-01-20-auth"), 0755)
+	os.MkdirAll(filepath.Join(scripDir, "2024-01-15-auth"), 0755)
 
 	fd, err := FindFeatureDir(dir, "auth", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	expected := filepath.Join(ralphDir, "2024-01-20-auth")
+	expected := filepath.Join(scripDir, "2024-01-20-auth")
 	if fd.Path != expected {
 		t.Errorf("expected most recent '%s', got '%s'", expected, fd.Path)
 	}
 }
 
-func TestFindFeatureDir_DetectsPrdFiles(t *testing.T) {
-	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-	featureDir := filepath.Join(ralphDir, "2024-01-15-auth")
-	os.MkdirAll(featureDir, 0755)
-
-	// Create prd.md only
-	os.WriteFile(filepath.Join(featureDir, "prd.md"), []byte("# PRD"), 0644)
-
-	fd, err := FindFeatureDir(dir, "auth", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !fd.HasPrdMd {
-		t.Error("expected HasPrdMd=true")
-	}
-	if fd.HasPrdJson {
-		t.Error("expected HasPrdJson=false")
-	}
-
-	// Add prd.json
-	os.WriteFile(filepath.Join(featureDir, "prd.json"), []byte("{}"), 0644)
-
-	fd, _ = FindFeatureDir(dir, "auth", false)
-	if !fd.HasPrdJson {
-		t.Error("expected HasPrdJson=true")
-	}
-}
 
 func TestFindFeatureDir_YYYYMMDDFormat(t *testing.T) {
 	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-	featureDir := filepath.Join(ralphDir, "20240115-auth")
+	scripDir := filepath.Join(dir, ".scrip")
+	featureDir := filepath.Join(scripDir, "20240115-auth")
 	os.MkdirAll(featureDir, 0755)
 
 	fd, err := FindFeatureDir(dir, "auth", false)
@@ -125,10 +95,10 @@ func TestFindFeatureDir_YYYYMMDDFormat(t *testing.T) {
 
 func TestListFeatures(t *testing.T) {
 	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-	os.MkdirAll(filepath.Join(ralphDir, "2024-01-15-auth"), 0755)
-	os.MkdirAll(filepath.Join(ralphDir, "2024-01-20-billing"), 0755)
-	os.MkdirAll(filepath.Join(ralphDir, "logs"), 0755) // Should be ignored (no date prefix)
+	scripDir := filepath.Join(dir, ".scrip")
+	os.MkdirAll(filepath.Join(scripDir, "2024-01-15-auth"), 0755)
+	os.MkdirAll(filepath.Join(scripDir, "2024-01-20-billing"), 0755)
+	os.MkdirAll(filepath.Join(scripDir, "logs"), 0755) // Should be ignored (no date prefix)
 
 	features, err := ListFeatures(dir)
 	if err != nil {
@@ -148,23 +118,11 @@ func TestListFeatures(t *testing.T) {
 	}
 }
 
-func TestFeatureDir_Paths(t *testing.T) {
-	fd := &FeatureDir{
-		Path: "/project/.ralph/2024-01-15-auth",
-	}
-
-	if fd.PrdMdPath() != "/project/.ralph/2024-01-15-auth/prd.md" {
-		t.Errorf("unexpected PrdMdPath: %s", fd.PrdMdPath())
-	}
-	if fd.PrdJsonPath() != "/project/.ralph/2024-01-15-auth/prd.json" {
-		t.Errorf("unexpected PrdJsonPath: %s", fd.PrdJsonPath())
-	}
-}
 
 func TestFindFeatureDir_CaseInsensitive(t *testing.T) {
 	dir := t.TempDir()
-	ralphDir := filepath.Join(dir, ".ralph")
-	featureDir := filepath.Join(ralphDir, "2024-01-15-auth")
+	scripDir := filepath.Join(dir, ".scrip")
+	featureDir := filepath.Join(scripDir, "2024-01-15-auth")
 	os.MkdirAll(featureDir, 0755)
 
 	cases := []string{"Auth", "AUTH", "auth", "AuTh"}
@@ -183,7 +141,7 @@ func TestFindFeatureDir_CaseInsensitive(t *testing.T) {
 func TestFeatureDir_EnsureExists(t *testing.T) {
 	dir := t.TempDir()
 	fd := &FeatureDir{
-		Path: filepath.Join(dir, ".ralph", "2024-01-15-auth"),
+		Path: filepath.Join(dir, ".scrip", "2024-01-15-auth"),
 	}
 
 	if fileExists(fd.Path) {
@@ -200,33 +158,10 @@ func TestFeatureDir_EnsureExists(t *testing.T) {
 	}
 }
 
-func TestFeatureDir_RunStatePath(t *testing.T) {
-	fd := &FeatureDir{
-		Path: "/project/.ralph/2024-01-15-auth",
-	}
-
-	expected := "/project/.ralph/2024-01-15-auth/run-state.json"
-	if got := fd.RunStatePath(); got != expected {
-		t.Errorf("RunStatePath() = %q, want %q", got, expected)
-	}
-}
-
-// helper to write a run-state.json in a feature directory
-func writeTestRunState(t *testing.T, featureDir string, state *RunState) {
-	t.Helper()
-	data, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(featureDir, "run-state.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestSummaryMdPath(t *testing.T) {
-	fd := &FeatureDir{Path: "/project/.ralph/2024-01-15-auth"}
+	fd := &FeatureDir{Path: "/project/.scrip/2024-01-15-auth"}
 	got := fd.SummaryMdPath()
-	want := "/project/.ralph/2024-01-15-auth/summary.md"
+	want := "/project/.scrip/2024-01-15-auth/summary.md"
 	if got != want {
 		t.Errorf("SummaryMdPath() = %q, want %q", got, want)
 	}
@@ -255,7 +190,7 @@ func TestLoadFeatureSummary_Exists(t *testing.T) {
 
 func TestFeatureArchived_SummaryExists(t *testing.T) {
 	dir := t.TempDir()
-	featureDir := filepath.Join(dir, ".ralph", "2024-01-15-auth")
+	featureDir := filepath.Join(dir, ".scrip", "2024-01-15-auth")
 	os.MkdirAll(featureDir, 0755)
 
 	fd := &FeatureDir{Path: featureDir, Feature: "auth"}

@@ -16,46 +16,32 @@ type Dependency struct {
 }
 
 // CodebaseContext contains discovered information about the codebase
-// Used to provide context to PRD creation prompts
+// Used to provide context to plan creation prompts
 type CodebaseContext struct {
 	TechStack      string       // "typescript", "go", "python", "rust", etc.
 	PackageManager string       // "bun", "npm", "yarn", "pnpm", "go", "cargo", "pip"
 	Frameworks     []string     // detected frameworks like ["nextjs", "react"] or ["gin", "gorm"]
 	Dependencies   []Dependency // full dependency list
 	TestCommand    string       // detected or configured test command
-	Services       []string     // service names from ralph.config.json
-	VerifyCommands []string     // verify commands from ralph.config.json
+	Services       []string     // service names from config
+	VerifyCommands []string     // verify commands from config
 }
 
-// DiscoverCodebase analyzes the project to detect tech stack and context
-// This is lightweight detection - reads config files, doesn't run commands
-func DiscoverCodebase(projectRoot string, cfg *RalphConfig) *CodebaseContext {
+// DiscoverScripCodebase analyzes the project to detect tech stack and context.
+func DiscoverScripCodebase(projectRoot string, cfg *ScripConfig) *CodebaseContext {
 	ctx := &CodebaseContext{}
 
-	// Detect tech stack and package manager
 	ctx.TechStack, ctx.PackageManager = detectTechStack(projectRoot)
-
-	// Detect frameworks
 	ctx.Frameworks = detectFrameworks(projectRoot, ctx.TechStack)
-
-	// Extract full dependency list
 	ctx.Dependencies = ExtractDependencies(projectRoot, ctx.TechStack)
 
-	// Extract from ralph.config.json
+	// Extract from .scrip/config.json
 	if cfg != nil {
 		for _, svc := range cfg.Services {
 			ctx.Services = append(ctx.Services, fmt.Sprintf("%s (%s)", svc.Name, svc.Ready))
 		}
-		ctx.VerifyCommands = append(ctx.VerifyCommands, cfg.Verify.Default...)
-		ctx.VerifyCommands = append(ctx.VerifyCommands, cfg.Verify.UI...)
-
-		// Try to extract test command from verify commands
-		for _, cmd := range cfg.Verify.Default {
-			if strings.Contains(cmd, "test") {
-				ctx.TestCommand = cmd
-				break
-			}
-		}
+		ctx.VerifyCommands = cfg.Verify.VerifyCommands()
+		ctx.TestCommand = cfg.Verify.Test
 	}
 
 	return ctx

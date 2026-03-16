@@ -9,36 +9,34 @@ import (
 	"time"
 )
 
-// FeatureDir represents a feature directory in .ralph/
+// FeatureDir represents a feature directory in .scrip/
 type FeatureDir struct {
-	Name       string    // Full directory name (e.g., "2024-01-15-auth")
-	Feature    string    // Feature suffix (e.g., "auth")
-	Timestamp  time.Time // Parsed datetime
-	Path       string    // Full path to directory
-	HasPrdMd   bool      // prd.md exists
-	HasPrdJson bool      // prd.json exists
+	Name      string    // Full directory name (e.g., "2024-01-15-auth")
+	Feature   string    // Feature suffix (e.g., "auth")
+	Timestamp time.Time // Parsed datetime
+	Path      string    // Full path to directory
 }
 
 // FindFeatureDir finds a feature directory by suffix match.
 // If multiple matches, returns most recent by datetime prefix.
 // If no match and create is true, returns path for new directory.
 func FindFeatureDir(projectRoot, feature string, create bool) (*FeatureDir, error) {
-	ralphDir := filepath.Join(projectRoot, ".ralph")
+	scripDir := filepath.Join(projectRoot, ".scrip")
 
-	// Ensure .ralph exists
-	if _, err := os.Stat(ralphDir); os.IsNotExist(err) {
+	// Ensure .scrip exists
+	if _, err := os.Stat(scripDir); os.IsNotExist(err) {
 		if !create {
-			return nil, fmt.Errorf(".ralph directory not found - run 'ralph init' first")
+			return nil, fmt.Errorf(".scrip directory not found - run 'scrip prep' first")
 		}
-		if err := os.MkdirAll(ralphDir, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create .ralph directory: %w", err)
+		if err := os.MkdirAll(scripDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create .scrip directory: %w", err)
 		}
 	}
 
-	// List all directories in .ralph/
-	entries, err := os.ReadDir(ralphDir)
+	// List all directories in .scrip/
+	entries, err := os.ReadDir(scripDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read .ralph directory: %w", err)
+		return nil, fmt.Errorf("failed to read .scrip directory: %w", err)
 	}
 
 	var matches []FeatureDir
@@ -54,7 +52,7 @@ func FindFeatureDir(projectRoot, feature string, create bool) (*FeatureDir, erro
 		}
 
 		// Parse datetime-feature format
-		fd := parseFeatureDir(ralphDir, name)
+		fd := parseFeatureDir(scripDir, name)
 		if fd == nil {
 			continue
 		}
@@ -70,7 +68,7 @@ func FindFeatureDir(projectRoot, feature string, create bool) (*FeatureDir, erro
 			return nil, fmt.Errorf("no feature directory found for '%s'", feature)
 		}
 		// Create new directory with today's date
-		return newFeatureDir(ralphDir, feature), nil
+		return newFeatureDir(scripDir, feature), nil
 	}
 
 	// Sort by timestamp descending (most recent first)
@@ -83,9 +81,9 @@ func FindFeatureDir(projectRoot, feature string, create bool) (*FeatureDir, erro
 
 // ListFeatures returns all feature directories
 func ListFeatures(projectRoot string) ([]FeatureDir, error) {
-	ralphDir := filepath.Join(projectRoot, ".ralph")
+	scripDir := filepath.Join(projectRoot, ".scrip")
 
-	entries, err := os.ReadDir(ralphDir)
+	entries, err := os.ReadDir(scripDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -102,7 +100,7 @@ func ListFeatures(projectRoot string) ([]FeatureDir, error) {
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		if fd := parseFeatureDir(ralphDir, name); fd != nil {
+		if fd := parseFeatureDir(scripDir, name); fd != nil {
 			features = append(features, *fd)
 		}
 	}
@@ -116,7 +114,7 @@ func ListFeatures(projectRoot string) ([]FeatureDir, error) {
 }
 
 // parseFeatureDir parses a directory name in format YYYY-MM-DD-feature
-func parseFeatureDir(ralphDir, name string) *FeatureDir {
+func parseFeatureDir(scripDir, name string) *FeatureDir {
 	// Expected format: YYYY-MM-DD-feature or YYYYMMDD-feature
 	parts := strings.SplitN(name, "-", 4)
 	if len(parts) < 4 {
@@ -125,14 +123,12 @@ func parseFeatureDir(ralphDir, name string) *FeatureDir {
 			dateStr := name[:8]
 			feature := name[9:]
 			if t, err := time.Parse("20060102", dateStr); err == nil {
-				path := filepath.Join(ralphDir, name)
+				path := filepath.Join(scripDir, name)
 				return &FeatureDir{
-					Name:       name,
-					Feature:    feature,
-					Timestamp:  t,
-					Path:       path,
-					HasPrdMd:   fileExists(filepath.Join(path, "prd.md")),
-					HasPrdJson: fileExists(filepath.Join(path, "prd.json")),
+					Name:      name,
+					Feature:   feature,
+					Timestamp: t,
+					Path:      path,
 				}
 			}
 		}
@@ -148,30 +144,26 @@ func parseFeatureDir(ralphDir, name string) *FeatureDir {
 		return nil
 	}
 
-	path := filepath.Join(ralphDir, name)
+	path := filepath.Join(scripDir, name)
 	return &FeatureDir{
-		Name:       name,
-		Feature:    feature,
-		Timestamp:  t,
-		Path:       path,
-		HasPrdMd:   fileExists(filepath.Join(path, "prd.md")),
-		HasPrdJson: fileExists(filepath.Join(path, "prd.json")),
+		Name:      name,
+		Feature:   feature,
+		Timestamp: t,
+		Path:      path,
 	}
 }
 
 // newFeatureDir creates a new FeatureDir with today's date
-func newFeatureDir(ralphDir, feature string) *FeatureDir {
+func newFeatureDir(scripDir, feature string) *FeatureDir {
 	now := time.Now()
 	name := now.Format("2006-01-02") + "-" + feature
-	path := filepath.Join(ralphDir, name)
+	path := filepath.Join(scripDir, name)
 	
 	return &FeatureDir{
-		Name:       name,
-		Feature:    feature,
-		Timestamp:  now,
-		Path:       path,
-		HasPrdMd:   false,
-		HasPrdJson: false,
+		Name:      name,
+		Feature:   feature,
+		Timestamp: now,
+		Path:      path,
 	}
 }
 
@@ -189,20 +181,6 @@ func LoadFeatureSummary(featureDir *FeatureDir) string {
 	return string(data)
 }
 
-// PrdMdPath returns the path to prd.md
-func (fd *FeatureDir) PrdMdPath() string {
-	return filepath.Join(fd.Path, "prd.md")
-}
-
-// PrdJsonPath returns the path to prd.json
-func (fd *FeatureDir) PrdJsonPath() string {
-	return filepath.Join(fd.Path, "prd.json")
-}
-
-// RunStatePath returns the path to run-state.json
-func (fd *FeatureDir) RunStatePath() string {
-	return filepath.Join(fd.Path, "run-state.json")
-}
 
 // EnsureExists creates the feature directory if it doesn't exist
 func (fd *FeatureDir) EnsureExists() error {

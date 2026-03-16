@@ -17,24 +17,26 @@ type LockInfo struct {
 	Branch    string    `json:"branch"`
 }
 
-// LockFile manages the global ralph.lock file
+// LockFile manages the project lock file (.scrip/scrip.lock)
 type LockFile struct {
-	path string
-	info *LockInfo
+	path    string
+	product string // used in error messages
+	info    *LockInfo
 }
 
-// NewLockFile creates a new lock file manager
+// NewLockFile creates a new lock file manager (.scrip/scrip.lock)
 func NewLockFile(projectRoot string) *LockFile {
 	return &LockFile{
-		path: filepath.Join(projectRoot, ".ralph", "ralph.lock"),
+		path:    filepath.Join(projectRoot, ".scrip", "scrip.lock"),
+		product: "scrip",
 	}
 }
 
 // Acquire attempts to acquire the lock atomically
 func (lf *LockFile) Acquire(feature, branch string) error {
-	// Ensure .ralph directory exists
+	// Ensure lock directory exists
 	if err := os.MkdirAll(filepath.Dir(lf.path), 0755); err != nil {
-		return fmt.Errorf("failed to create .ralph directory: %w", err)
+		return fmt.Errorf("failed to create .%s directory: %w", lf.product, err)
 	}
 
 	// Check if lock exists and handle stale locks
@@ -50,8 +52,8 @@ func (lf *LockFile) Acquire(feature, branch string) error {
 				return fmt.Errorf("failed to remove stale lock: %w", err)
 			}
 		} else {
-			return fmt.Errorf("ralph is already running (PID %d, feature: %s)\nStarted at: %s",
-				existing.PID, existing.Feature, existing.StartedAt.Format(time.RFC3339))
+			return fmt.Errorf("%s is already running (PID %d, feature: %s)\nStarted at: %s",
+				lf.product, existing.PID, existing.Feature, existing.StartedAt.Format(time.RFC3339))
 		}
 	}
 
@@ -74,7 +76,7 @@ func (lf *LockFile) Acquire(feature, branch string) error {
 	if err != nil {
 		if os.IsExist(err) {
 			// Another process created the lock between our check and create
-			return fmt.Errorf("ralph is already running (lock acquired by another process)")
+			return fmt.Errorf("%s is already running (lock acquired by another process)", lf.product)
 		}
 		return fmt.Errorf("failed to create lock file: %w", err)
 	}

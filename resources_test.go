@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+func TestResourceType_HasFields(t *testing.T) {
+	r := Resource{
+		Name:    "next",
+		URL:     "https://github.com/vercel/next.js",
+		Branch:  "v15.0.0",
+		Version: "15.0.0",
+	}
+	if r.Name != "next" {
+		t.Errorf("unexpected Name: %s", r.Name)
+	}
+	if r.Version != "15.0.0" {
+		t.Errorf("unexpected Version: %s", r.Version)
+	}
+}
+
 func TestResourcesConfig_IsEnabled_Default(t *testing.T) {
 	var cfg *ResourcesConfig
 
@@ -37,7 +52,7 @@ func TestResourcesConfig_IsEnabled_Explicit(t *testing.T) {
 }
 
 func TestResourcesConfig_GetCacheDir(t *testing.T) {
-	// Default should be ~/.ralph/resources
+	// Default should be ~/.scrip/resources
 	var cfg *ResourcesConfig
 	dir := cfg.GetCacheDir()
 	if dir == "" {
@@ -164,39 +179,6 @@ func TestExpandHomePath(t *testing.T) {
 	}
 }
 
-func TestEnsureResourceSync_Disabled(t *testing.T) {
-	disabled := false
-	cfg := &ResolvedConfig{
-		Config: RalphConfig{
-			Resources: &ResourcesConfig{Enabled: &disabled},
-		},
-	}
-	codebaseCtx := &CodebaseContext{}
-	rm := ensureResourceSync(cfg, codebaseCtx)
-	if rm != nil {
-		t.Error("expected nil ResourceManager when resources disabled")
-	}
-}
-
-func TestEnsureResourceSync_NoDeps(t *testing.T) {
-	cfg := &ResolvedConfig{
-		ProjectRoot: t.TempDir(),
-		Config:      RalphConfig{},
-	}
-	codebaseCtx := &CodebaseContext{
-		TechStack:    "typescript",
-		Dependencies: []Dependency{},
-	}
-	rm := ensureResourceSync(cfg, codebaseCtx)
-	// Should return a ResourceManager even with no deps (no sync needed)
-	if rm == nil {
-		t.Error("expected non-nil ResourceManager")
-	}
-	if rm.HasDetectedResources() {
-		t.Error("expected no detected resources")
-	}
-}
-
 func TestGetCachedResources_Empty(t *testing.T) {
 	rm := NewResourceManager(nil, nil, "npm", t.TempDir())
 	cached := rm.GetCachedResources()
@@ -238,6 +220,66 @@ func TestEnsureResources_VersionedRepoEmptyBranch_SkipsSync(t *testing.T) {
 	}
 	// If it tried to sync, it would fail with git errors on the fake repo.
 	// Success means it correctly skipped.
+}
+
+func TestDefaultScripResourcesCacheDir(t *testing.T) {
+	dir := DefaultScripResourcesCacheDir()
+	if dir == "" {
+		t.Fatal("expected non-empty scrip cache dir")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Fallback path when home is unavailable
+		if dir != ".scrip/resources" {
+			t.Errorf("expected fallback '.scrip/resources', got '%s'", dir)
+		}
+		return
+	}
+	expected := filepath.Join(home, ".scrip", "resources")
+	if dir != expected {
+		t.Errorf("expected '%s', got '%s'", expected, dir)
+	}
+}
+
+func TestEnsureScripResourceSync_NoDeps(t *testing.T) {
+	cfg := &ScripResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: ScripConfig{
+			Project: ProjectConfig{Name: "test", Type: "go"},
+		},
+	}
+	codebaseCtx := &CodebaseContext{
+		TechStack:    "go",
+		Dependencies: []Dependency{},
+	}
+	rm := ensureScripResourceSync(cfg, codebaseCtx)
+	if rm == nil {
+		t.Error("expected non-nil ResourceManager")
+	}
+	if rm.HasDetectedResources() {
+		t.Error("expected no detected resources")
+	}
+}
+
+func TestEnsureScripResourceSync_UsesScripCacheDir(t *testing.T) {
+	cfg := &ScripResolvedConfig{
+		ProjectRoot: t.TempDir(),
+		Config: ScripConfig{
+			Project: ProjectConfig{Name: "test", Type: "node"},
+		},
+	}
+	codebaseCtx := &CodebaseContext{
+		TechStack:    "typescript",
+		Dependencies: nil,
+	}
+	rm := ensureScripResourceSync(cfg, codebaseCtx)
+	if rm == nil {
+		t.Fatal("expected non-nil ResourceManager")
+	}
+	expected := DefaultScripResourcesCacheDir()
+	if rm.GetCacheDir() != expected {
+		t.Errorf("expected cache dir '%s', got '%s'", expected, rm.GetCacheDir())
+	}
 }
 
 func TestCachedResource_VersionField(t *testing.T) {

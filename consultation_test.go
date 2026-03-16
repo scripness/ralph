@@ -1,19 +1,15 @@
 package main
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // newTestResourceManager creates a ResourceManager with manually populated detected resources.
 // Bypasses network resolution for testing.
 func newTestResourceManager(cacheDir string, resources map[string]*Resource) *ResourceManager {
 	if cacheDir == "" {
-		cacheDir = DefaultResourcesCacheDir()
+		cacheDir = DefaultScripResourcesCacheDir()
 	}
 	detected := resources
 	if detected == nil {
@@ -25,7 +21,7 @@ func newTestResourceManager(cacheDir string, resources map[string]*Resource) *Re
 	}
 }
 
-func TestRelevantFrameworks_TagMatching(t *testing.T) {
+func TestRelevantFrameworks_KeywordMatchingMultiple(t *testing.T) {
 	cached := []CachedResource{
 		{Name: "next", Path: "/cache/next"},
 		{Name: "react", Path: "/cache/react"},
@@ -33,39 +29,19 @@ func TestRelevantFrameworks_TagMatching(t *testing.T) {
 		{Name: "express", Path: "/cache/express"},
 	}
 
-	// UI tag should match next and react
-	story := &StoryDefinition{
-		ID:    "US-001",
-		Title: "Add login form",
-		Tags:  []string{"ui"},
+	// Item mentioning prisma keywords (model, schema, migrate) → should match prisma
+	item := &PlanItem{
+		Title:      "Add user model with prisma schema and migrate",
+		Acceptance: []string{"User table created"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 
 	names := make(map[string]bool)
 	for _, r := range result {
 		names[r.Name] = true
 	}
-	if !names["next"] {
-		t.Error("expected UI tag to match 'next'")
-	}
-	if !names["react"] {
-		t.Error("expected UI tag to match 'react'")
-	}
-
-	// DB tag should match prisma
-	story = &StoryDefinition{
-		ID:    "US-002",
-		Title: "Add user table",
-		Tags:  []string{"db"},
-	}
-	result = relevantFrameworks(story, cached, 3)
-
-	names = make(map[string]bool)
-	for _, r := range result {
-		names[r.Name] = true
-	}
 	if !names["prisma"] {
-		t.Error("expected DB tag to match 'prisma'")
+		t.Error("expected prisma to match via keyword hits (model, schema, migrate)")
 	}
 }
 
@@ -76,14 +52,12 @@ func TestRelevantFrameworks_KeywordMatching(t *testing.T) {
 		{Name: "express", Path: "/cache/express"},
 	}
 
-	// Story with multiple Next.js keywords
-	story := &StoryDefinition{
-		ID:                 "US-001",
-		Title:              "Add server action for form",
-		Description:        "Create a server component with app router",
-		AcceptanceCriteria: []string{"Page renders correctly"},
+	// Item with multiple Next.js keywords in title and acceptance
+	item := &PlanItem{
+		Title:      "Add server action for form with app router",
+		Acceptance: []string{"Page renders as server component"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 
 	found := false
 	for _, r := range result {
@@ -93,7 +67,7 @@ func TestRelevantFrameworks_KeywordMatching(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected 'server action' + 'server component' + 'app router' to match next")
+		t.Error("expected 'server action' + 'app router' + 'server component' to match next")
 	}
 }
 
@@ -102,13 +76,12 @@ func TestRelevantFrameworks_RequiresTwoHits(t *testing.T) {
 		{Name: "prisma", Path: "/cache/prisma"},
 	}
 
-	// Story with only 1 keyword hit — should NOT match
-	story := &StoryDefinition{
-		ID:          "US-001",
-		Title:       "Fix the button",
-		Description: "Update the button color",
+	// Item with only 1 keyword hit — should NOT match
+	item := &PlanItem{
+		Title:      "Fix the button color",
+		Acceptance: []string{"Button looks correct"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 	if len(result) != 0 {
 		t.Errorf("expected 0 matches with no relevant keywords, got %d", len(result))
 	}
@@ -123,55 +96,53 @@ func TestRelevantFrameworks_Cap(t *testing.T) {
 		{Name: "vitest", Path: "/cache/vitest"},
 	}
 
-	// Story with tags that match many frameworks
-	story := &StoryDefinition{
-		ID:    "US-001",
-		Title: "Build the entire stack with prisma model and express middleware and react component using vitest describe",
-		Tags:  []string{"ui", "db", "api", "test"},
+	// Item with keywords that match many frameworks
+	item := &PlanItem{
+		Title:      "Build prisma model schema migration with express middleware route handler and react component useState and vitest describe expect using next server action app router",
+		Acceptance: []string{"All frameworks integrated"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 	if len(result) > 3 {
 		t.Errorf("expected max 3 frameworks, got %d", len(result))
 	}
 }
 
 func TestRelevantFrameworks_NoResources(t *testing.T) {
-	story := &StoryDefinition{ID: "US-001", Title: "Test"}
+	item := &PlanItem{Title: "Test"}
 
-	result := relevantFrameworks(story, nil, 3)
+	result := relevantFrameworks(item, nil, 3)
 	if result != nil {
 		t.Error("expected nil for empty cache")
 	}
 
-	result = relevantFrameworks(story, []CachedResource{}, 3)
+	result = relevantFrameworks(item, []CachedResource{}, 3)
 	if result != nil {
 		t.Error("expected nil for empty cache")
 	}
 }
 
-func TestRelevantFrameworks_NilStory(t *testing.T) {
+func TestRelevantFrameworks_NilItem(t *testing.T) {
 	cached := []CachedResource{{Name: "next", Path: "/cache/next"}}
 	result := relevantFrameworks(nil, cached, 3)
 	if result != nil {
-		t.Error("expected nil for nil story")
+		t.Error("expected nil for nil item")
 	}
 }
 
 func TestRelevantFrameworks_NameBasedMatching(t *testing.T) {
 	// Auto-resolved dep without frameworkKeywords entry.
 	// Scoped package "@scope/name" produces 2 variants: ["scope", "name"],
-	// so if both appear in story text, score reaches 2.
+	// so if both appear in item text, score reaches 2.
 	cached := []CachedResource{
 		{Name: "@sentry/node", Path: "/cache/@sentry/node@8.0.0", Version: "8.0.0"},
 	}
 
-	// Story mentioning both "sentry" and "node" → 2 variant hits → qualifies
-	story := &StoryDefinition{
-		ID:          "US-001",
-		Title:       "Add sentry error tracking to node API",
-		Description: "Integrate error monitoring",
+	// Item mentioning both "sentry" and "node" → 2 variant hits → qualifies
+	item := &PlanItem{
+		Title:      "Add sentry error tracking to node API",
+		Acceptance: []string{"Error monitoring integrated"},
 	}
-	result := relevantFrameworks(story, cached, 3)
+	result := relevantFrameworks(item, cached, 3)
 	found := false
 	for _, r := range result {
 		if r.Name == "@sentry/node" {
@@ -186,29 +157,13 @@ func TestRelevantFrameworks_NameBasedMatching(t *testing.T) {
 	cached2 := []CachedResource{
 		{Name: "pino", Path: "/cache/pino@8.0.0", Version: "8.0.0"},
 	}
-	story2 := &StoryDefinition{
-		ID:          "US-002",
-		Title:       "Add pino logging",
-		Description: "Use pino for structured logging",
+	item2 := &PlanItem{
+		Title:      "Add pino logging",
+		Acceptance: []string{"Structured logging works"},
 	}
-	result2 := relevantFrameworks(story2, cached2, 3)
+	result2 := relevantFrameworks(item2, cached2, 3)
 	if len(result2) != 0 {
 		t.Error("single-word dep without keywords should not qualify on name alone (score=1)")
-	}
-
-	// Single-word dep WITH tag match: tag gives 2 points, name adds 1 → qualifies
-	cached3 := []CachedResource{
-		{Name: "pino", Path: "/cache/pino@8.0.0", Version: "8.0.0"},
-	}
-	story3 := &StoryDefinition{
-		ID:    "US-003",
-		Title: "Add pino logging",
-		Tags:  []string{"api"}, // "api" tag maps to known frameworks, not pino
-	}
-	result3 := relevantFrameworks(story3, cached3, 3)
-	// pino is not in frameworkTagMap["api"], so no tag points either
-	if len(result3) != 0 {
-		t.Error("pino should not match api tag")
 	}
 }
 
@@ -310,7 +265,7 @@ func TestConsultCacheKey_Deterministic(t *testing.T) {
 	// Different inputs should produce different keys
 	key3 := consultCacheKey("US-002", "next", "abc123", "Add login form")
 	if key1 == key3 {
-		t.Error("different story ID should produce different key")
+		t.Error("different item ID should produce different key")
 	}
 
 	key4 := consultCacheKey("US-001", "react", "abc123", "Add login form")
@@ -433,12 +388,12 @@ func TestFrameworkTagMap_ValidFrameworks(t *testing.T) {
 }
 
 func TestGetPrompt_Consult(t *testing.T) {
-	prompt := getPrompt("consult", map[string]string{
+	prompt := getPrompt("consult-item", map[string]string{
 		"framework":          "next v15.0.0",
 		"frameworkPath":      "/cache/next@15.0.0",
-		"storyId":            "US-001",
-		"storyTitle":         "Add login form",
-		"storyDescription":   "As a user...",
+		"itemId":             "US-001",
+		"itemTitle":          "Add login form",
+		"itemDescription":    "As a user...",
 		"acceptanceCriteria": "- Form renders\n- Auth works",
 		"techStack":          "typescript",
 	})
@@ -450,7 +405,7 @@ func TestGetPrompt_Consult(t *testing.T) {
 		t.Error("prompt should contain framework path")
 	}
 	if !strings.Contains(prompt, "US-001") {
-		t.Error("prompt should contain story ID")
+		t.Error("prompt should contain item ID")
 	}
 	if !strings.Contains(prompt, "GUIDANCE_START") {
 		t.Error("prompt should contain GUIDANCE_START marker")
@@ -482,403 +437,136 @@ func TestGetPrompt_ConsultFeature(t *testing.T) {
 	}
 }
 
-func TestGetPrompt_PrdCreateWithResourceGuidance(t *testing.T) {
-	prompt := getPrompt("prd-create", map[string]string{
-		"feature":          "auth",
-		"outputPath":       "/path/to/prd.md",
-		"codebaseContext":  "",
-		"resourceGuidance": "## Framework Implementation Guidance\n\n### next\n\nUse app router.\n",
-	})
 
-	if !strings.Contains(prompt, "Framework Implementation Guidance") {
-		t.Error("prompt should contain resource guidance")
+func TestExtractGuidance_Success(t *testing.T) {
+	output := `Some preamble text.
+
+<scrip>GUIDANCE_START</scrip>
+Use app router for server components.
+
+Source: packages/next/src/server/app-render.tsx
+<scrip>GUIDANCE_END</scrip>
+
+Some trailing text.`
+
+	guidance, ok := extractGuidance(output)
+	if !ok {
+		t.Fatal("expected guidance to be extracted")
+	}
+	if !strings.Contains(guidance, "app router") {
+		t.Error("expected guidance to contain 'app router'")
+	}
+	if !strings.Contains(guidance, "Source:") {
+		t.Error("expected guidance to contain Source: citation")
 	}
 }
 
-func TestGetPrompt_RefineSessionWithResourceGuidance(t *testing.T) {
-	prompt := getPrompt("refine-session", map[string]string{
-		"feature":          "auth",
-		"summary":          "Previous work summary.",
-		"diffSummary":      "",
-		"codebaseContext":  "",
-		"branchName":       "ralph/auth",
-		"featureDir":       "/test",
-		"knowledgeFile":    "CLAUDE.md",
-		"verifyCommands":   "",
-		"serviceURLs":      "",
-		"resourceGuidance": "## Framework Guidance\n\nTest guidance",
-	})
-
-	if !strings.Contains(prompt, "Framework Guidance") {
-		t.Error("prompt should contain resource guidance")
+func TestExtractGuidance_NoMarkers(t *testing.T) {
+	output := "Just some text without any markers."
+	_, ok := extractGuidance(output)
+	if ok {
+		t.Error("expected false for output without markers")
 	}
 }
 
-func TestGetPrompt_PrdFinalizeWithResourceGuidance(t *testing.T) {
-	prompt := getPrompt("prd-finalize", map[string]string{
-		"feature":          "auth",
-		"prdContent":       "# Auth PRD",
-		"outputPath":       "/path/to/prd.json",
-		"resourceGuidance": "## Framework Guidance\n\nNext.js supports server actions.",
-	})
-
-	if !strings.Contains(prompt, "Framework Guidance") {
-		t.Error("prompt should contain resource guidance")
+func TestExtractGuidance_EmptyContent(t *testing.T) {
+	output := "<scrip>GUIDANCE_START</scrip>\n\n<scrip>GUIDANCE_END</scrip>"
+	_, ok := extractGuidance(output)
+	if ok {
+		t.Error("expected false for empty content between markers")
 	}
 }
 
-// --- runConsultSubagent subprocess tests ---
+func TestExtractGuidance_OnlyStart(t *testing.T) {
+	output := "<scrip>GUIDANCE_START</scrip>\nSome guidance without end marker"
+	_, ok := extractGuidance(output)
+	if ok {
+		t.Error("expected false for missing end marker")
+	}
+}
 
-func TestRunConsultSubagent_Success(t *testing.T) {
+func TestHasCitations_WithSource(t *testing.T) {
+	guidance := "Use app router.\n\nSource: packages/next/src/server.ts"
+	if !hasCitations(guidance) {
+		t.Error("expected true for guidance with Source: line")
+	}
+}
+
+func TestHasCitations_WithIndentedSource(t *testing.T) {
+	guidance := "Use app router.\n\n  Source: packages/next/src/server.ts"
+	if !hasCitations(guidance) {
+		t.Error("expected true for guidance with indented Source: line")
+	}
+}
+
+func TestHasCitations_NoCitation(t *testing.T) {
+	guidance := "Use app router for server components."
+	if hasCitations(guidance) {
+		t.Error("expected false for guidance without Source: lines")
+	}
+}
+
+func TestGenerateConsultItemPrompt_Variables(t *testing.T) {
+	cr := CachedResource{Name: "next", Path: "/cache/next@15.0.0", Version: "15.0.0"}
+	item := &PlanItem{
+		Title:      "Add login form",
+		Acceptance: []string{"Form renders", "Auth works"},
+	}
+	prompt := generateConsultItemPrompt(cr, item, 0, "typescript")
+
+	checks := map[string]string{
+		"framework name": "next",
+		"framework path": "/cache/next@15.0.0",
+		"item ID":        "item-1",
+		"item title":     "Add login form",
+		"tech stack":     "typescript",
+		"criteria":       "- Form renders",
+	}
+	for desc, expected := range checks {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("prompt missing %s: expected to contain %q", desc, expected)
+		}
+	}
+}
+
+func TestGenerateConsultItemPrompt_ItemIndex(t *testing.T) {
+	cr := CachedResource{Name: "react", Path: "/cache/react"}
+	item := &PlanItem{Title: "Third item", Acceptance: []string{"OK"}}
+
+	prompt := generateConsultItemPrompt(cr, item, 2, "typescript")
+	if !strings.Contains(prompt, "item-3") {
+		t.Error("expected 1-based item ID 'item-3' for index 2")
+	}
+}
+
+func TestConsultForItem_CacheRoundtrip(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &ResolvedConfig{
-		ProjectRoot: dir,
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Use hooks for state management.'; echo ''; echo 'Source: src/hooks.ts'; echo '<ralph>GUIDANCE_END</ralph>'`},
-				PromptMode: "arg",
-			},
-		},
-	}
-	result, err := runConsultSubagent(cfg, "test prompt", 10*time.Second)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-	if !strings.Contains(result, "Use hooks") {
-		t.Error("expected guidance content in result")
-	}
-	if !strings.Contains(result, "Source: src/hooks.ts") {
-		t.Error("expected source citation in result")
-	}
-}
-
-func TestRunConsultSubagent_MissingMarkers(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &ResolvedConfig{
-		ProjectRoot: dir,
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "sh",
-				Args:       []string{"-c", `echo 'Some output without markers'`},
-				PromptMode: "arg",
-			},
-		},
-	}
-	_, err := runConsultSubagent(cfg, "test prompt", 10*time.Second)
-	if err == nil {
-		t.Fatal("expected error for missing markers")
-	}
-	if !strings.Contains(err.Error(), "no guidance") {
-		t.Errorf("expected 'no guidance' in error, got: %v", err)
-	}
-}
-
-func TestRunConsultSubagent_MissingSourceCitation(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &ResolvedConfig{
-		ProjectRoot: dir,
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Use hooks.'; echo '<ralph>GUIDANCE_END</ralph>'`},
-				PromptMode: "arg",
-			},
-		},
-	}
-	_, err := runConsultSubagent(cfg, "test prompt", 10*time.Second)
-	if err == nil {
-		t.Fatal("expected error for missing source citation")
-	}
-	if !strings.Contains(err.Error(), "source citations") {
-		t.Errorf("expected 'source citations' in error, got: %v", err)
-	}
-}
-
-func TestRunConsultSubagent_Timeout(t *testing.T) {
-	dir := t.TempDir()
-	cfg := &ResolvedConfig{
-		ProjectRoot: dir,
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "sh",
-				Args:       []string{"-c", "sleep 30"},
-				PromptMode: "arg",
-			},
-		},
-	}
-	_, err := runConsultSubagent(cfg, "test prompt", 1*time.Second)
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-	if !strings.Contains(err.Error(), "timed out") {
-		t.Errorf("expected 'timed out' in error, got: %v", err)
-	}
-}
-
-func TestRunConsultSubagent_StderrMarkers(t *testing.T) {
-	dir := t.TempDir()
-	// Output markers on stderr instead of stdout
-	cfg := &ResolvedConfig{
-		ProjectRoot: dir,
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>' >&2; echo 'Guidance via stderr.' >&2; echo 'Source: lib/core.ts' >&2; echo '<ralph>GUIDANCE_END</ralph>' >&2`},
-				PromptMode: "arg",
-			},
-		},
-	}
-	result, err := runConsultSubagent(cfg, "test prompt", 10*time.Second)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-	if !strings.Contains(result, "Guidance via stderr") {
-		t.Error("expected guidance from stderr")
-	}
-}
-
-// --- setupConsultTestResources helper ---
-
-// setupConsultTestResources creates a temp dir with a fake cached resource and registry.
-func setupConsultTestResources(t *testing.T, name string) (string, *ResourceManager) {
-	t.Helper()
-	dir := t.TempDir()
-
-	key := name + "@1.0.0"
-
-	// Create fake cached repo directory using versioned key
-	repoDir := filepath.Join(dir, key)
-	os.MkdirAll(repoDir, 0755)
-
-	// Create registry with repo metadata
-	reg, _ := LoadResourceRegistry(dir)
-	reg.UpdateRepo(key, &CachedRepo{
-		URL:     "https://github.com/example/" + name,
-		Tag:     "v1.0.0",
-		Version: "1.0.0",
-		Commit:  "abc123",
-	})
-	reg.Save(dir)
-
-	rm := newTestResourceManager(dir, map[string]*Resource{
-		key: {Name: name, URL: "https://github.com/example/" + name, Branch: "v1.0.0", Version: "1.0.0"},
-	})
-
-	return dir, rm
-}
-
-func TestConsultResources_Integration(t *testing.T) {
-	_, rm := setupConsultTestResources(t, "react")
-	featurePath := t.TempDir()
-
-	cfg := &ResolvedConfig{
-		ProjectRoot: t.TempDir(),
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Use hooks for state.'; echo ''; echo 'Source: packages/react/src/hooks.ts'; echo '<ralph>GUIDANCE_END</ralph>'`},
-				PromptMode: "arg",
-			},
-		},
+	item := &PlanItem{
+		Title:      "Add prisma schema and model migration",
+		Acceptance: []string{"DB table created"},
 	}
 
-	// Story with "ui" tag → relevantFrameworks should match "react"
-	story := &StoryDefinition{
-		ID:          "US-001",
-		Title:       "Add login form",
-		Description: "Create a react component for the login form",
-		Tags:        []string{"ui"},
-	}
-
-	result := ConsultResources(context.Background(), cfg, story, rm, nil, featurePath)
-
-	if len(result.Consultations) != 1 {
-		t.Fatalf("expected 1 consultation, got %d", len(result.Consultations))
-	}
-	if result.Consultations[0].Framework != "react" {
-		t.Errorf("expected framework 'react', got '%s'", result.Consultations[0].Framework)
-	}
-	if !strings.Contains(result.Consultations[0].Guidance, "Use hooks") {
-		t.Error("expected guidance content")
-	}
-	if len(result.FallbackPaths) != 0 {
-		t.Errorf("expected 0 fallbacks, got %d", len(result.FallbackPaths))
-	}
-
-	// Verify cache was written
-	cacheKey := consultCacheKey("US-001", "react", "abc123", story.Description)
-	if _, ok := loadCachedConsultation(featurePath, cacheKey); !ok {
-		t.Error("expected consultation to be cached")
-	}
-}
-
-func TestConsultResources_CacheHit(t *testing.T) {
-	_, rm := setupConsultTestResources(t, "react")
-	featurePath := t.TempDir()
-
-	story := &StoryDefinition{
-		ID:          "US-001",
-		Title:       "Add login form",
-		Description: "Create a react component for the login form",
-		Tags:        []string{"ui"},
-	}
-
-	// Pre-populate cache with the exact key ConsultResources will compute
-	cacheKey := consultCacheKey(story.ID, "react", "abc123", story.Description)
-	cachedGuidance := "Cached: Use hooks.\n\nSource: cached/path.ts"
-	saveCachedConsultation(featurePath, cacheKey, cachedGuidance)
-
-	// Provider that would fail if called (use "false" command which exits with 1)
-	cfg := &ResolvedConfig{
-		ProjectRoot: t.TempDir(),
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "false",
-				PromptMode: "arg",
-			},
-		},
-	}
-
-	result := ConsultResources(context.Background(), cfg, story, rm, nil, featurePath)
-
-	if len(result.Consultations) != 1 {
-		t.Fatalf("expected 1 consultation from cache, got %d", len(result.Consultations))
-	}
-	if result.Consultations[0].Guidance != cachedGuidance {
-		t.Errorf("expected cached guidance, got: %s", result.Consultations[0].Guidance)
-	}
-	if len(result.FallbackPaths) != 0 {
-		t.Errorf("expected 0 fallbacks, got %d", len(result.FallbackPaths))
-	}
-}
-
-func TestConsultResources_NoRelevantFrameworks(t *testing.T) {
-	_, rm := setupConsultTestResources(t, "react")
-	featurePath := t.TempDir()
-
-	cfg := &ResolvedConfig{
-		ProjectRoot: t.TempDir(),
-		Config: RalphConfig{
-			Provider: ProviderConfig{Command: "echo", PromptMode: "arg"},
-		},
-	}
-
-	// Story with no matching tags and no matching keywords
-	story := &StoryDefinition{
-		ID:          "US-001",
-		Title:       "Configure CI pipeline",
-		Description: "Set up GitHub Actions",
-		Tags:        []string{},
-	}
-
-	result := ConsultResources(context.Background(), cfg, story, rm, nil, featurePath)
-
-	if len(result.Consultations) != 0 {
-		t.Errorf("expected 0 consultations for irrelevant story, got %d", len(result.Consultations))
-	}
-	if len(result.FallbackPaths) != 0 {
-		t.Errorf("expected 0 fallbacks, got %d", len(result.FallbackPaths))
-	}
-}
-
-func TestConsultResources_SubagentFailureFallback(t *testing.T) {
-	_, rm := setupConsultTestResources(t, "react")
-	featurePath := t.TempDir()
-
-	// Provider that outputs nothing (no markers → consultation fails → fallback)
-	cfg := &ResolvedConfig{
-		ProjectRoot: t.TempDir(),
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "sh",
-				Args:       []string{"-c", "echo 'no markers here'"},
-				PromptMode: "arg",
-			},
-		},
-	}
-
-	story := &StoryDefinition{
-		ID:    "US-001",
-		Title: "Add login form",
-		Tags:  []string{"ui"},
-	}
-
-	result := ConsultResources(context.Background(), cfg, story, rm, nil, featurePath)
-
-	if len(result.Consultations) != 0 {
-		t.Errorf("expected 0 consultations (should fail), got %d", len(result.Consultations))
-	}
-	if len(result.FallbackPaths) != 1 {
-		t.Fatalf("expected 1 fallback, got %d", len(result.FallbackPaths))
-	}
-	if result.FallbackPaths[0].Name != "react" {
-		t.Errorf("expected fallback for 'react', got '%s'", result.FallbackPaths[0].Name)
-	}
-}
-
-// --- ConsultResourcesForFeature integration tests ---
-
-func TestConsultResourcesForFeature_Integration(t *testing.T) {
-	_, rm := setupConsultTestResources(t, "react")
-	featurePath := t.TempDir()
-
-	cfg := &ResolvedConfig{
-		ProjectRoot: t.TempDir(),
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "sh",
-				Args:       []string{"-c", `echo '<ralph>GUIDANCE_START</ralph>'; echo 'Feature-level react guidance.'; echo ''; echo 'Source: packages/react/src/index.ts'; echo '<ralph>GUIDANCE_END</ralph>'`},
-				PromptMode: "arg",
-			},
-		},
-	}
-
-	result := ConsultResourcesForFeature(context.Background(), cfg, "auth", rm, nil, featurePath)
-
-	if len(result.Consultations) != 1 {
-		t.Fatalf("expected 1 consultation, got %d", len(result.Consultations))
-	}
-	if result.Consultations[0].Framework != "react" {
-		t.Errorf("expected framework 'react', got '%s'", result.Consultations[0].Framework)
-	}
-	if !strings.Contains(result.Consultations[0].Guidance, "Feature-level react guidance") {
-		t.Error("expected feature-level guidance content")
-	}
-
-	// Verify cache was written
-	cacheKey := featureConsultCacheKey("auth", "react", "abc123")
-	if _, ok := loadCachedConsultation(featurePath, cacheKey); !ok {
-		t.Error("expected feature consultation to be cached")
-	}
-}
-
-func TestConsultResourcesForFeature_CacheHit(t *testing.T) {
-	_, rm := setupConsultTestResources(t, "react")
-	featurePath := t.TempDir()
+	itemID := "item-1"
+	itemDescription := strings.Join(item.Acceptance, "\n")
+	cacheKey := consultCacheKey(itemID, "prisma", "abc123", itemDescription)
 
 	// Pre-populate cache
-	cacheKey := featureConsultCacheKey("auth", "react", "abc123")
-	cachedGuidance := "Cached feature guidance.\n\nSource: cached/index.ts"
-	saveCachedConsultation(featurePath, cacheKey, cachedGuidance)
+	cachedGuidance := "Use prisma migrate.\n\nSource: packages/client/src/runtime.ts"
+	saveCachedConsultation(dir, cacheKey, cachedGuidance)
 
-	cfg := &ResolvedConfig{
-		ProjectRoot: t.TempDir(),
-		Config: RalphConfig{
-			Provider: ProviderConfig{
-				Command:    "false",
-				PromptMode: "arg",
-			},
-		},
+	// Cache read should return the saved guidance
+	loaded, ok := loadCachedConsultation(dir, cacheKey)
+	if !ok {
+		t.Fatal("expected cache hit")
+	}
+	if loaded != cachedGuidance {
+		t.Errorf("expected cached guidance, got %q", loaded)
 	}
 
-	result := ConsultResourcesForFeature(context.Background(), cfg, "auth", rm, nil, featurePath)
-
-	if len(result.Consultations) != 1 {
-		t.Fatalf("expected 1 consultation from cache, got %d", len(result.Consultations))
-	}
-	if result.Consultations[0].Guidance != cachedGuidance {
-		t.Errorf("expected cached guidance, got: %s", result.Consultations[0].Guidance)
+	// Different key should miss
+	_, ok = loadCachedConsultation(dir, consultCacheKey(itemID, "react", "abc123", itemDescription))
+	if ok {
+		t.Error("expected cache miss for different framework")
 	}
 }
 

@@ -1,4 +1,4 @@
-module github.com/scripness/ralph
+module github.com/scripness/scrip
 
 go 1.25.6
 

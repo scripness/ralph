@@ -7,6 +7,12 @@ import (
 	"path/filepath"
 )
 
+// fileExists checks if a file exists
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // AtomicWriteJSON writes JSON data atomically using temp file + rename
 func AtomicWriteJSON(path string, data any) error {
 	// Marshal to JSON with indentation
